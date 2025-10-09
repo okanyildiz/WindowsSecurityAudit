@@ -274,7 +274,7 @@ Import-Module WindowsSecurityAudit
 ### Method 2: Direct Download
 ```powershell
 # Download latest release
-$url = "https://github.com/yourusername/WindowsSecurityAudit/releases/latest/download/WindowsSecurityAudit.zip"
+$url = "https://github.com/okanyildiz/WindowsSecurityAudit/releases/latest/download/WindowsSecurityAudit.zip"
 $output = "$env:TEMP\WindowsSecurityAudit.zip"
 Invoke-WebRequest -Uri $url -OutFile $output
 
@@ -289,7 +289,7 @@ Import-Module WindowsSecurityAudit -Force
 ### Method 3: Git Clone (For Developers)
 ```powershell
 # Clone repository
-git clone https://github.com/yourusername/WindowsSecurityAudit.git
+git clone https://github.com/okanyildiz/WindowsSecurityAudit.git
 cd WindowsSecurityAudit
 
 # Run setup script
@@ -615,7 +615,7 @@ We welcome contributions from the security community!
 ### Development Setup
 ```powershell
 # Clone repository
-git clone https://github.com/yourusername/WindowsSecurityAudit.git
+git clone https://github.com/okanyildiz/WindowsSecurityAudit.git
 cd WindowsSecurityAudit
 
 # Install development dependencies
