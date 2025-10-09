@@ -18,7 +18,7 @@
 
 **🎯 Zero Dependencies • 🚀 Production Ready • 🌍 Community Driven • 💼 Enterprise Tested**
 
-[Features](#-why-windows-security-audit-module) • [Installation](#-installation) • [Quick Start](#-quick-start) • [Documentation](#-documentation) • [Support](#-support--contact)
+[Features](#-why-windows-security-audit-module) • [Installation](#-installation) • [Quick Start](#-quick-start) • [Support](#-support--contact)
 
 </div>
 
