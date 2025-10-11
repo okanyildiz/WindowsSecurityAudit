@@ -589,7 +589,7 @@ For organizations requiring specialized assistance, we offer:
 - **Training Programs**: Team education and best practices
 - **Priority Support**: Direct access to developers
 
-**📧 Contact us for professional services: okanyildiz1994@gmail.com**  
+**📧 Contact us for professional services: yildzokan@gmail.com**  
 **💼 LinkedIn: [https://www.linkedin.com/in/yildizokan/](https://www.linkedin.com/in/yildizokan/)**
 
 ---
@@ -645,7 +645,7 @@ We offer professional services to help organizations maximize the value of this 
 **Get in touch for professional services:**
 
 
-📧 **Email**: okanyildiz1994@gmail.com
+📧 **Email**: yildzokan@gmail.com
 
 💼 **LinkedIn**: [Connect with me on LinkedIn](https://www.linkedin.com/in/yildizokan/)  
 
@@ -664,7 +664,7 @@ We offer professional services to help organizations maximize the value of this 
 
 For large-scale deployments, custom licensing, or enterprise support contracts:
 
-**Enterprise Contact**: okanyildiz1994@gmail.com  
+**Enterprise Contact**: yildzokan@gmail.com
 
 We work with Fortune 500 companies, government agencies, and organizations of all sizes to implement robust security monitoring solutions.
 
