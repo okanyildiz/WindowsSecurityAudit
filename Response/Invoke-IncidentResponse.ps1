@@ -149,25 +149,36 @@ function Invoke-IncidentResponse {
             
             # Step 3: Network Isolation (if explicitly requested)
             if ($IsolateSystem) {
-                Write-Host "`n[3/6] Isolating system from network..." -ForegroundColor Red
-                
                 if ($PSCmdlet.ShouldProcess($env:COMPUTERNAME, "Disable network adapters")) {
+                    Write-Host "`n[3/6] Isolating system from network..." -ForegroundColor Red
                     Write-IRLog "Attempting network isolation" 'WARNING'
                     
                     try {
-                        $adapters = Get-NetAdapter | Where-Object { $_.Status -eq 'Up' }
-                        foreach ($adapter in $adapters) {
-                            Disable-NetAdapter -Name $adapter.Name -Confirm:$false -ErrorAction Stop
-                            $results.Actions += "Disabled network adapter: $($adapter.Name)"
-                            Write-IRLog "Disabled adapter: $($adapter.Name)" 'SUCCESS'
+                        $adapters = @(Get-NetAdapter | Where-Object { $_.Status -eq 'Up' })
+                        if ($adapters.Count -gt 0) {
+                            foreach ($adapter in $adapters) {
+                                Disable-NetAdapter -Name $adapter.Name -Confirm:$false -ErrorAction Stop
+                                $results.Actions += "Disabled network adapter: $($adapter.Name)"
+                                Write-IRLog "Disabled adapter: $($adapter.Name)" 'SUCCESS'
+                            }
+                            $results.NetworkIsolation = $true
+                            Write-Host "System isolated from network" -ForegroundColor Green
                         }
-                        $results.NetworkIsolation = $true
-                        Write-Host "System isolated from network" -ForegroundColor Green
+                        else {
+                            Write-Host "No active network adapters found to isolate." -ForegroundColor Yellow
+                            Write-IRLog "No active adapters to isolate" 'WARNING'
+                            $results.Actions += "Network isolation attempted (no active adapters found)"
+                        }
                     }
                     catch {
                         Write-IRLog "Failed to isolate network: $_" 'ERROR'
                         Write-Warning "Network isolation failed: $_"
                     }
+                }
+                else {
+                    # -WhatIf or confirmation was declined
+                    Write-Host "`n[3/6] Network isolation: WHATIF / DECLINED" -ForegroundColor Yellow
+                    $results.Actions += "Network isolation skipped (WhatIf or confirmation declined)"
                 }
             }
             else {
@@ -278,9 +289,23 @@ function Invoke-IncidentResponse {
             Write-IRLog "Generating final report" 'INFO'
             
             $results.Status = 'Completed'
-            $results | ConvertTo-Json -Depth 5 | Out-File (Join-Path $OutputPath "IncidentResponse_Report.json")
+            Write-IRLog "Incident response completed" 'SUCCESS'
             
-            # Create summary report
+        }
+        catch {
+            $results.Status = 'Failed'
+            Write-IRLog "Incident response failed: $_" 'ERROR'
+            throw
+        }
+    }
+    
+    end {
+        # Always write the final report artifacts here (JSON + Summary.txt).
+        # This runs for both Completed and Failed paths, capturing whatever data
+        # was accumulated before an error (addresses the "no report on failure" bug).
+        try {
+            $results | ConvertTo-Json -Depth 5 | Out-File (Join-Path $OutputPath "IncidentResponse_Report.json") -ErrorAction Stop
+
             $summary = @"
 === INCIDENT RESPONSE SUMMARY ===
 Date/Time: $($results.IncidentDate)
@@ -305,19 +330,18 @@ STATUS: $($results.Status)
 
 All evidence and logs saved to: $OutputPath
 "@
-            
-            $summary | Out-File (Join-Path $OutputPath "Summary.txt")
-            Write-IRLog "Incident response completed" 'SUCCESS'
-            
+
+            $summary | Out-File (Join-Path $OutputPath "Summary.txt") -ErrorAction Stop
+
+            if ($results.Status -eq 'Failed') {
+                Write-IRLog "Incident response failed -- partial report written" 'ERROR'
+            }
         }
         catch {
-            $results.Status = 'Failed'
-            Write-IRLog "Incident response failed: $_" 'ERROR'
-            throw
+            Write-IRLog "Failed to write final report artifacts: $_" 'ERROR'
+            Write-Warning "Could not write report files to $OutputPath"
         }
-    }
-    
-    end {
+
         Write-Host "`n=== INCIDENT RESPONSE COMPLETE ===" -ForegroundColor Green
         Write-Host "Status: $($results.Status)" -ForegroundColor $(if ($results.Status -eq 'Completed') { 'Green' } else { 'Red' })
         Write-Host "Output directory: $OutputPath" -ForegroundColor Cyan
