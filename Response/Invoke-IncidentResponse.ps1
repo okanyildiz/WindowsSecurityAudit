@@ -147,8 +147,8 @@ function Invoke-IncidentResponse {
                 Write-IRLog "Error scanning network: $_" 'ERROR'
             }
             
-            # Step 3: Network Isolation (if requested or Critical severity)
-            if ($IsolateSystem -or $Severity -eq 'Critical') {
+            # Step 3: Network Isolation (if explicitly requested)
+            if ($IsolateSystem) {
                 Write-Host "`n[3/6] Isolating system from network..." -ForegroundColor Red
                 
                 if ($PSCmdlet.ShouldProcess($env:COMPUTERNAME, "Disable network adapters")) {
