@@ -279,21 +279,39 @@ function Find-LateralMovement {
                     } -MaxEvents 200 -ErrorAction SilentlyContinue
                     
                     if ($shareEvents) {
-                        # Filter for non-admin shares
-                        $suspiciousShares = $shareEvents | Where-Object {
+                        # Split share access: admin/hidden shares (IPC$, ADMIN$, C$, ...)
+                        # are the PRIMARY lateral movement signal; other shares are noise
+                        $adminShareEvents = @($shareEvents | Where-Object {
                             $shareName = $_.Properties[7].Value
-                            $shareName -notmatch 'IPC\$|ADMIN\$|C\$'
-                        }
-                        
-                        if ($suspiciousShares) {
-                            $groupedShares = $suspiciousShares | Group-Object -Property {
+                            $shareName -match 'IPC\$|ADMIN\$|[A-Za-z]\$'
+                        })
+                        $otherShareEvents = @($shareEvents | Where-Object {
+                            $shareName = $_.Properties[7].Value
+                            $shareName -notmatch 'IPC\$|ADMIN\$|[A-Za-z]\$'
+                        })
+
+                        $shareSets = @(
+                            @{ Events = $adminShareEvents; Severity = 'High'; Label = 'Admin share' }
+                            @{ Events = $otherShareEvents; Severity = 'Low';  Label = 'Share' }
+                        )
+
+                        $foundShares = $false
+
+                        foreach ($shareSet in $shareSets) {
+                            if ($shareSet.Events.Count -eq 0) {
+                                continue
+                            }
+
+                            $foundShares = $true
+
+                            $groupedShares = $shareSet.Events | Group-Object -Property {
                                 "$($_.Properties[1].Value)|$($_.Properties[7].Value)"
                             } | Sort-Object Count -Descending
-                            
+
                             foreach ($group in $groupedShares | Select-Object -First 5) {
                                 $parts = $group.Name -split '\|'
                                 $event = $group.Group[0]
-                                
+
                                 $indicator = [PSCustomObject]@{
                                     Type = 'SMBAccess'
                                     Process = 'N/A'
@@ -301,17 +319,24 @@ function Find-LateralMovement {
                                     Account = $parts[0]
                                     ShareName = $parts[1]
                                     Count = $group.Count
-                                    Severity = 'Low'
-                                    Description = "SMB share access: $($parts[1]) by $($parts[0]) - $($group.Count) times"
+                                    Severity = $shareSet.Severity
+                                    Description = "$($shareSet.Label) access: $($parts[1]) by $($parts[0]) - $($group.Count) times"
                                     Timestamp = $event.TimeCreated.ToString("yyyy-MM-dd HH:mm:ss")
                                 }
-                                
+
                                 $results.Indicators.SMBAccess += $indicator
-                                
-                                Write-Host "  [!] Share: $($parts[1]) by $($parts[0]) ($($group.Count) times)" -ForegroundColor Yellow
+
+                                if ($shareSet.Severity -eq 'High') {
+                                    $results.Summary.HighFindings++
+                                    Write-Host "  [!] ADMIN SHARE: $($parts[1]) by $($parts[0]) ($($group.Count) times)" -ForegroundColor Red
+                                }
+                                else {
+                                    Write-Host "  [!] Share: $($parts[1]) by $($parts[0]) ($($group.Count) times)" -ForegroundColor Yellow
+                                }
                             }
                         }
-                        else {
+
+                        if (-not $foundShares) {
                             Write-Host "  No suspicious SMB share access detected" -ForegroundColor Green
                         }
                     }

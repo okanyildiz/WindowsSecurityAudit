@@ -104,6 +104,12 @@ function Get-EventLogAnalysis {
                 if ($IncludeWarnings) {
                     $filterLevels += 3  # Warning
                 }
+
+                # Security audit events (1102, 4625, 4697, ...) are logged at
+                # Information level, so the Security log must include Level 4
+                if ($logName -eq 'Security' -and $filterLevels -notcontains 4) {
+                    $filterLevels += 4  # Information (Security audit events)
+                }
                 
                 try {
                     $events = Get-WinEvent -FilterHashtable @{

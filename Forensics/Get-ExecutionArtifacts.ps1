@@ -146,27 +146,65 @@ function Get-ExecutionArtifacts {
                                     try {
                                         # Decode ROT13 encoded entry name
                                         $decodedName = ConvertFrom-ROT13 -Text $entry
-                                        
+
                                         # Get execution data
                                         $value = Get-ItemProperty -Path $countPath -Name $entry -ErrorAction SilentlyContinue
-                                        
+
                                         # Skip if not an executable path
                                         if ($decodedName -notmatch '\.(exe|bat|cmd|ps1|vbs|js)') {
                                             continue
                                         }
-                                        
+
+                                        # Decode the binary value (Win7+ format is >= 68 bytes:
+                                        # run count Int32 at offset 4, last-run FILETIME Int64 at offset 60)
+                                        $timestamp = $null
+                                        $runCount = $null
+                                        $timestampNote = $null
+
+                                        $uaBytes = $null
+                                        if ($null -ne $value -and $value.PSObject.Properties.Name -contains $entry) {
+                                            $uaBytes = $value.$entry
+                                        }
+
+                                        if ($uaBytes -is [byte[]] -and $uaBytes.Length -ge 68) {
+                                            try {
+                                                $runCount = [BitConverter]::ToInt32($uaBytes, 4)
+                                                $fileTime = [BitConverter]::ToInt64($uaBytes, 60)
+                                                $decoded = [DateTime]::FromFileTimeUtc($fileTime).ToLocalTime()
+                                                # Plausibility check: 2000-01-01 .. now + 1 day
+                                                if ($decoded -ge [DateTime]'2000-01-01' -and $decoded -le (Get-Date).AddDays(1)) {
+                                                    $timestamp = $decoded
+                                                }
+                                                else {
+                                                    $timestampNote = 'Decoded timestamp outside plausible range'
+                                                }
+                                            }
+                                            catch {
+                                                $timestampNote = 'Could not decode UserAssist timestamp'
+                                            }
+                                        }
+                                        elseif ($uaBytes -is [byte[]]) {
+                                            # Vista/XP 16-byte variant carries no timestamp
+                                            $timestampNote = 'No timestamp (legacy 16-byte format)'
+                                        }
+                                        else {
+                                            $timestampNote = 'No binary data available'
+                                        }
+
                                         $results.Artifacts += [PSCustomObject]@{
                                             Source = 'UserAssist'
                                             ExecutableName = Split-Path -Path $decodedName -Leaf
                                             FullPath = $decodedName
-                                            Timestamp = Get-Date  # UserAssist timestamp parsing is complex, using current time
-                                            TimestampType = 'Tracked'
+                                            Timestamp = $timestamp
+                                            TimestampType = 'Last Executed (UserAssist)'
                                             Details = @{
                                                 EncodedName = $entry
                                                 DecodedPath = $decodedName
+                                                RunCount = $runCount
+                                                TimestampNote = $timestampNote
                                             }
                                         }
-                                        
+
                                         $results.Summary.UserAssist++
                                     }
                                     catch {
@@ -258,19 +296,44 @@ function Get-ExecutionArtifacts {
                                     elseif ($props.PSObject.Properties.Name -contains 'RecentItems') {
                                         $appPath = $props.RecentItems
                                     }
-                                    
+
+                                    # RecentApps stores LastActivatedTime as a FILETIME QWORD;
+                                    # FeatureUsage\AppSwitched has no timestamp - do not fabricate one
+                                    $timestamp = $null
+                                    $timestampType = 'Recent Activity'
+                                    $timestampNote = 'No timestamp recorded by this source'
+
+                                    if ($null -ne $props -and $props.PSObject.Properties.Name -contains 'LastActivatedTime' -and $null -ne $props.LastActivatedTime) {
+                                        try {
+                                            $decoded = [DateTime]::FromFileTimeUtc([int64]$props.LastActivatedTime).ToLocalTime()
+                                            # Plausibility check: 2000-01-01 .. now + 1 day
+                                            if ($decoded -ge [DateTime]'2000-01-01' -and $decoded -le (Get-Date).AddDays(1)) {
+                                                $timestamp = $decoded
+                                                $timestampType = 'Last Activated'
+                                                $timestampNote = $null
+                                            }
+                                            else {
+                                                $timestampNote = 'Decoded timestamp outside plausible range'
+                                            }
+                                        }
+                                        catch {
+                                            $timestampNote = 'Could not decode LastActivatedTime'
+                                        }
+                                    }
+
                                     if ($appName -or $appPath) {
                                         $results.Artifacts += [PSCustomObject]@{
                                             Source = 'RecentApps'
                                             ExecutableName = $appName
                                             FullPath = $appPath
-                                            Timestamp = Get-Date
-                                            TimestampType = 'Recent Activity'
+                                            Timestamp = $timestamp
+                                            TimestampType = $timestampType
                                             Details = @{
                                                 RegistryPath = $app.PSPath
+                                                TimestampNote = $timestampNote
                                             }
                                         }
-                                        
+
                                         $results.Summary.RecentApps++
                                     }
                                 }
@@ -309,10 +372,32 @@ function Get-ExecutionArtifacts {
                                 }
                                 
                                 $execPath = $property.Name
-                                
-                                # Extract timestamp from binary data (simplified)
-                                $timestamp = Get-Date  # Full parsing requires binary conversion
-                                
+
+                                # BAM binary value: first 8 bytes are the last-execution FILETIME
+                                $timestamp = $null
+                                $timestampNote = $null
+
+                                $bamBytes = $property.Value
+                                if ($bamBytes -is [byte[]] -and $bamBytes.Length -ge 8) {
+                                    try {
+                                        $fileTime = [BitConverter]::ToInt64($bamBytes, 0)
+                                        $decoded = [DateTime]::FromFileTimeUtc($fileTime).ToLocalTime()
+                                        # Plausibility check: 2000-01-01 .. now + 1 day
+                                        if ($decoded -ge [DateTime]'2000-01-01' -and $decoded -le (Get-Date).AddDays(1)) {
+                                            $timestamp = $decoded
+                                        }
+                                        else {
+                                            $timestampNote = 'Decoded timestamp outside plausible range'
+                                        }
+                                    }
+                                    catch {
+                                        $timestampNote = 'Could not decode BAM timestamp'
+                                    }
+                                }
+                                else {
+                                    $timestampNote = 'No binary data available'
+                                }
+
                                 if ($execPath -match '\.(exe|bat|cmd|ps1)$') {
                                     $results.Artifacts += [PSCustomObject]@{
                                         Source = 'BAM'
@@ -322,9 +407,10 @@ function Get-ExecutionArtifacts {
                                         TimestampType = 'Last Execution (BAM)'
                                         Details = @{
                                             UserSID = Split-Path -Path $user.PSPath -Leaf
+                                            TimestampNote = $timestampNote
                                         }
                                     }
-                                    
+
                                     $results.Summary.BAM++
                                 }
                             }
@@ -416,7 +502,7 @@ function Get-ExecutionArtifacts {
                 Where-Object { $_.ExecutableName -notlike 'ShimCache*' } |
                 Select-Object -First 15 | 
                 ForEach-Object {
-                    $timestamp = $_.Timestamp.ToString('yyyy-MM-dd HH:mm:ss')
+                    $timestamp = if ($null -ne $_.Timestamp) { $_.Timestamp.ToString('yyyy-MM-dd HH:mm:ss') } else { 'N/A' }
                     $color = switch ($_.Source) {
                         'Prefetch' { 'Cyan' }
                         'UserAssist' { 'Yellow' }
@@ -523,7 +609,7 @@ function Generate-ExecutionArtifactsHTML {
     
     foreach ($artifact in $Results.Artifacts) {
         $sourceClass = "source-$($artifact.Source.ToLower())"
-        $timestamp = $artifact.Timestamp.ToString('yyyy-MM-dd HH:mm:ss')
+        $timestamp = if ($null -ne $artifact.Timestamp) { $artifact.Timestamp.ToString('yyyy-MM-dd HH:mm:ss') } else { 'N/A' }
         $fullPath = if ($artifact.FullPath) { 
             $artifact.FullPath -replace '<', '&lt;' -replace '>', '&gt;'
         } else { 
