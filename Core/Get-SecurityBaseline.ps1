@@ -85,14 +85,15 @@ function Get-SecurityBaseline {
             try {
                 $uacKey = "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System"
                 $uacSettings = Get-ItemProperty -Path $uacKey -ErrorAction Stop
+                $enableLUA = if ($null -ne $uacSettings.PSObject.Properties['EnableLUA']) { $uacSettings.EnableLUA } else { $null }
                 $results.UAC = [PSCustomObject]@{
-                    EnableLUA = $uacSettings.EnableLUA
-                    ConsentPromptBehaviorAdmin = $uacSettings.ConsentPromptBehaviorAdmin
-                    ConsentPromptBehaviorUser = $uacSettings.ConsentPromptBehaviorUser
-                    EnableSecureUIAPaths = $uacSettings.EnableSecureUIAPaths
-                    EnableVirtualization = $uacSettings.EnableVirtualization
+                    EnableLUA = $enableLUA
+                    ConsentPromptBehaviorAdmin = if ($null -ne $uacSettings.PSObject.Properties['ConsentPromptBehaviorAdmin']) { $uacSettings.ConsentPromptBehaviorAdmin } else { $null }
+                    ConsentPromptBehaviorUser = if ($null -ne $uacSettings.PSObject.Properties['ConsentPromptBehaviorUser']) { $uacSettings.ConsentPromptBehaviorUser } else { $null }
+                    EnableSecureUIAPaths = if ($null -ne $uacSettings.PSObject.Properties['EnableSecureUIAPaths']) { $uacSettings.EnableSecureUIAPaths } else { $null }
+                    EnableVirtualization = if ($null -ne $uacSettings.PSObject.Properties['EnableVirtualization']) { $uacSettings.EnableVirtualization } else { $null }
                 }
-                if ($uacSettings.EnableLUA -eq 1) { $results.SecurityScore += 15 }
+                if ($enableLUA -eq 1) { $results.SecurityScore += 15 }
             }
             catch {
                 Write-Warning "Could not retrieve UAC settings: $_"
@@ -150,7 +151,7 @@ function Get-SecurityBaseline {
                     $wuKey = "HKLM:\SOFTWARE\Policies\Microsoft\Windows\WindowsUpdate\AU"
                     if (Test-Path $wuKey) {
                         $auSettings = Get-ItemProperty -Path $wuKey -ErrorAction SilentlyContinue
-                        if ($auSettings -and $auSettings.NoAutoUpdate -eq 1) {
+                        if ($auSettings -and $auSettings.PSObject.Properties['NoAutoUpdate'] -and $auSettings.NoAutoUpdate -eq 1) {
                             $autoUpdateEnabled = $false
                         }
                     }

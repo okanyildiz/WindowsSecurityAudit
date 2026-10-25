@@ -98,7 +98,16 @@ function Update-DefenderConfiguration {
             Changes = @()
             Errors = @()
             BeforeConfiguration = @{}
-            AfterConfiguration = @{}
+            AfterConfiguration = [PSCustomObject]@{
+                RealTimeProtectionEnabled = $null
+                CloudProtection = $null
+                SampleSubmission = $null
+                PUAProtection = $null
+                ScanScheduleDay = $null
+                ScanScheduleTime = $null
+                ExclusionPaths = $null
+                ExclusionExtensions = $null
+            }
         }
         
         # Get current configuration

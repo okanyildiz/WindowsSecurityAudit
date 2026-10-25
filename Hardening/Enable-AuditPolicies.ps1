@@ -104,10 +104,8 @@ function Enable-AuditPolicies {
                 foreach ($subcategory in $selectedSettings[$category]) {
                     try {
                         # Enable both Success and Failure auditing
-                        $auditCommand = "auditpol /set /subcategory:`"$subcategory`" /success:enable /failure:enable"
-                        
                         if ($PSCmdlet.ShouldProcess($subcategory, "Enable audit policy")) {
-                            $result = Invoke-Expression $auditCommand 2>&1
+                            $result = & auditpol /set /subcategory:"$subcategory" /success:enable /failure:enable 2>&1
                             
                             if ($LASTEXITCODE -eq 0) {
                                 $results.PoliciesConfigured += $subcategory

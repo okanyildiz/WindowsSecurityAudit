@@ -62,6 +62,7 @@ function Get-ComplianceReport {
             CrossFrameworkAnalysis = @()
             RemediationPriorities = @()
             Recommendations = @()
+            Evidence = @()
         }
     }
     
@@ -85,6 +86,7 @@ function Get-ComplianceReport {
                         NotApplicable = $cisResult.Summary.NotApplicable
                         CriticalGaps = @($cisResult.Controls | Where-Object { $_.Status -eq 'Fail' -and $_.Severity -eq 'Critical' }).Count
                         HighGaps = @($cisResult.Controls | Where-Object { $_.Status -eq 'Fail' -and $_.Severity -eq 'High' }).Count
+                        MediumGaps = @($cisResult.Controls | Where-Object { $_.Status -eq 'Fail' -and $_.Severity -eq 'Medium' }).Count
                         Controls = $cisResult.Controls
                         Status = if ($cisResult.Summary.CompliancePercentage -ge 80) { 'Pass' } 
                                  elseif ($cisResult.Summary.CompliancePercentage -ge 60) { 'Marginal' } 
@@ -121,6 +123,7 @@ function Get-ComplianceReport {
                         NotApplicable = $nistResult.Summary.NotApplicable
                         CriticalGaps = @($nistResult.Controls | Where-Object { $_.Status -eq 'NonCompliant' -and $_.Impact -eq 'Critical' }).Count
                         HighGaps = @($nistResult.Controls | Where-Object { $_.Status -eq 'NonCompliant' -and $_.Impact -eq 'High' }).Count
+                        MediumGaps = @($nistResult.Controls | Where-Object { $_.Status -eq 'NonCompliant' -and $_.Impact -eq 'Medium' }).Count
                         Controls = $nistResult.Controls
                         Status = if ($nistResult.Summary.CompliancePercentage -ge 80) { 'Pass' } 
                                  elseif ($nistResult.Summary.CompliancePercentage -ge 60) { 'Marginal' } 
@@ -146,7 +149,7 @@ function Get-ComplianceReport {
                 Write-Host "`n[3/3] Running PCI-DSS compliance test..." -ForegroundColor Cyan
                 
                 try {
-                    $pciResult = Test-PCI-DSS -Version 4.0
+                    $pciResult = Test-PCI-DSS -Version '4.0'
                     
                     $frameworkSummary = [PSCustomObject]@{
                         Framework = 'PCI-DSS v4.0'
@@ -157,6 +160,7 @@ function Get-ComplianceReport {
                         NotApplicable = $pciResult.Summary.NotApplicable
                         CriticalGaps = @($pciResult.Requirements | Where-Object { $_.Status -eq 'NotInPlace' -and $_.Priority -eq 'Critical' }).Count
                         HighGaps = @($pciResult.Requirements | Where-Object { $_.Status -eq 'NotInPlace' -and $_.Priority -eq 'High' }).Count
+                        MediumGaps = @($pciResult.Requirements | Where-Object { $_.Status -eq 'NotInPlace' -and $_.Priority -eq 'Medium' }).Count
                         Controls = $pciResult.Requirements
                         Status = if ($pciResult.Summary.CompliancePercentage -eq 100) { 'Pass' } 
                                  elseif ($pciResult.Summary.CompliancePercentage -ge 80) { 'Marginal' } 
@@ -189,6 +193,7 @@ function Get-ComplianceReport {
                 $report.ExecutiveSummary.NonCompliantControls = ($report.Frameworks | Measure-Object -Property Failed -Sum).Sum
                 $report.ExecutiveSummary.CriticalGaps = ($report.Frameworks | Measure-Object -Property CriticalGaps -Sum).Sum
                 $report.ExecutiveSummary.HighGaps = ($report.Frameworks | Measure-Object -Property HighGaps -Sum).Sum
+                $report.ExecutiveSummary.MediumGaps = ($report.Frameworks | Measure-Object -Property MediumGaps -Sum).Sum
             }
             
             # Cross-Framework Analysis
@@ -302,7 +307,7 @@ function Get-ComplianceReport {
                 }
             }
             
-            $report.RemediationPriorities = $allGaps | Sort-Object Priority, Framework | Select-Object -First 10
+            $report.RemediationPriorities = @($allGaps | Sort-Object Priority, Framework | Select-Object -First 10)
             
             # Generate Recommendations
             if ($report.ExecutiveSummary.CriticalGaps -gt 0) {
@@ -320,6 +325,33 @@ function Get-ComplianceReport {
             $report.Recommendations += "Conduct regular compliance assessments (quarterly recommended)"
             $report.Recommendations += "Maintain documentation for all compliance controls"
             $report.Recommendations += "Consider engaging third-party assessor for validation"
+            
+            # Collect Audit Evidence (if requested)
+            if ($IncludeEvidence) {
+                Write-Host "`n[*] Collecting compliance evidence packages..." -ForegroundColor Cyan
+                
+                $evidenceRoot = if ($OutputPath) { Join-Path $OutputPath 'Evidence' } else { Join-Path $env:TEMP 'ComplianceEvidence' }
+                
+                foreach ($framework in $report.Frameworks) {
+                    try {
+                        $shortName = ($framework.Framework -replace '[^a-zA-Z0-9]', '')
+                        $evidence = Export-ComplianceEvidence -OutputPath $evidenceRoot -CaseReference $shortName
+                        
+                        if ($null -ne $evidence -and $null -ne $evidence.PSObject.Properties['PackagePath']) {
+                            $report.Evidence += [PSCustomObject]@{
+                                Framework = $framework.Framework
+                                PackagePath = $evidence.PackagePath
+                                PackageHash = $evidence.PackageHash
+                                CaseReference = $evidence.CaseReference
+                            }
+                            Write-Host "  Evidence collected for $($framework.Framework): $($evidence.PackagePath)" -ForegroundColor Green
+                        }
+                    }
+                    catch {
+                        Write-Warning "Could not collect evidence for $($framework.Framework) - $_"
+                    }
+                }
+            }
             
             # Export Reports
             if ($OutputPath) {

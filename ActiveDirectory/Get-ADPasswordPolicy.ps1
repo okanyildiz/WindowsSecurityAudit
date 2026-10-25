@@ -230,7 +230,7 @@ function Get-ADPasswordPolicy {
                                 MaxPasswordAge = $pso.MaxPasswordAge.Days
                                 LockoutThreshold = $pso.LockoutThreshold
                                 AppliesTo = $appliesTo.Count
-                                AppliesToObjects = $appliesTo.Name -join ', '
+                                AppliesToObjects = if ($appliesTo) { $appliesTo.Name -join ', ' } else { 'None' }
                             }
                             
                             $analysis.FineGrainedPolicies += $psoInfo

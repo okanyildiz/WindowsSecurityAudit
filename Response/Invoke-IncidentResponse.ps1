@@ -115,8 +115,8 @@ function Invoke-IncidentResponse {
                 $suspiciousProcs = Find-SuspiciousProcesses -CheckSignatures
                 if ($suspiciousProcs) {
                     $threats += $suspiciousProcs
-                    $results.Findings += "$($suspiciousProcs.Count) suspicious processes detected"
-                    Write-IRLog "$($suspiciousProcs.Count) suspicious processes found" 'WARNING'
+                    $results.Findings += "$(@($suspiciousProcs).Count) suspicious processes detected"
+                    Write-IRLog "$(@($suspiciousProcs).Count) suspicious processes found" 'WARNING'
                 }
             }
             catch {

@@ -398,6 +398,8 @@ function Export-ComplianceEvidence {
             
             # Generate Chain of Custody
             $custodyPath = Join-Path $directories.Metadata "Chain_of_Custody.txt"
+            $ipInfo = Get-NetIPAddress -AddressFamily IPv4 -ErrorAction SilentlyContinue | Where-Object {$_.InterfaceAlias -notlike '*Loopback*'} | Select-Object -First 1
+            $ipAddress = if ($ipInfo) { $ipInfo.IPAddress } else { 'N/A' }
             $custody = @"
 CHAIN OF CUSTODY DOCUMENTATION
 ================================
@@ -409,7 +411,7 @@ Time Zone: $([System.TimeZoneInfo]::Local.DisplayName)
 SYSTEM INFORMATION:
 Computer Name: $($env:COMPUTERNAME)
 Domain: $($env:USERDOMAIN)
-IP Address: $((Get-NetIPAddress -AddressFamily IPv4 | Where-Object {$_.InterfaceAlias -notlike '*Loopback*'} | Select-Object -First 1).IPAddress)
+IP Address: $ipAddress
 Operating System: $((Get-CimInstance Win32_OperatingSystem).Caption)
 
 EVIDENCE COLLECTOR:

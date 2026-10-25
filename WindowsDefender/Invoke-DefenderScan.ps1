@@ -211,7 +211,7 @@ function Invoke-DefenderScan {
                     
                     # Get threat detections
                     $threats = Get-MpThreat
-                    $results.ThreatsDetected = $threats.Count
+                    $results.ThreatsDetected = @($threats).Count
                     
                     foreach ($threat in $threats) {
                         $results.ThreatDetails += [PSCustomObject]@{
@@ -236,13 +236,13 @@ function Invoke-DefenderScan {
                     switch ($ScanType) {
                         'Quick' {
                             $results.EndTime = $mpStatus.QuickScanEndTime
-                            if ($mpStatus.QuickScanStartTime) {
+                            if ($mpStatus.QuickScanStartTime -and $mpStatus.QuickScanEndTime) {
                                 $results.Duration = ($mpStatus.QuickScanEndTime - $mpStatus.QuickScanStartTime).ToString()
                             }
                         }
                         'Full' {
                             $results.EndTime = $mpStatus.FullScanEndTime
-                            if ($mpStatus.FullScanStartTime) {
+                            if ($mpStatus.FullScanStartTime -and $mpStatus.FullScanEndTime) {
                                 $results.Duration = ($mpStatus.FullScanEndTime - $mpStatus.FullScanStartTime).ToString()
                             }
                         }

@@ -139,7 +139,7 @@ function Get-MemoryAnalysis {
                             $processAnalysis.Modules += [PSCustomObject]@{
                                 Name = $moduleName
                                 Path = $modulePath
-                                Size = [math]::Round($module.Size / 1KB, 2)
+                                Size = [math]::Round($module.ModuleMemorySize / 1KB, 2)
                                 Suspicious = $isSuspicious
                             }
                         }

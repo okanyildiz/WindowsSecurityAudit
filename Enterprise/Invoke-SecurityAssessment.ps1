@@ -98,28 +98,37 @@ function Invoke-SecurityAssessment {
                 }
                 
                 # Signature updates
-                $signatureAge = (Get-Date) - $defender.AntivirusSignatureLastUpdated
-                if ($signatureAge.Days -le 2) {
-                    $systemSecurity.CategoryScore += 10
-                    $systemSecurity.Checks += [PSCustomObject]@{
-                        Check = 'Antivirus Signatures'
-                        Status = 'Pass'
-                        Score = 10
-                        Details = "Updated $($signatureAge.Days) days ago"
+                if ($null -ne $defender.AntivirusSignatureLastUpdated) {
+                    $signatureAge = (Get-Date) - [datetime]$defender.AntivirusSignatureLastUpdated
+                    if ($signatureAge.Days -le 2) {
+                        $systemSecurity.CategoryScore += 10
+                        $systemSecurity.Checks += [PSCustomObject]@{
+                            Check = 'Antivirus Signatures'
+                            Status = 'Pass'
+                            Score = 10
+                            Details = "Updated $($signatureAge.Days) days ago"
+                        }
+                    } else {
+                        $systemSecurity.Checks += [PSCustomObject]@{
+                            Check = 'Antivirus Signatures'
+                            Status = 'Fail'
+                            Score = 0
+                            Details = "Outdated ($($signatureAge.Days) days old)"
+                        }
+                        $assessment.Findings += [PSCustomObject]@{
+                            Severity = 'High'
+                            Category = 'System Security'
+                            Finding = 'Antivirus signatures are outdated'
+                            Impact = 'Cannot detect latest threats'
+                            Recommendation = 'Update Windows Defender definitions'
+                        }
                     }
                 } else {
                     $systemSecurity.Checks += [PSCustomObject]@{
                         Check = 'Antivirus Signatures'
-                        Status = 'Fail'
+                        Status = 'Unknown'
                         Score = 0
-                        Details = "Outdated ($($signatureAge.Days) days old)"
-                    }
-                    $assessment.Findings += [PSCustomObject]@{
-                        Severity = 'High'
-                        Category = 'System Security'
-                        Finding = 'Antivirus signatures are outdated'
-                        Impact = 'Cannot detect latest threats'
-                        Recommendation = 'Update Windows Defender definitions'
+                        Details = 'Signature update time not available'
                     }
                 }
             }
@@ -714,20 +723,143 @@ try {
             
             $assessment.Categories.DataProtection = $dataProtection
             
+            # Compliance checks (optional)
+            if ($IncludeCompliance) {
+                Write-Host "`n[Compliance] Running Compliance Checks..." -ForegroundColor Cyan
+                
+                # CIS Benchmark (Level 1)
+                try {
+                    Write-Host "  Running CIS Benchmark (Level 1)..." -ForegroundColor Yellow
+                    $cisResult = Test-CISBenchmark -Level 1
+                    if ($null -ne $cisResult) {
+                        $cisPercentage = $null
+                        if ($cisResult.PSObject.Properties['Summary'] -and $null -ne $cisResult.Summary) {
+                            if ($cisResult.Summary -is [hashtable] -and $cisResult.Summary.ContainsKey('CompliancePercentage')) {
+                                $cisPercentage = $cisResult.Summary['CompliancePercentage']
+                            }
+                        }
+                        $assessment.ComplianceChecks += [PSCustomObject]@{
+                            Framework = 'CIS Benchmark'
+                            Version = 'Level 1'
+                            Status = 'Completed'
+                            CompliancePercentage = $cisPercentage
+                            Result = $cisResult
+                        }
+                    } else {
+                        Write-Warning "CIS Benchmark check returned no results"
+                        $assessment.ComplianceChecks += [PSCustomObject]@{
+                            Framework = 'CIS Benchmark'
+                            Version = 'Level 1'
+                            Status = 'NoResults'
+                            CompliancePercentage = $null
+                            Result = $null
+                        }
+                    }
+                } catch {
+                    Write-Warning "CIS Benchmark compliance check failed: $_"
+                    $assessment.ComplianceChecks += [PSCustomObject]@{
+                        Framework = 'CIS Benchmark'
+                        Version = 'Level 1'
+                        Status = 'Error'
+                        CompliancePercentage = $null
+                        Result = $null
+                    }
+                }
+                
+                # NIST 800-53 Compliance
+                try {
+                    Write-Host "  Running NIST 800-53 Compliance..." -ForegroundColor Yellow
+                    $nistResult = Test-NISTCompliance
+                    if ($null -ne $nistResult) {
+                        $nistPercentage = $null
+                        if ($nistResult.PSObject.Properties['Summary'] -and $null -ne $nistResult.Summary) {
+                            if ($nistResult.Summary -is [hashtable] -and $nistResult.Summary.ContainsKey('CompliancePercentage')) {
+                                $nistPercentage = $nistResult.Summary['CompliancePercentage']
+                            }
+                        }
+                        $assessment.ComplianceChecks += [PSCustomObject]@{
+                            Framework = 'NIST 800-53'
+                            Version = 'Rev 5'
+                            Status = 'Completed'
+                            CompliancePercentage = $nistPercentage
+                            Result = $nistResult
+                        }
+                    } else {
+                        Write-Warning "NIST 800-53 check returned no results"
+                        $assessment.ComplianceChecks += [PSCustomObject]@{
+                            Framework = 'NIST 800-53'
+                            Version = 'Rev 5'
+                            Status = 'NoResults'
+                            CompliancePercentage = $null
+                            Result = $null
+                        }
+                    }
+                } catch {
+                    Write-Warning "NIST 800-53 compliance check failed: $_"
+                    $assessment.ComplianceChecks += [PSCustomObject]@{
+                        Framework = 'NIST 800-53'
+                        Version = 'Rev 5'
+                        Status = 'Error'
+                        CompliancePercentage = $null
+                        Result = $null
+                    }
+                }
+                
+                # PCI-DSS Compliance (v4.0)
+                try {
+                    Write-Host "  Running PCI-DSS Compliance (v4.0)..." -ForegroundColor Yellow
+                    $pciResult = Test-PCI-DSS -Version '4.0'
+                    if ($null -ne $pciResult) {
+                        $pciPercentage = $null
+                        if ($pciResult.PSObject.Properties['Summary'] -and $null -ne $pciResult.Summary) {
+                            if ($pciResult.Summary -is [hashtable] -and $pciResult.Summary.ContainsKey('CompliancePercentage')) {
+                                $pciPercentage = $pciResult.Summary['CompliancePercentage']
+                            }
+                        }
+                        $assessment.ComplianceChecks += [PSCustomObject]@{
+                            Framework = 'PCI-DSS'
+                            Version = '4.0'
+                            Status = 'Completed'
+                            CompliancePercentage = $pciPercentage
+                            Result = $pciResult
+                        }
+                    } else {
+                        Write-Warning "PCI-DSS check returned no results"
+                        $assessment.ComplianceChecks += [PSCustomObject]@{
+                            Framework = 'PCI-DSS'
+                            Version = '4.0'
+                            Status = 'NoResults'
+                            CompliancePercentage = $null
+                            Result = $null
+                        }
+                    }
+                } catch {
+                    Write-Warning "PCI-DSS compliance check failed: $_"
+                    $assessment.ComplianceChecks += [PSCustomObject]@{
+                        Framework = 'PCI-DSS'
+                        Version = '4.0'
+                        Status = 'Error'
+                        CompliancePercentage = $null
+                        Result = $null
+                    }
+                }
+            }
+            
             # Calculate overall score
            # Calculate overall score
 $totalScore = 0
 $maxScore = 0
 try {
-    foreach ($category in $assessment.Categories.PSObject.Properties) {
-        if ($category.Value) {
+    foreach ($categoryName in $assessment.Categories.Keys) {
+        $category = $assessment.Categories[$categoryName]
+        if ($category) {
             try {
-                if ($category.Value.PSObject.Properties.Name -contains 'CategoryScore') {
-                    $totalScore += [int]$category.Value.CategoryScore
-                    $maxScore += [int]$category.Value.MaxScore
+                if ($category.PSObject.Properties.Name -contains 'CategoryScore') {
+                    $totalScore += [int]$category.CategoryScore
+                    $maxScore += [int]$category.MaxScore
                 }
             } catch {
-                Write-Verbose "Could not calculate score for category: $($category.Name)"
+                Write-Verbose "Could not calculate score for category: $categoryName"
             }
         }
     }
@@ -789,20 +921,21 @@ if ($assessment.OverallScore -ge 80) {
         )
         
      Write-Host "`nCategory Scores:" -ForegroundColor Cyan
-foreach ($category in $assessment.Categories.PSObject.Properties) {
-    if ($category.Value -and $category.Value -is [PSCustomObject]) {
+foreach ($categoryName in $assessment.Categories.Keys) {
+    $category = $assessment.Categories[$categoryName]
+    if ($category -and $category -is [PSCustomObject]) {
         try {
-            if ($category.Value.PSObject.Properties.Name -contains 'CategoryScore' -and 
-                $category.Value.PSObject.Properties.Name -contains 'MaxScore') {
-                $catScore = [int]$category.Value.CategoryScore
-                $catMax = [int]$category.Value.MaxScore
+            if ($category.PSObject.Properties.Name -contains 'CategoryScore' -and 
+                $category.PSObject.Properties.Name -contains 'MaxScore') {
+                $catScore = [int]$category.CategoryScore
+                $catMax = [int]$category.MaxScore
                 if ($catMax -gt 0) {
                     $percentage = [math]::Round(($catScore / $catMax) * 100, 0)
-                    Write-Host "  $($category.Name): $percentage%" -ForegroundColor White
+                    Write-Host "  $($categoryName): $percentage%" -ForegroundColor White
                 }
             }
         } catch {
-            Write-Verbose "Could not display score for: $($category.Name)"
+            Write-Verbose "Could not display score for: $categoryName"
         }
     }
 }
@@ -815,6 +948,32 @@ foreach ($category in $assessment.Categories.PSObject.Properties) {
         Write-Host "  Critical: $criticalCount" -ForegroundColor Red
         Write-Host "  High: $highCount" -ForegroundColor Yellow
         Write-Host "  Medium: $mediumCount" -ForegroundColor Yellow
+        
+        # Compliance summary (when -IncludeCompliance was used)
+        if (@($assessment.ComplianceChecks).Count -gt 0) {
+            Write-Host "`nCompliance Summary:" -ForegroundColor Cyan
+            foreach ($complianceCheck in $assessment.ComplianceChecks) {
+                if ($null -ne $complianceCheck -and $complianceCheck.PSObject.Properties['Status']) {
+                    $frameworkName = ''
+                    if ($complianceCheck.PSObject.Properties['Framework']) {
+                        $frameworkName = $complianceCheck.Framework
+                    }
+                    $frameworkVersion = ''
+                    if ($complianceCheck.PSObject.Properties['Version']) {
+                        $frameworkVersion = $complianceCheck.Version
+                    }
+                    if ($complianceCheck.Status -eq 'Completed') {
+                        $percentageText = 'N/A'
+                        if ($complianceCheck.PSObject.Properties['CompliancePercentage'] -and $null -ne $complianceCheck.CompliancePercentage) {
+                            $percentageText = "$($complianceCheck.CompliancePercentage)%"
+                        }
+                        Write-Host "  $frameworkName ($frameworkVersion): $percentageText compliant" -ForegroundColor White
+                    } else {
+                        Write-Host "  $frameworkName ($frameworkVersion): $($complianceCheck.Status)" -ForegroundColor Yellow
+                    }
+                }
+            }
+        }
         
         # Save results
         $assessment | ConvertTo-Json -Depth 10 | Out-File (Join-Path $OutputPath "SecurityAssessment.json")

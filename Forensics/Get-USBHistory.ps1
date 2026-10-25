@@ -151,7 +151,7 @@ function Get-USBHistory {
                                 if (-not $alreadyExists -and $props.FriendlyName) {
                                     # Parse VID/PID from device name (e.g., "VID_046D&PID_C52B")
                                     $vid = if ($usbDevice.PSChildName -match 'VID_([0-9A-F]+)') { $matches[1] } else { 'Unknown' }
-                                    $pid = if ($usbDevice.PSChildName -match 'PID_([0-9A-F]+)') { $matches[1] } else { 'Unknown' }
+                                    $devicePid = if ($usbDevice.PSChildName -match 'PID_([0-9A-F]+)') { $matches[1] } else { 'Unknown' }
                                     
                                     # FIXED: Safe timestamp retrieval from registry properties
                                     $installDate = $null
@@ -171,7 +171,7 @@ function Get-USBHistory {
                                         Type = 'USB Device'
                                         FriendlyName = $props.FriendlyName
                                         Vendor = "VID_$vid"
-                                        Product = "PID_$pid"
+                                        Product = "PID_$devicePid"
                                         Revision = 'N/A'
                                         SerialNumber = $serialNumber
                                         FirstInstalled = $installDate
@@ -182,7 +182,7 @@ function Get-USBHistory {
                                     $results.USBDevices += $deviceInfo
                                     $results.Summary.OtherDevices++
                                     
-                                    Write-Host "  Found: $($props.FriendlyName) (VID_$vid PID_$pid)" -ForegroundColor Gray
+                                    Write-Host "  Found: $($props.FriendlyName) (VID_$vid PID_$devicePid)" -ForegroundColor Gray
                                 }
                             }
                             catch {
@@ -255,9 +255,9 @@ function Get-USBHistory {
                     $setupApiPath = "$env:SystemRoot\inf\setupapi.dev.log"
                     
                     if (Test-Path $setupApiPath) {
-                        $setupContent = Get-Content $setupApiPath -ErrorAction SilentlyContinue | 
+                        $setupContent = @(Get-Content $setupApiPath -ErrorAction SilentlyContinue | 
                             Select-String -Pattern "USB|USBSTOR" -Context 0,2 | 
-                            Select-Object -First 100
+                            Select-Object -First 100)
                         
                         $usbEntries = $setupContent.Count
                         Write-Host "  Found $usbEntries USB-related entries in SetupAPI log" -ForegroundColor Green
@@ -288,8 +288,8 @@ function Get-USBHistory {
             $results.Summary.TotalDevices = $results.USBDevices.Count
             
             # Sort devices by last connection (those with dates first)
-            $results.USBDevices = $results.USBDevices | 
-                Sort-Object @{Expression={if($_.LastConnected){$_.LastConnected}else{[DateTime]::MinValue}}; Descending=$true}
+            $results.USBDevices = @($results.USBDevices | 
+                Sort-Object @{Expression={if($_.LastConnected){$_.LastConnected}else{[DateTime]::MinValue}}; Descending=$true})
             
             # 5. EXPORT REPORTS
             if ($OutputPath) {

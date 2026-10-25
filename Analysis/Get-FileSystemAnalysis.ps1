@@ -134,7 +134,7 @@ function Get-FileSystemAnalysis {
                         
                         # Check 2: Malicious file names
                         foreach ($malName in $maliciousNames) {
-                            if ($file.Name -match $malName) {
+                            if ($file.Name -match [regex]::Escape($malName)) {
                                 $isSuspicious = $true
                                 $reasons += "Matches known malicious filename: $malName"
                                 break

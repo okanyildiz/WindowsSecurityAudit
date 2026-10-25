@@ -198,7 +198,7 @@ function Find-LivingOffLand {
                 
                 try {
                     $processes = Get-CimInstance Win32_Process | 
-                        Where-Object { $_.CommandLine -ne $null } |
+                        Where-Object { $null -ne $_.CommandLine } |
                         Select-Object Name, ProcessId, ExecutablePath, CommandLine
                     
                     foreach ($process in $processes) {

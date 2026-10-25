@@ -128,17 +128,16 @@ function Find-SuspiciousAuthentication {
                     }
                 }
                 
-      # Calculate statistics safely
-             # ESKI SATIRLARI SİLİN, BUNLARI KOYUN:
-try {
-    $failedArray = @($results.FailedLogons)
-    if ($failedArray.Count -gt 0) {
-        $results.Statistics.UniqueFailedAccounts = (@($failedArray.Account | Select-Object -Unique)).Count
-        $results.Statistics.UniqueSourceIPs = (@($failedArray | Where-Object { $_.SourceIP -ne '-' } | Select-Object -ExpandProperty SourceIP -Unique)).Count
-    }
-} catch {
-    Write-Verbose "Could not calculate unique statistics"
-}
+                # Calculate statistics safely
+                try {
+                    $failedArray = @($results.FailedLogons)
+                    if ($failedArray.Count -gt 0) {
+                        $results.Statistics.UniqueFailedAccounts = (@($failedArray.Account | Select-Object -Unique)).Count
+                        $results.Statistics.UniqueSourceIPs = (@($failedArray | Where-Object { $_.SourceIP -ne '-' } | Select-Object -ExpandProperty SourceIP -Unique)).Count
+                    }
+                } catch {
+                    Write-Verbose "Could not calculate unique statistics"
+                }
             }
             
             # 2. Account Lockouts (Event ID 4740)

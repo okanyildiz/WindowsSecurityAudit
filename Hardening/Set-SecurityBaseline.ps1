@@ -54,13 +54,13 @@ function Set-SecurityBaseline {
             Errors = @()
             RequiresReboot = $false
             Categories = @{
-                UAC = @{}
-                Firewall = @{}
-                WindowsDefender = @{}
-                NetworkSecurity = @{}
-                AccountSecurity = @{}
-                SystemSecurity = @{}
-                BitLocker = @{}
+                UAC = @{ Status = 'Not Configured' }
+                Firewall = @{ Status = 'Not Configured' }
+                WindowsDefender = @{ Status = 'Not Configured' }
+                NetworkSecurity = @{ Status = 'Not Configured' }
+                AccountSecurity = @{ Status = 'Not Configured' }
+                SystemSecurity = @{ Status = 'Not Configured' }
+                BitLocker = @{ Status = 'Not Configured' }
             }
         }
     }

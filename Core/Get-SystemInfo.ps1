@@ -88,7 +88,7 @@ function Get-SystemInfo {
                         FileSystem = $_.FileSystem
                         Size = [math]::Round($_.Size / 1GB, 2)
                         FreeSpace = [math]::Round($_.FreeSpace / 1GB, 2)
-                        PercentFree = [math]::Round(($_.FreeSpace / $_.Size) * 100, 2)
+                        PercentFree = if ($_.Size) { [math]::Round(($_.FreeSpace / $_.Size) * 100, 2) } else { $null }
                     }
                 }
             }
@@ -96,20 +96,21 @@ function Get-SystemInfo {
             # Network Configuration
             $netAdapters = Get-NetAdapter | Where-Object { $_.Status -eq 'Up' }
             $netIP = Get-NetIPAddress | Where-Object { $_.AddressFamily -eq 'IPv4' -and $_.PrefixOrigin -ne 'WellKnown' }
+            $defaultRoute = Get-NetRoute -DestinationPrefix "0.0.0.0/0" -ErrorAction SilentlyContinue | Select-Object -First 1
             
             $info.Network = [PSCustomObject]@{
                 Adapters = $netAdapters | Select-Object Name, InterfaceDescription, MacAddress, LinkSpeed, Status
                 IPAddresses = $netIP | Select-Object InterfaceAlias, IPAddress, PrefixLength
                 DNSServers = Get-DnsClientServerAddress | Where-Object { $_.AddressFamily -eq 2 } | 
                     Select-Object InterfaceAlias, ServerAddresses
-                DefaultGateway = (Get-NetRoute -DestinationPrefix "0.0.0.0/0" -ErrorAction SilentlyContinue).NextHop
+                DefaultGateway = if ($defaultRoute) { $defaultRoute.NextHop } else { $null }
             }
             
             # Security Settings
 # Security Settings
 $info.Security = [PSCustomObject]@{
-    LocalUsers = (Get-LocalUser).Count
-    LocalAdministrators = (Get-LocalGroupMember -Group "Administrators" -ErrorAction SilentlyContinue).Count
+    LocalUsers = (@(Get-LocalUser)).Count
+    LocalAdministrators = (@(Get-LocalGroupMember -Group "Administrators" -ErrorAction SilentlyContinue)).Count
     PasswordPolicy = Get-LocalUser | Where-Object { $_.PasswordRequired -eq $false } | 
         Select-Object Name, Enabled
     FirewallProfiles = Get-NetFirewallProfile | Select-Object Name, Enabled

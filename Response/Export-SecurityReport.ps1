@@ -115,7 +115,7 @@ function Export-SecurityReport {
                 }
             }
             
-            if ($processes.Count -gt 0) {
+            if (@($processes).Count -gt 0) {
                $processArray = @($processes)
 $highSeverityProcs = @($processArray | Where-Object { $_.SuspicionScore -ge 70 })
 if ($highSeverityProcs.Count -gt 0) {
@@ -207,6 +207,45 @@ if ($highSeverityProcs.Count -gt 0) {
             if ($Format -in @('HTML', 'All')) {
                 Write-Host "Generating HTML report..." -ForegroundColor Yellow
                 
+                # Build findings-by-severity bar chart (inline SVG) if requested
+                $chartHtml = ''
+                if ($IncludeCharts) {
+                    $severityData = @(
+                        @{ Label = 'Critical'; Count = $reportData.Summary.CriticalFindings; Color = '#e74c3c' }
+                        @{ Label = 'High';     Count = $reportData.Summary.HighFindings;     Color = '#e67e22' }
+                        @{ Label = 'Medium';   Count = $reportData.Summary.MediumFindings;   Color = '#f39c12' }
+                        @{ Label = 'Low';      Count = $reportData.Summary.LowFindings;      Color = '#95a5a6' }
+                    )
+                    
+                    $maxCount = ($severityData | ForEach-Object { $_.Count } | Measure-Object -Maximum).Maximum
+                    if ($null -eq $maxCount -or $maxCount -lt 1) { $maxCount = 1 }
+                    
+                    $chartWidth = 500
+                    $barHeight = 30
+                    $barSpacing = 15
+                    $labelWidth = 80
+                    $maxBarWidth = $chartWidth - $labelWidth - 50
+                    $chartHeight = ($barHeight + $barSpacing) * $severityData.Count + 10
+                    
+                    $chartHtml = "<div class='summary'><h2>Findings by Severity</h2>`n"
+                    $chartHtml += "<svg width='$chartWidth' height='$chartHeight' xmlns='http://www.w3.org/2000/svg' role='img' aria-label='Findings by severity bar chart'>`n"
+                    
+                    $barY = 5
+                    foreach ($item in $severityData) {
+                        $barWidth = [math]::Round(($item.Count / $maxCount) * $maxBarWidth)
+                        if ($item.Count -gt 0 -and $barWidth -lt 2) { $barWidth = 2 }
+                        if ($barWidth -lt 0) { $barWidth = 0 }
+                        
+                        $chartHtml += "<text x='0' y='$($barY + 20)' font-size='13' fill='#333'>$($item.Label)</text>`n"
+                        $chartHtml += "<rect x='$labelWidth' y='$barY' width='$barWidth' height='$barHeight' fill='$($item.Color)' rx='3' />`n"
+                        $chartHtml += "<text x='$($labelWidth + $barWidth + 8)' y='$($barY + 20)' font-size='13' font-weight='bold' fill='#333'>$($item.Count)</text>`n"
+                        
+                        $barY += $barHeight + $barSpacing
+                    }
+                    
+                    $chartHtml += "</svg></div>"
+                }
+                
                 # Create HTML report
                 $htmlContent = @"
 <!DOCTYPE html>
@@ -264,6 +303,8 @@ if ($highSeverityProcs.Count -gt 0) {
         </table>
     </div>
     
+    $chartHtml
+    
     <div class="summary">
         <h2>Key Findings</h2>
         $($reportData.Findings | ForEach-Object {
@@ -288,9 +329,9 @@ if ($highSeverityProcs.Count -gt 0) {
         <h2>System Details</h2>
         <table>
             <tr><th>Component</th><th>Status</th></tr>
-            <tr><td>Windows Defender</td><td>$($baseline.WindowsDefender.RealTimeProtectionEnabled)</td></tr>
-            <tr><td>Firewall</td><td>$($baseline.Firewall[0].Enabled)</td></tr>
-            <tr><td>UAC</td><td>$($baseline.UAC.EnableLUA -eq 1)</td></tr>
+            <tr><td>Windows Defender</td><td>$(if ($baseline.WindowsDefender -is [PSCustomObject]) { $baseline.WindowsDefender.RealTimeProtectionEnabled } else { $baseline.WindowsDefender })</td></tr>
+            <tr><td>Firewall</td><td>$(if ($baseline.Firewall -is [array] -and $baseline.Firewall.Count -gt 0) { $baseline.Firewall[0].Enabled } else { $baseline.Firewall })</td></tr>
+            <tr><td>UAC</td><td>$(if ($baseline.UAC -is [PSCustomObject]) { $baseline.UAC.EnableLUA -eq 1 } else { $baseline.UAC })</td></tr>
             <tr><td>Persistence Mechanisms</td><td>$($persistence.TotalFindings) total ($($persistence.SuspiciousCount) suspicious)</td></tr>
             <tr><td>Network Anomalies</td><td>$($network.TotalAnomalies)</td></tr>
             <tr><td>Failed Logons</td><td>$($auth.Statistics.TotalFailedLogons)</td></tr>

@@ -65,7 +65,7 @@ function New-ExecutiveReport {
     
     .PARAMETER CustomLogo
         Path to a custom logo image file to include in the report header
-        Supported formats: PNG, JPG
+        Supported formats: PNG, JPG, SVG
     
     .EXAMPLE
         New-ExecutiveReport -MetricsFile "C:\Reports\SecurityMetrics_20251008.json" -OutputPath "C:\Reports" -OutputFormat HTML
@@ -119,7 +119,7 @@ function New-ExecutiveReport {
     [CmdletBinding()]
     param(
         [Parameter()]
-        [string]$MetricsFile,
+        [object]$MetricsFile,
         
         [Parameter()]
         [string]$OutputPath = ".",
@@ -187,6 +187,44 @@ function New-ExecutiveReport {
         Write-Host "Output Path: $OutputPath" -ForegroundColor Gray
         Write-Host "Output Format: $OutputFormat" -ForegroundColor Gray
         Write-Host "Audience: $Audience" -ForegroundColor Gray
+        
+        # Prepare custom logo as base64 data URI (falls back to text header)
+        $logoDataUri = $null
+        if ($CustomLogo) {
+            try {
+                if (Test-Path $CustomLogo) {
+                    $logoItem = Get-Item $CustomLogo
+                    $extension = $logoItem.Extension.ToLower()
+                    $mimeTypes = @{
+                        '.png'  = 'image/png'
+                        '.jpg'  = 'image/jpeg'
+                        '.jpeg' = 'image/jpeg'
+                        '.svg'  = 'image/svg+xml'
+                    }
+                    
+                    if ($mimeTypes.ContainsKey($extension)) {
+                        if ($logoItem.Length -le 2MB) {
+                            $logoBytes = [System.IO.File]::ReadAllBytes($logoItem.FullName)
+                            $logoDataUri = "data:$($mimeTypes[$extension]);base64,$([Convert]::ToBase64String($logoBytes))"
+                            Write-Host "Custom Logo: $($logoItem.Name) ($([math]::Round($logoItem.Length / 1KB, 2)) KB)" -ForegroundColor Gray
+                        }
+                        else {
+                            Write-Warning "Custom logo exceeds 2 MB size limit - using text header"
+                        }
+                    }
+                    else {
+                        Write-Warning "Custom logo format '$extension' not supported (use PNG, JPG, or SVG) - using text header"
+                    }
+                }
+                else {
+                    Write-Warning "Custom logo not found: $CustomLogo - using text header"
+                }
+            }
+            catch {
+                Write-Warning "Could not read custom logo '$CustomLogo' - using text header"
+                $logoDataUri = $null
+            }
+        }
     }
     
     process {
@@ -197,6 +235,14 @@ function New-ExecutiveReport {
             function Get-SafeProperty {
                 param($Object, $PropertyName, $Default = $null)
                 if ($null -eq $Object) { return $Default }
+                if ($Object -is [System.Collections.IDictionary]) {
+                    if ($Object.Contains($PropertyName)) {
+                        $value = $Object[$PropertyName]
+                        if ($null -eq $value) { return $Default }
+                        return $value
+                    }
+                    return $Default
+                }
                 if ($Object.PSObject.Properties[$PropertyName]) {
                     $value = $Object.$PropertyName
                     if ($null -eq $value) { return $Default }
@@ -278,6 +324,7 @@ function New-ExecutiveReport {
                 CompanyName = $CompanyName
                 Confidential = $Confidential
                 Audience = $Audience
+                LogoDataUri = $logoDataUri
                 
                 # Source Metrics
                 Metrics = $metrics
@@ -903,10 +950,10 @@ function New-ExecutiveReport {
             )
             
             $reportData.RemediationRoadmap.ResourceEstimate.EstimatedCost = 
-                if ($riskLevel -eq 'Critical') { "$$$$$ - Significant investment required" }
-                elseif ($riskLevel -eq 'High') { "$$$$ - Substantial investment needed" }
-                elseif ($riskLevel -eq 'Medium') { "$$$ - Moderate investment" }
-                else { "$$ - Limited investment" }
+                if ($riskLevel -eq 'Critical') { '$$$$$ - Significant investment required' }
+                elseif ($riskLevel -eq 'High') { '$$$$ - Substantial investment needed' }
+                elseif ($riskLevel -eq 'Medium') { '$$$ - Moderate investment' }
+                else { '$$ - Limited investment' }
             
             # ============================================
             # BUILD TREND ANALYSIS
@@ -1096,7 +1143,7 @@ function Generate-HTMLReport {
         param($Array)
         if ($null -eq $Array) { return 0 }
         if ($Array -is [array]) { return $Array.Count }
-        if ($Array.Count) { return $Array.Count }
+        if ($Array.PSObject.Properties['Count']) { return $Array.Count }
         return 1  # Single item
     }
     
@@ -1327,6 +1374,9 @@ function Generate-HTMLReport {
         })
         
         <div class="header">
+            $(if ($ReportData.LogoDataUri) {
+                "<img src='$($ReportData.LogoDataUri)' alt='$($ReportData.CompanyName) Logo' style='max-height: 80px; max-width: 300px; margin-bottom: 15px;' />"
+            })
             <h1>$($ReportData.ReportTitle)</h1>
             <div class="subtitle">$($ReportData.CompanyName)</div>
             <div class="subtitle">Generated: $($ReportData.GeneratedDate)</div>
@@ -1675,7 +1725,7 @@ function Generate-ExecutiveSummary {
         param($Array)
         if ($null -eq $Array) { return 0 }
         if ($Array -is [array]) { return $Array.Count }
-        if ($Array.Count) { return $Array.Count }
+        if ($Array.PSObject.Properties['Count']) { return $Array.Count }
         return 1  # Single item
     }
     

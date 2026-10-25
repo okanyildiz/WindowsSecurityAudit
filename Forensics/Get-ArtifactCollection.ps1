@@ -386,7 +386,7 @@ function Get-ArtifactCollection {
                         ConvertTo-Json | Out-File (Join-Path $paths.Execution "Services.json")
                     
                     # Scheduled tasks
-                    Get-ScheduledTask | Select-Object TaskName, TaskPath, State, @{N='LastRunTime';E={$_.LastRunTime}} |
+                    Get-ScheduledTask | Select-Object TaskName, TaskPath, State, @{N='LastRunTime';E={($_ | Get-ScheduledTaskInfo).LastRunTime}} |
                         ConvertTo-Json | Out-File (Join-Path $paths.Execution "ScheduledTasks.json")
                     
                     # Startup programs
@@ -433,7 +433,7 @@ function Get-ArtifactCollection {
             # CALCULATE COLLECTION SIZE
             Write-Host "`n[*] Calculating collection statistics..." -ForegroundColor Cyan
             
-            $collectedFiles = Get-ChildItem -Path $collectionRoot -Recurse -File -ErrorAction SilentlyContinue
+            $collectedFiles = @(Get-ChildItem -Path $collectionRoot -Recurse -File -ErrorAction SilentlyContinue)
             $results.Summary.TotalFiles = $collectedFiles.Count
             $results.Summary.TotalSize = ($collectedFiles | Measure-Object -Property Length -Sum).Sum
             

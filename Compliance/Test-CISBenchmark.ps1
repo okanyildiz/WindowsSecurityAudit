@@ -289,7 +289,8 @@ function Test-CISBenchmark {
                 
                 try {
                     # CIS 2.3.1.1 - Accounts: Administrator account status
-                    $adminDisabled = (Get-LocalUser -Name "Administrator" -ErrorAction SilentlyContinue).Enabled
+                    $adminUser = Get-LocalUser -Name "Administrator" -ErrorAction SilentlyContinue
+                    $adminDisabled = if ($adminUser) { $adminUser.Enabled } else { $false }
                     $control = [PSCustomObject]@{
                         ControlID = 'CIS-2.3.1.1'
                         ControlName = 'Accounts: Administrator account status'
@@ -303,7 +304,8 @@ function Test-CISBenchmark {
                     $results.Controls += $control
                     
                     # CIS 2.3.1.5 - Accounts: Guest account status
-                    $guestDisabled = (Get-LocalUser -Name "Guest" -ErrorAction SilentlyContinue).Enabled
+                    $guestUser = Get-LocalUser -Name "Guest" -ErrorAction SilentlyContinue
+                    $guestDisabled = if ($guestUser) { $guestUser.Enabled } else { $false }
                     $control = [PSCustomObject]@{
                         ControlID = 'CIS-2.3.1.5'
                         ControlName = 'Accounts: Guest account status'

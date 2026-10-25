@@ -140,7 +140,7 @@ function Find-PersistenceMechanisms {
                     
                     $isSuspicious = $false
                     # Check for suspicious indicators
-                    if ($task.Principal.UserId -eq 'SYSTEM' -and $task.TaskPath -notmatch '\\Microsoft\\') {
+                    if ($task.Principal -and $task.Principal.UserId -eq 'SYSTEM' -and $task.TaskPath -notmatch '\\Microsoft\\') {
                         $isSuspicious = $true
                     }
                     if ($actions -match '(powershell|cmd|wscript|cscript|mshta)' -and $task.TaskPath -notmatch '\\Microsoft\\') {
@@ -153,7 +153,7 @@ function Find-PersistenceMechanisms {
                             Path = $task.TaskPath
                             State = $task.State
                             Actions = if ($actions) { ($actions -join '; ') } else { 'N/A' }
-                            RunAsUser = $task.Principal.UserId
+                            RunAsUser = if ($task.Principal) { $task.Principal.UserId } else { 'N/A' }
                             LastRunTime = if ($taskInfo -and $taskInfo.LastRunTime) { $taskInfo.LastRunTime } else { 'Never' }
                             NextRunTime = if ($taskInfo -and $taskInfo.NextRunTime) { $taskInfo.NextRunTime } else { 'Not scheduled' }
                             Suspicious = $isSuspicious
@@ -220,10 +220,10 @@ function Find-PersistenceMechanisms {
             $appInitPath = "HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Windows"
             if (Test-Path $appInitPath) {
                 $appInit = Get-ItemProperty -Path $appInitPath -ErrorAction SilentlyContinue
-                if ($appInit.AppInit_DLLs) {
+                if ($appInit -and $appInit.PSObject.Properties['AppInit_DLLs'] -and $appInit.AppInit_DLLs) {
                     $results.AppInitDLLs += [PSCustomObject]@{
                         Value = $appInit.AppInit_DLLs
-                        LoadAppInit = $appInit.LoadAppInit_DLLs
+                        LoadAppInit = if ($appInit.PSObject.Properties['LoadAppInit_DLLs']) { $appInit.LoadAppInit_DLLs } else { 'N/A' }
                         Suspicious = $true
                     }
                     $results.SuspiciousCount++
@@ -237,7 +237,7 @@ function Find-PersistenceMechanisms {
                 $lsa = Get-ItemProperty -Path $lsaPath -ErrorAction SilentlyContinue
                 
                 # Check Authentication Packages
-                if ($lsa.'Authentication Packages') {
+                if ($lsa -and $lsa.PSObject.Properties['Authentication Packages'] -and $lsa.'Authentication Packages') {
                     foreach ($pkg in $lsa.'Authentication Packages') {
                         if ($pkg -notmatch '^msv1_0$') {
                             $results.LSAProviders += [PSCustomObject]@{
@@ -251,7 +251,7 @@ function Find-PersistenceMechanisms {
                 }
                 
                 # Check Notification Packages
-                if ($lsa.'Notification Packages') {
+                if ($lsa -and $lsa.PSObject.Properties['Notification Packages'] -and $lsa.'Notification Packages') {
                     foreach ($pkg in $lsa.'Notification Packages') {
                         if ($pkg -notmatch '^(scecli|rassfm)$') {
                             $results.LSAProviders += [PSCustomObject]@{
@@ -271,7 +271,8 @@ function Find-PersistenceMechanisms {
             if (Test-Path $monitorPath) {
                 $monitors = Get-ChildItem -Path $monitorPath -ErrorAction SilentlyContinue
                 foreach ($monitor in $monitors) {
-                    $driverValue = (Get-ItemProperty -Path $monitor.PSPath -ErrorAction SilentlyContinue).Driver
+                    $monitorProps = Get-ItemProperty -Path $monitor.PSPath -ErrorAction SilentlyContinue
+                    $driverValue = if ($monitorProps -and $monitorProps.PSObject.Properties['Driver']) { $monitorProps.Driver } else { $null }
                     if ($driverValue -and $driverValue -notmatch '(Microsoft|Windows)') {
                         $results.PrintMonitors += [PSCustomObject]@{
                             Name = $monitor.PSChildName

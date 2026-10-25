@@ -95,8 +95,10 @@ function Test-NISTCompliance {
                 
                 try {
                     # AC-2: Account Management
-                    $guestDisabled = (Get-LocalUser -Name "Guest" -ErrorAction SilentlyContinue).Enabled -eq $false
-                    $adminDisabled = (Get-LocalUser -Name "Administrator" -ErrorAction SilentlyContinue).Enabled -eq $false
+                    $guestUser = Get-LocalUser -Name "Guest" -ErrorAction SilentlyContinue
+                    $guestDisabled = ($null -eq $guestUser) -or ($guestUser.Enabled -eq $false)
+                    $adminUser = Get-LocalUser -Name "Administrator" -ErrorAction SilentlyContinue
+                    $adminDisabled = ($null -eq $adminUser) -or ($adminUser.Enabled -eq $false)
                     
                     $control = [PSCustomObject]@{
                         ControlID = 'AC-2'
@@ -141,14 +143,15 @@ function Test-NISTCompliance {
                         Description = 'Automatic screen lock after inactivity'
                         Expected = '15 minutes (900 seconds) or less'
                         Actual = if ($regTest.ActualValue) { "$([math]::Round($regTest.ActualValue/60)) minutes" } else { "Not configured" }
-                        Status = if ($regTest.Compliant -or $regTest.ActualValue -le 900) { 'Compliant' } else { 'NonCompliant' }
+                        Status = if ($regTest.Compliant -or ($null -ne $regTest.ActualValue -and $regTest.ActualValue -le 900)) { 'Compliant' } else { 'NonCompliant' }
                         Impact = 'Medium'
                         Remediation = 'Configure screen lock timeout to 15 minutes or less'
                     }
                     $results.Controls += $control
                     
                     # AC-17: Remote Access
-                    $rdpEnabled = (Get-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server' -Name 'fDenyTSConnections' -ErrorAction SilentlyContinue).fDenyTSConnections
+                    $rdpSetting = Get-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server' -Name 'fDenyTSConnections' -ErrorAction SilentlyContinue
+                    $rdpEnabled = if ($rdpSetting) { $rdpSetting.fDenyTSConnections } else { $null }
                     
                     $control = [PSCustomObject]@{
                         ControlID = 'AC-17'
@@ -191,7 +194,8 @@ function Test-NISTCompliance {
                     $results.Controls += $control
                     
                     # AU-3: Content of Audit Records
-                    $eventLogSize = (Get-WinEvent -ListLog Security -ErrorAction SilentlyContinue).MaximumSizeInBytes
+                    $securityLog = Get-WinEvent -ListLog Security -ErrorAction SilentlyContinue
+                    $eventLogSize = if ($securityLog) { $securityLog.MaximumSizeInBytes } else { 0 }
                     
                     $control = [PSCustomObject]@{
                         ControlID = 'AU-3'
@@ -210,7 +214,10 @@ function Test-NISTCompliance {
                     $logPath = "C:\Windows\System32\winevt\Logs\Security.evtx"
                     if (Test-Path $logPath) {
                         $acl = Get-Acl $logPath -ErrorAction SilentlyContinue
-                        $protected = @($acl.Access | Where-Object { $_.IdentityReference -match "Users" -and $_.FileSystemRights -match "FullControl|Modify|Write" })
+                        $protected = @()
+                        if ($acl) {
+                            $protected = @($acl.Access | Where-Object { $_.IdentityReference -match "Users" -and $_.FileSystemRights -match "FullControl|Modify|Write" })
+                        }
                         
                         $control = [PSCustomObject]@{
                             ControlID = 'AU-9'
@@ -255,36 +262,46 @@ function Test-NISTCompliance {
                 try {
                     # IA-2: Identification and Authentication
                     $passwordPolicy = net accounts 2>$null
-                    $minPasswordLength = ($passwordPolicy | Select-String "Minimum password length").ToString().Split(':')[1].Trim()
-                    
-                    $control = [PSCustomObject]@{
-                        ControlID = 'IA-2'
-                        ControlName = 'Identification and Authentication'
-                        ControlFamily = 'IdentificationAuthentication'
-                        Description = 'System must uniquely identify and authenticate users'
-                        Expected = 'Minimum password length >= 14 characters'
-                        Actual = "$minPasswordLength characters"
-                        Status = if ([int]$minPasswordLength -ge 14) { 'Compliant' } else { 'NonCompliant' }
-                        Impact = 'High'
-                        Remediation = 'Set minimum password length to 14 characters'
+                    $minPasswordLengthLine = $passwordPolicy | Select-String "Minimum password length" | Select-Object -First 1
+
+                    if ($minPasswordLengthLine) {
+                        $minPasswordLength = $minPasswordLengthLine.ToString().Split(':')[1].Trim()
+
+                        $control = [PSCustomObject]@{
+                            ControlID = 'IA-2'
+                            ControlName = 'Identification and Authentication'
+                            ControlFamily = 'IdentificationAuthentication'
+                            Description = 'System must uniquely identify and authenticate users'
+                            Expected = 'Minimum password length >= 14 characters'
+                            Actual = "$minPasswordLength characters"
+                            Status = if ([int]$minPasswordLength -ge 14) { 'Compliant' } else { 'NonCompliant' }
+                            Impact = 'High'
+                            Remediation = 'Set minimum password length to 14 characters'
+                        }
+                        $results.Controls += $control
                     }
-                    $results.Controls += $control
-                    
+
                     # IA-5: Authenticator Management
-                    $maxPasswordAge = ($passwordPolicy | Select-String "Maximum password age").ToString().Split(':')[1].Trim().Split(' ')[0]
-                    
-                    $control = [PSCustomObject]@{
-                        ControlID = 'IA-5'
-                        ControlName = 'Authenticator Management'
-                        ControlFamily = 'IdentificationAuthentication'
-                        Description = 'Authenticators must be managed securely'
-                        Expected = 'Maximum password age <= 60 days'
-                        Actual = "$maxPasswordAge days"
-                        Status = if ([int]$maxPasswordAge -le 60 -and [int]$maxPasswordAge -gt 0) { 'Compliant' } else { 'NonCompliant' }
-                        Impact = 'High'
-                        Remediation = 'Set maximum password age to 60 days or less'
+                    $maxPasswordAgeLine = $passwordPolicy | Select-String "Maximum password age" | Select-Object -First 1
+
+                    if ($maxPasswordAgeLine) {
+                        $maxPasswordAge = $maxPasswordAgeLine.ToString().Split(':')[1].Trim().Split(' ')[0]
+                        $maxAgeDays = 0
+                        $maxAgeIsNumeric = [int]::TryParse($maxPasswordAge, [ref]$maxAgeDays)
+
+                        $control = [PSCustomObject]@{
+                            ControlID = 'IA-5'
+                            ControlName = 'Authenticator Management'
+                            ControlFamily = 'IdentificationAuthentication'
+                            Description = 'Authenticators must be managed securely'
+                            Expected = 'Maximum password age <= 60 days'
+                            Actual = "$maxPasswordAge days"
+                            Status = if ($maxAgeIsNumeric -and $maxAgeDays -le 60 -and $maxAgeDays -gt 0) { 'Compliant' } else { 'NonCompliant' }
+                            Impact = 'High'
+                            Remediation = 'Set maximum password age to 60 days or less'
+                        }
+                        $results.Controls += $control
                     }
-                    $results.Controls += $control
                     
                     # IA-8: Identification and Authentication (Non-Organizational Users)
                     $regTest = Test-RegistryValue -Path 'HKLM:\SYSTEM\CurrentControlSet\Control\Lsa' `
@@ -350,7 +367,7 @@ function Test-NISTCompliance {
                     
                     # SC-28: Protection of Information at Rest
                     $bitlockerStatus = Get-BitLockerVolume -MountPoint "C:" -ErrorAction SilentlyContinue
-                    $bitlockerEnabled = $bitlockerStatus.ProtectionStatus -eq 'On'
+                    $bitlockerEnabled = ($null -ne $bitlockerStatus) -and ($bitlockerStatus.ProtectionStatus -eq 'On')
                     
                     $control = [PSCustomObject]@{
                         ControlID = 'SC-28'
@@ -377,7 +394,7 @@ function Test-NISTCompliance {
                 try {
                     # CM-6: Configuration Settings
                     $defenderStatus = Get-MpComputerStatus -ErrorAction SilentlyContinue
-                    $defenderEnabled = $defenderStatus.AntivirusEnabled
+                    $defenderEnabled = ($null -ne $defenderStatus) -and $defenderStatus.AntivirusEnabled
                     
                     $control = [PSCustomObject]@{
                         ControlID = 'CM-6'

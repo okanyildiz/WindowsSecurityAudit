@@ -11,7 +11,7 @@ function Test-PCI-DSS {
         Specific requirement to test: All, Network, Data, AccessControl, Monitoring, Testing
     .EXAMPLE
         Test-PCI-DSS
-        Test-PCI-DSS -Version 4.0 -RequirementFilter Network
+        Test-PCI-DSS -Version '4.0' -RequirementFilter Network
     .OUTPUTS
         PSCustomObject with PCI-DSS compliance results
     #>
@@ -166,7 +166,7 @@ function Test-PCI-DSS {
                     
                     # Req 3.5: Primary account number (PAN) protection
                     $bitlockerStatus = Get-BitLockerVolume -MountPoint "C:" -ErrorAction SilentlyContinue
-                    $bitlockerEnabled = $bitlockerStatus.ProtectionStatus -eq 'On'
+                    $bitlockerEnabled = ($null -ne $bitlockerStatus) -and ($bitlockerStatus.ProtectionStatus -eq 'On')
                     
                     $req = [PSCustomObject]@{
                         RequirementID = '3.5.1'
@@ -206,7 +206,8 @@ function Test-PCI-DSS {
                 
                 try {
                     # Req 7.1: Limit access to system components
-                    $guestDisabled = (Get-LocalUser -Name "Guest" -ErrorAction SilentlyContinue).Enabled -eq $false
+                    $guestUser = Get-LocalUser -Name "Guest" -ErrorAction SilentlyContinue
+                    $guestDisabled = ($null -eq $guestUser) -or ($guestUser.Enabled -eq $false)
                     
                     $req = [PSCustomObject]@{
                         RequirementID = '7.1.1'
@@ -223,36 +224,46 @@ function Test-PCI-DSS {
                     
                     # Req 8.2: User identification and authentication
                     $passwordPolicy = net accounts 2>$null
-                    $minPasswordLength = ($passwordPolicy | Select-String "Minimum password length").ToString().Split(':')[1].Trim()
-                    
-                    $req = [PSCustomObject]@{
-                        RequirementID = '8.2.3'
-                        RequirementName = 'Password Complexity'
-                        Category = 'AccessControl'
-                        Description = 'Passwords must meet minimum complexity'
-                        Expected = 'Minimum 12 characters (or 8 if MFA)'
-                        Actual = "$minPasswordLength characters"
-                        Status = if ([int]$minPasswordLength -ge 12) { 'InPlace' } else { 'NotInPlace' }
-                        Priority = 'Critical'
-                        Remediation = 'Set minimum password length to 12 characters'
+                    $minPasswordLengthLine = $passwordPolicy | Select-String "Minimum password length" | Select-Object -First 1
+
+                    if ($minPasswordLengthLine) {
+                        $minPasswordLength = $minPasswordLengthLine.ToString().Split(':')[1].Trim()
+
+                        $req = [PSCustomObject]@{
+                            RequirementID = '8.2.3'
+                            RequirementName = 'Password Complexity'
+                            Category = 'AccessControl'
+                            Description = 'Passwords must meet minimum complexity'
+                            Expected = 'Minimum 12 characters (or 8 if MFA)'
+                            Actual = "$minPasswordLength characters"
+                            Status = if ([int]$minPasswordLength -ge 12) { 'InPlace' } else { 'NotInPlace' }
+                            Priority = 'Critical'
+                            Remediation = 'Set minimum password length to 12 characters'
+                        }
+                        $results.Requirements += $req
                     }
-                    $results.Requirements += $req
-                    
+
                     # Req 8.2.4: Change passwords every 90 days
-                    $maxPasswordAge = ($passwordPolicy | Select-String "Maximum password age").ToString().Split(':')[1].Trim().Split(' ')[0]
-                    
-                    $req = [PSCustomObject]@{
-                        RequirementID = '8.2.4'
-                        RequirementName = 'Password Change Frequency'
-                        Category = 'AccessControl'
-                        Description = 'Passwords must be changed periodically'
-                        Expected = '90 days or less'
-                        Actual = "$maxPasswordAge days"
-                        Status = if ([int]$maxPasswordAge -le 90 -and [int]$maxPasswordAge -gt 0) { 'InPlace' } else { 'NotInPlace' }
-                        Priority = 'High'
-                        Remediation = 'Set maximum password age to 90 days'
+                    $maxPasswordAgeLine = $passwordPolicy | Select-String "Maximum password age" | Select-Object -First 1
+
+                    if ($maxPasswordAgeLine) {
+                        $maxPasswordAge = $maxPasswordAgeLine.ToString().Split(':')[1].Trim().Split(' ')[0]
+                        $maxAgeDays = 0
+                        $maxAgeIsNumeric = [int]::TryParse($maxPasswordAge, [ref]$maxAgeDays)
+
+                        $req = [PSCustomObject]@{
+                            RequirementID = '8.2.4'
+                            RequirementName = 'Password Change Frequency'
+                            Category = 'AccessControl'
+                            Description = 'Passwords must be changed periodically'
+                            Expected = '90 days or less'
+                            Actual = "$maxPasswordAge days"
+                            Status = if ($maxAgeIsNumeric -and $maxAgeDays -le 90 -and $maxAgeDays -gt 0) { 'InPlace' } else { 'NotInPlace' }
+                            Priority = 'High'
+                            Remediation = 'Set maximum password age to 90 days'
+                        }
+                        $results.Requirements += $req
                     }
-                    $results.Requirements += $req
                     
                     # Req 8.3: Multi-factor authentication
                     $req = [PSCustomObject]@{
@@ -313,7 +324,8 @@ function Test-PCI-DSS {
                     $results.Requirements += $req
                     
                     # Req 10.5: Protect audit trails
-                    $eventLogSize = (Get-WinEvent -ListLog Security -ErrorAction SilentlyContinue).MaximumSizeInBytes
+                    $securityLog = Get-WinEvent -ListLog Security -ErrorAction SilentlyContinue
+                    $eventLogSize = if ($securityLog) { $securityLog.MaximumSizeInBytes } else { 0 }
                     
                     $req = [PSCustomObject]@{
                         RequirementID = '10.5.1'
@@ -338,7 +350,7 @@ function Test-PCI-DSS {
                         Description = 'System clocks must be synchronized'
                         Expected = 'Windows Time service running'
                         Actual = if ($w32timeService) { $w32timeService.Status } else { "Not found" }
-                        Status = if ($w32timeService.Status -eq 'Running') { 'InPlace' } else { 'NotInPlace' }
+                        Status = if ($w32timeService -and $w32timeService.Status -eq 'Running') { 'InPlace' } else { 'NotInPlace' }
                         Priority = 'Medium'
                         Remediation = 'Ensure Windows Time service is running and configured'
                     }
@@ -356,7 +368,7 @@ function Test-PCI-DSS {
                 try {
                     # Req 11.3: Vulnerability scanning
                     $defenderStatus = Get-MpComputerStatus -ErrorAction SilentlyContinue
-                    $defenderEnabled = $defenderStatus.AntivirusEnabled
+                    $defenderEnabled = ($null -ne $defenderStatus) -and $defenderStatus.AntivirusEnabled
                     
                     $req = [PSCustomObject]@{
                         RequirementID = '11.3.1'

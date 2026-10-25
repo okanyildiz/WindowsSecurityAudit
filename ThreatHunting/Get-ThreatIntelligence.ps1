@@ -114,6 +114,24 @@ function Get-ThreatIntelligence {
             Write-Host "Loading custom IOCs from: $IOCFile" -ForegroundColor Yellow
             try {
                 $customIOCs = Get-Content $IOCFile -Raw | ConvertFrom-Json
+                foreach ($section in 'MaliciousProcesses', 'MaliciousIPs', 'MaliciousHashes') {
+                    if ($customIOCs.PSObject.Properties[$section]) {
+                        foreach ($entry in $customIOCs.$section.PSObject.Properties) {
+                            $key = if ($section -eq 'MaliciousProcesses') { $entry.Name.ToLower() } else { $entry.Name }
+                            $iocDatabase[$section][$key] = @{
+                                Severity = if ($entry.Value.PSObject.Properties['Severity']) { $entry.Value.Severity } else { 'Medium' }
+                                Description = if ($entry.Value.PSObject.Properties['Description']) { $entry.Value.Description } else { 'Custom IOC' }
+                            }
+                        }
+                    }
+                }
+                if ($customIOCs.PSObject.Properties['SuspiciousPatterns']) {
+                    foreach ($patternGroup in 'ProcessCommandLine', 'FilePaths') {
+                        if ($customIOCs.SuspiciousPatterns.PSObject.Properties[$patternGroup]) {
+                            $iocDatabase.SuspiciousPatterns[$patternGroup] += @($customIOCs.SuspiciousPatterns.$patternGroup)
+                        }
+                    }
+                }
                 Write-Host "Custom IOCs loaded successfully" -ForegroundColor Green
             }
             catch {
@@ -130,7 +148,7 @@ function Get-ThreatIntelligence {
                 
                 try {
                     $processes = Get-CimInstance Win32_Process | 
-                        Where-Object { $_.CommandLine -ne $null } |
+                        Where-Object { $null -ne $_.CommandLine } |
                         Select-Object Name, ProcessId, ExecutablePath, CommandLine
                     
                     $foundCount = 0
@@ -220,16 +238,19 @@ function Get-ThreatIntelligence {
                     $foundCount = 0
                     
                     foreach ($conn in $connections) {
+                        $remoteAddress = $conn.RemoteAddress.ToString()
+                        
                         # Check against malicious IPs
-                        if ($iocDatabase.MaliciousIPs.ContainsKey($conn.RemoteAddress)) {
-                            $ioc = $iocDatabase.MaliciousIPs[$conn.RemoteAddress]
+                        if ($iocDatabase.MaliciousIPs.ContainsKey($remoteAddress)) {
+                            $ioc = $iocDatabase.MaliciousIPs[$remoteAddress]
                             $process = Get-Process -Id $conn.OwningProcess -ErrorAction SilentlyContinue
+                            $processName = if ($process) { $process.Name } else { "PID $($conn.OwningProcess)" }
                             
                             $match = [PSCustomObject]@{
                                 Type = 'Network'
                                 IOCType = 'MaliciousIP'
                                 Indicator = $conn.RemoteAddress
-                                ProcessName = $process.Name
+                                ProcessName = $processName
                                 ProcessId = $conn.OwningProcess
                                 LocalAddress = "$($conn.LocalAddress):$($conn.LocalPort)"
                                 RemoteAddress = "$($conn.RemoteAddress):$($conn.RemotePort)"
@@ -247,7 +268,7 @@ function Get-ThreatIntelligence {
                                 'Medium' { $results.Summary.MediumMatches++ }
                             }
                             
-                            Write-Host "  [!] MATCH: Malicious IP $($conn.RemoteAddress) via $($process.Name)" -ForegroundColor Red
+                            Write-Host "  [!] MATCH: Malicious IP $($conn.RemoteAddress) via $processName" -ForegroundColor Red
                         }
                     }
                     

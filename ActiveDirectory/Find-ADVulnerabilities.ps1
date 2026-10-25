@@ -256,7 +256,7 @@ function Find-ADVulnerabilities {
                         Write-Host "    [!] $($user.SamAccountName) has reversible encryption enabled" -ForegroundColor Red
                     }
                     
-                    if (-not $results.Recommendations -contains "Enforce strong password policies") {
+                    if ($results.Recommendations -notcontains "Enforce strong password policies") {
                         $results.Recommendations += "Enforce strong password policies (min 12 chars, complexity enabled)"
                         $results.Recommendations += "Regular password rotation for privileged accounts"
                         $results.Recommendations += "Disable reversible encryption for all accounts"

@@ -132,9 +132,10 @@ function Invoke-ForensicCollection {
                 
                 # Process modules
                 $procModules = Get-Process | ForEach-Object {
+                    $proc = $_
                     try {
-                        $_.Modules | Select-Object @{N='ProcessName';E={$_.ProcessName}}, 
-                                                   @{N='ProcessId';E={$_.Id}},
+                        $_.Modules | Select-Object @{N='ProcessName';E={$proc.ProcessName}}, 
+                                                   @{N='ProcessId';E={$proc.Id}},
                                                    ModuleName, FileName, Size
                     } catch {}
                 }
@@ -389,13 +390,17 @@ Please use appropriate forensic tools for memory acquisition.
                 $timeline = @()
                 
                 # Process start times
-                Get-Process | Where-Object { $_.StartTime } | ForEach-Object {
-                    $timeline += [PSCustomObject]@{
-                        Timestamp = $_.StartTime
-                        Type = 'ProcessStart'
-                        Description = "$($_.ProcessName) (PID: $($_.Id))"
-                        Details = $_.Path
-                    }
+                Get-Process | ForEach-Object {
+                    try {
+                        if ($_.StartTime) {
+                            $timeline += [PSCustomObject]@{
+                                Timestamp = $_.StartTime
+                                Type = 'ProcessStart'
+                                Description = "$($_.ProcessName) (PID: $($_.Id))"
+                                Details = $_.Path
+                            }
+                        }
+                    } catch {}
                 }
                 
                 # Recent file modifications

@@ -71,7 +71,9 @@ function Find-SuspiciousProcesses {
                     if (-not $processPath) {
                         continue
                     }
-                    
+
+                    $cimProcess = Get-CimInstance Win32_Process -Filter "ProcessId = $($proc.Id)" -ErrorAction SilentlyContinue
+
                     # Check 1: Suspicious process names
                     foreach ($suspName in $suspiciousNames) {
                         if ($processName -match $suspName) {
@@ -119,7 +121,7 @@ function Find-SuspiciousProcesses {
                     
                     # Check 6: Unusual parent-child relationship
                     try {
-                        $parentProcess = Get-Process -Id $proc.Parent.Id -ErrorAction Stop
+                        $parentProcess = Get-Process -Id $cimProcess.ParentProcessId -ErrorAction Stop
                         
                         # PowerShell/cmd spawned by Office apps
                         if ($parentProcess.ProcessName -match '(WINWORD|EXCEL|POWERPNT|OUTLOOK)' -and 
@@ -198,14 +200,14 @@ function Find-SuspiciousProcesses {
                             ProcessName = $proc.ProcessName
                             ProcessId = $proc.Id
                             Path = $processPath
-                            CommandLine = (Get-CimInstance Win32_Process -Filter "ProcessId = $($proc.Id)" -ErrorAction SilentlyContinue).CommandLine
+                            CommandLine = if ($cimProcess) { $cimProcess.CommandLine } else { 'N/A' }
                             UserName = $proc.UserName
                             StartTime = $proc.StartTime
                             CPU = [math]::Round($proc.CPU, 2)
                             WorkingSet = [math]::Round($proc.WorkingSet64 / 1MB, 2)
                             SuspicionScore = $suspicionScore
                             Reasons = ($suspicionReasons -join '; ')
-                            ParentProcess = try { (Get-Process -Id $proc.Parent.Id -ErrorAction Stop).ProcessName } catch { 'N/A' }
+                            ParentProcess = try { (Get-Process -Id $cimProcess.ParentProcessId -ErrorAction Stop).ProcessName } catch { 'N/A' }
                         }
                     }
                 }

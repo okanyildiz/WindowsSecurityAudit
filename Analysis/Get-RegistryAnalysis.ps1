@@ -88,23 +88,29 @@ function Get-RegistryAnalysis {
                         
                         # Analyze LSA settings
                         if ($path -match 'Lsa$') {
+                            $restrictAnonymous = if ($null -ne $properties.PSObject.Properties['RestrictAnonymous']) { $properties.RestrictAnonymous } else { $null }
+                            $limitBlankPasswordUse = if ($null -ne $properties.PSObject.Properties['LimitBlankPasswordUse']) { $properties.LimitBlankPasswordUse } else { $null }
+                            $noLMHash = if ($null -ne $properties.PSObject.Properties['NoLMHash']) { $properties.NoLMHash } else { $null }
+                            $disableDomainCreds = if ($null -ne $properties.PSObject.Properties['DisableDomainCreds']) { $properties.DisableDomainCreds } else { $null }
+                            $everyoneIncludesAnonymous = if ($null -ne $properties.PSObject.Properties['EveryoneIncludesAnonymous']) { $properties.EveryoneIncludesAnonymous } else { $null }
+                            
                             $keyObj = [PSCustomObject]@{
                                 Path = $path
                                 Category = $criticalPaths[$path]
-                                RestrictAnonymous = $properties.RestrictAnonymous
-                                LimitBlankPasswordUse = $properties.LimitBlankPasswordUse
-                                NoLMHash = $properties.NoLMHash
-                                DisableDomainCreds = $properties.DisableDomainCreds
-                                EveryoneIncludesAnonymous = $properties.EveryoneIncludesAnonymous
+                                RestrictAnonymous = $restrictAnonymous
+                                LimitBlankPasswordUse = $limitBlankPasswordUse
+                                NoLMHash = $noLMHash
+                                DisableDomainCreds = $disableDomainCreds
+                                EveryoneIncludesAnonymous = $everyoneIncludesAnonymous
                                 Findings = @()
                             }
                             
                             # Check for security issues
-                            if ($properties.RestrictAnonymous -ne 1) {
+                            if ($restrictAnonymous -ne 1) {
                                 $keyObj.Findings += "RestrictAnonymous not set to secure value"
                                 $results.Statistics.SuspiciousFindings++
                             }
-                            if ($properties.LimitBlankPasswordUse -ne 1) {
+                            if ($limitBlankPasswordUse -ne 1) {
                                 $keyObj.Findings += "Blank passwords not restricted"
                                 $results.Statistics.SuspiciousFindings++
                             }
@@ -114,7 +120,7 @@ function Get-RegistryAnalysis {
                         
                         # Analyze WDigest settings
                         if ($path -match 'WDigest$') {
-                            $useLogonCredential = $properties.UseLogonCredential
+                            $useLogonCredential = if ($null -ne $properties.PSObject.Properties['UseLogonCredential']) { $properties.UseLogonCredential } else { $null }
                             if ($useLogonCredential -eq 1) {
                                 $results.SecuritySettings += [PSCustomObject]@{
                                     Path = $path
@@ -129,21 +135,26 @@ function Get-RegistryAnalysis {
                         
                         # Analyze UAC settings
                         if ($path -match 'Policies\\System$') {
+                            $enableLUA = if ($null -ne $properties.PSObject.Properties['EnableLUA']) { $properties.EnableLUA } else { $null }
+                            $consentPromptBehaviorAdmin = if ($null -ne $properties.PSObject.Properties['ConsentPromptBehaviorAdmin']) { $properties.ConsentPromptBehaviorAdmin } else { $null }
+                            $enableInstallerDetection = if ($null -ne $properties.PSObject.Properties['EnableInstallerDetection']) { $properties.EnableInstallerDetection } else { $null }
+                            $promptOnSecureDesktop = if ($null -ne $properties.PSObject.Properties['PromptOnSecureDesktop']) { $properties.PromptOnSecureDesktop } else { $null }
+                            
                             $keyObj = [PSCustomObject]@{
                                 Path = $path
                                 Category = 'User Account Control'
-                                EnableLUA = $properties.EnableLUA
-                                ConsentPromptBehaviorAdmin = $properties.ConsentPromptBehaviorAdmin
-                                EnableInstallerDetection = $properties.EnableInstallerDetection
-                                PromptOnSecureDesktop = $properties.PromptOnSecureDesktop
+                                EnableLUA = $enableLUA
+                                ConsentPromptBehaviorAdmin = $consentPromptBehaviorAdmin
+                                EnableInstallerDetection = $enableInstallerDetection
+                                PromptOnSecureDesktop = $promptOnSecureDesktop
                                 Findings = @()
                             }
                             
-                            if ($properties.EnableLUA -ne 1) {
+                            if ($enableLUA -ne 1) {
                                 $keyObj.Findings += "UAC is disabled"
                                 $results.Statistics.SuspiciousFindings++
                             }
-                            if ($properties.PromptOnSecureDesktop -ne 1) {
+                            if ($promptOnSecureDesktop -ne 1) {
                                 $keyObj.Findings += "UAC not prompting on secure desktop"
                             }
                             
@@ -212,19 +223,21 @@ function Get-RegistryAnalysis {
                     try {
                         $serviceProps = Get-ItemProperty -Path $service.PSPath -ErrorAction SilentlyContinue
                         
-                        if ($serviceProps.ImagePath) {
+                        $imagePath = if ($null -ne $serviceProps -and $null -ne $serviceProps.PSObject.Properties['ImagePath']) { $serviceProps.ImagePath } else { $null }
+                        
+                        if ($imagePath) {
                             $isSuspicious = $false
                             $reasons = @()
                             
                             # Check for suspicious service paths
-                            if ($serviceProps.ImagePath -match '(temp|appdata|users\\public)') {
+                            if ($imagePath -match '(temp|appdata|users\\public)') {
                                 $isSuspicious = $true
                                 $reasons += "Service running from suspicious location"
                             }
                             
                             # Check for services without proper quotes
-                            if ($serviceProps.ImagePath -match '^[A-Z]:\\.*\s.*\.exe' -and 
-                                $serviceProps.ImagePath -notmatch '^"') {
+                            if ($imagePath -match '^[A-Z]:\\.*\s.*\.exe' -and 
+                                $imagePath -notmatch '^"') {
                                 $isSuspicious = $true
                                 $reasons += "Unquoted service path with spaces (potential privilege escalation)"
                             }
@@ -232,8 +245,8 @@ function Get-RegistryAnalysis {
                             if ($isSuspicious) {
                                 $results.ServiceKeys += [PSCustomObject]@{
                                     ServiceName = $service.PSChildName
-                                    ImagePath = $serviceProps.ImagePath
-                                    Start = $serviceProps.Start
+                                    ImagePath = $imagePath
+                                    Start = if ($null -ne $serviceProps.PSObject.Properties['Start']) { $serviceProps.Start } else { $null }
                                     Reasons = $reasons -join '; '
                                 }
                                 $results.Statistics.SuspiciousFindings++
@@ -263,12 +276,12 @@ function Get-RegistryAnalysis {
                             # Check for overly permissive access
                             foreach ($access in $acl.Access) {
                                 if ($access.IdentityReference -match '(Everyone|Users|Authenticated Users)' -and
-                                    $access.FileSystemRights -match '(FullControl|Write|Modify)') {
+                                    $access.RegistryRights -match '(FullControl|Write|Modify)') {
                                     
                                     $results.PermissionIssues += [PSCustomObject]@{
                                         Path = $keyPath
                                         Identity = $access.IdentityReference
-                                        Rights = $access.FileSystemRights
+                                        Rights = $access.RegistryRights
                                         AccessControlType = $access.AccessControlType
                                         Severity = 'High'
                                     }

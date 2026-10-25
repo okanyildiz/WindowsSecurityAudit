@@ -125,7 +125,9 @@ function Get-EventLogAnalysis {
                             
                             # Check if this is a critical event ID
                             $isCritical = $criticalEventIDs.ContainsKey($event.Id)
-                            
+
+                            $eventMessage = try { $event.Message } catch { $null }
+
                             $eventObj = [PSCustomObject]@{
                                 TimeCreated = $event.TimeCreated
                                 LogName = $event.LogName
@@ -138,7 +140,7 @@ function Get-EventLogAnalysis {
                                     4 { 'Information' }
                                     default { 'Unknown' }
                                 }
-                                Message = $event.Message
+                                Message = $eventMessage
                                 Description = if ($isCritical) { $criticalEventIDs[$event.Id] } else { $null }
                                 IsCritical = $isCritical
                             }

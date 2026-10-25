@@ -90,7 +90,7 @@ function Get-ExecutionArtifacts {
                     $prefetchPath = "$env:SystemRoot\Prefetch"
                     
                     if (Test-Path $prefetchPath) {
-                        $prefetchFiles = Get-ChildItem -Path $prefetchPath -Filter "*.pf" -ErrorAction SilentlyContinue
+                        $prefetchFiles = @(Get-ChildItem -Path $prefetchPath -Filter "*.pf" -ErrorAction SilentlyContinue)
                         
                         foreach ($file in $prefetchFiles) {
                             # Extract executable name from prefetch filename (format: EXECUTABLE-HASH.pf)
@@ -334,7 +334,7 @@ function Get-ExecutionArtifacts {
                     }
                     else {
                         # Try DAM (older Windows 10)
-                        $damPath = 'HKLM:\SYSTEM\CurrentControlSet\Services\dam\State\UserSettings'
+                        $damPath = 'HKLM:\SYSTEM\CurrentControlSet\Services\dam\UserSettings'
                         
                         if (Test-Path $damPath) {
                             Write-Host "  DAM found (older Windows 10 version)" -ForegroundColor Gray
@@ -354,8 +354,8 @@ function Get-ExecutionArtifacts {
             $results.Summary.TotalArtifacts = $results.Artifacts.Count
             
             # Sort artifacts by timestamp
-            $results.Artifacts = $results.Artifacts | 
-                Sort-Object Timestamp -Descending
+            $results.Artifacts = @($results.Artifacts | 
+                Sort-Object Timestamp -Descending)
             
             # 6. EXPORT REPORTS
             if ($OutputPath) {

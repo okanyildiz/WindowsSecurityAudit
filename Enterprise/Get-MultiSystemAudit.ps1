@@ -319,7 +319,7 @@ function Get-MultiSystemAudit {
                 }
                 catch {
                     $systemAudit.Status = 'Failed'
-                    $systemAudit.Details.Error = $_.Exception.Message
+                    $systemAudit.Details = @{ Error = $_.Exception.Message }
                     $auditResults.Summary.SystemsFailed++
                     Write-Warning "  Failed to audit $computer : $_"
                 }
@@ -347,8 +347,8 @@ function Get-MultiSystemAudit {
                 
                 # Find common findings
                 $allFindings = $successfulAudits | ForEach-Object { $_.Findings.Finding }
-                $commonFindings = $allFindings | Group-Object | Where-Object { $_.Count -ge ($successfulAudits.Count / 2) } | 
-                    Select-Object -ExpandProperty Name
+                $commonFindings = @($allFindings | Group-Object | Where-Object { $_.Count -ge ($successfulAudits.Count / 2) } | 
+                    Select-Object -ExpandProperty Name)
                 
                 $auditResults.ComparativeAnalysis.CommonFindings = $commonFindings
             }

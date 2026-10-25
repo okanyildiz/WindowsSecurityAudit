@@ -106,7 +106,9 @@ function Find-ADBackdoors {
                                 $group = Get-ADGroup -Filter "Name -eq '$groupName'" -Server $Domain -ErrorAction SilentlyContinue
                                 if ($group) {
                                     $members = Get-ADGroupMember -Identity $group -Recursive -Server $Domain -ErrorAction SilentlyContinue
-                                    $legitimatePrivilegedUsers += $members.SamAccountName
+                                    if ($members) {
+                                        $legitimatePrivilegedUsers += $members.SamAccountName
+                                    }
                                 }
                             }
                             catch {
@@ -164,7 +166,11 @@ function Find-ADBackdoors {
                         if ($ace.ObjectType -in $dcsyncRights) {
                             # Resolve SID to account
                             try {
-                                $account = Get-ADObject -Filter "objectSid -eq '$($ace.IdentityReference)'" -Server $Domain -ErrorAction SilentlyContinue
+                                $aceSid = $ace.IdentityReference
+                                if ($aceSid -isnot [System.Security.Principal.SecurityIdentifier]) {
+                                    $aceSid = $aceSid.Translate([System.Security.Principal.SecurityIdentifier])
+                                }
+                                $account = Get-ADObject -Filter "objectSid -eq '$aceSid'" -Server $Domain -ErrorAction SilentlyContinue
                                 
                                 if ($account) {
                                     # Check if it's a legitimate DC or admin account

@@ -308,8 +308,8 @@ function Test-ADSecurityPosture {
         )
         
         Write-Host "`nCategory Scores:" -ForegroundColor Cyan
-        foreach ($category in $assessment.Categories.PSObject.Properties) {
-            if ($category.Value.Score -ne $null) {
+        foreach ($category in $assessment.Categories.GetEnumerator()) {
+            if ($null -ne $category.Value.Score) {
                 $percentage = [math]::Round(($category.Value.Score / $category.Value.MaxScore) * 100, 0)
                 Write-Host "  $($category.Name): $percentage%" -ForegroundColor White
             }

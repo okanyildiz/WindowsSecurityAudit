@@ -448,7 +448,10 @@ function Get-SecurityMetrics {
                     $baseline = Get-SecurityBaseline -ErrorAction Stop
                     if ($baseline) {
                         # Safe property access
-                        if ($baseline.PSObject.Properties['CompliancePercentage']) {
+                        if ($baseline.PSObject.Properties['SecurityScore']) {
+                            $script:metrics.Core.BaselineCompliance = $baseline.SecurityScore
+                        }
+                        elseif ($baseline.PSObject.Properties['CompliancePercentage']) {
                             $script:metrics.Core.BaselineCompliance = $baseline.CompliancePercentage
                         }
                         elseif ($baseline.PSObject.Properties['ComplianceScore']) {
@@ -473,11 +476,9 @@ function Get-SecurityMetrics {
                         $script:metrics.Core.SystemHealth = "Healthy"
                         
                         # Extract uptime if available
-                        if ($sysInfo.PSObject.Properties['LastBootUpTime']) {
-                            $script:metrics.Core.UptimeDays = [Math]::Round(((Get-Date) - $sysInfo.LastBootUpTime).TotalDays, 1)
-                        }
-                        elseif ($sysInfo.PSObject.Properties['BootTime']) {
-                            $script:metrics.Core.UptimeDays = [Math]::Round(((Get-Date) - $sysInfo.BootTime).TotalDays, 1)
+                        if ($sysInfo.PSObject.Properties['OperatingSystem'] -and $sysInfo.OperatingSystem -and 
+                            $sysInfo.OperatingSystem.PSObject.Properties['LastBootUpTime'] -and $sysInfo.OperatingSystem.LastBootUpTime) {
+                            $script:metrics.Core.UptimeDays = [Math]::Round(((Get-Date) - [datetime]$sysInfo.OperatingSystem.LastBootUpTime).TotalDays, 1)
                         }
                         
                         $successfulFunctions++
@@ -502,6 +503,9 @@ function Get-SecurityMetrics {
                         }
                         elseif ($integrity.PSObject.Properties['IntegrityStatus']) {
                             $script:metrics.Core.IntegrityStatus = $integrity.IntegrityStatus
+                        }
+                        elseif ($integrity.PSObject.Properties['SFCResult'] -and $integrity.SFCResult) {
+                            $script:metrics.Core.IntegrityStatus = $integrity.SFCResult
                         }
                         
                         # Extract pending updates
@@ -553,7 +557,11 @@ function Get-SecurityMetrics {
                 try {
                     $totalFunctions++
                     $persistence = Find-PersistenceMechanisms -ErrorAction Stop
-                    $script:metrics.Detection.PersistenceMechanisms = @($persistence).Count
+                    if ($persistence -and $persistence.PSObject.Properties['SuspiciousCount']) {
+                        $script:metrics.Detection.PersistenceMechanisms = $persistence.SuspiciousCount
+                    } else {
+                        $script:metrics.Detection.PersistenceMechanisms = @($persistence).Count
+                    }
                     $successfulFunctions++
                     Write-Host "  Persistence Mechanisms: $($script:metrics.Detection.PersistenceMechanisms)" -ForegroundColor $(if ($script:metrics.Detection.PersistenceMechanisms -gt 0) { 'Yellow' } else { 'Green' })
                 } catch { 
@@ -577,7 +585,13 @@ function Get-SecurityMetrics {
                 try {
                     $totalFunctions++
                     $auth = Find-SuspiciousAuthentication -ErrorAction Stop
-                    $script:metrics.Detection.SuspiciousAuthentications = @($auth).Count
+                    if ($auth -and $auth.PSObject.Properties['Statistics'] -and $auth.Statistics) {
+                        $script:metrics.Detection.SuspiciousAuthentications = 
+                            $auth.Statistics.TotalFailedLogons + $auth.Statistics.TotalLockouts +
+                            $auth.Statistics.TotalPrivilegeUse + $auth.Statistics.TotalExplicitCreds
+                    } else {
+                        $script:metrics.Detection.SuspiciousAuthentications = @($auth).Count
+                    }
                     $successfulFunctions++
                     Write-Host "  Suspicious Authentications: $($script:metrics.Detection.SuspiciousAuthentications)" -ForegroundColor $(if ($script:metrics.Detection.SuspiciousAuthentications -gt 0) { 'Yellow' } else { 'Green' })
                 } catch { 
@@ -589,7 +603,11 @@ function Get-SecurityMetrics {
                 try {
                     $totalFunctions++
                     $lateral = Find-LateralMovement -ErrorAction Stop
-                    $script:metrics.Detection.LateralMovement = @($lateral).Count
+                    if ($lateral -and $lateral.PSObject.Properties['Summary'] -and $lateral.Summary) {
+                        $script:metrics.Detection.LateralMovement = $lateral.Summary.TotalIndicators
+                    } else {
+                        $script:metrics.Detection.LateralMovement = @($lateral).Count
+                    }
                     $successfulFunctions++
                     Write-Host "  Lateral Movement: $($script:metrics.Detection.LateralMovement)" -ForegroundColor $(if ($script:metrics.Detection.LateralMovement -gt 0) { 'Red' } else { 'Green' })
                 } catch { 
@@ -601,8 +619,8 @@ function Get-SecurityMetrics {
                 try {
                     $totalFunctions++
                     $apt = Find-APTIndicators -ErrorAction Stop
-                    if ($apt -and $apt.PSObject.Properties['TotalIndicators']) {
-                        $script:metrics.Detection.APTIndicators = $apt.TotalIndicators
+                    if ($apt -and $apt.PSObject.Properties['Summary'] -and $apt.Summary) {
+                        $script:metrics.Detection.APTIndicators = $apt.Summary.TotalIndicators
                     } else {
                         $script:metrics.Detection.APTIndicators = @($apt).Count
                     }
@@ -617,7 +635,11 @@ function Get-SecurityMetrics {
                 try {
                     $totalFunctions++
                     $lolbins = Find-LivingOffLand -ErrorAction Stop
-                    $script:metrics.Detection.LivingOffLand = @($lolbins).Count
+                    if ($lolbins -and $lolbins.PSObject.Properties['Summary'] -and $lolbins.Summary) {
+                        $script:metrics.Detection.LivingOffLand = $lolbins.Summary.TotalDetections
+                    } else {
+                        $script:metrics.Detection.LivingOffLand = @($lolbins).Count
+                    }
                     $successfulFunctions++
                     Write-Host "  Living Off Land: $($script:metrics.Detection.LivingOffLand)" -ForegroundColor $(if ($script:metrics.Detection.LivingOffLand -gt 0) { 'Yellow' } else { 'Green' })
                 } catch { 
@@ -629,7 +651,11 @@ function Get-SecurityMetrics {
                 try {
                     $totalFunctions++
                     $exfil = Find-DataExfiltration -ErrorAction Stop
-                    $script:metrics.Detection.DataExfiltration = @($exfil).Count
+                    if ($exfil -and $exfil.PSObject.Properties['Summary'] -and $exfil.Summary) {
+                        $script:metrics.Detection.DataExfiltration = $exfil.Summary.TotalIndicators
+                    } else {
+                        $script:metrics.Detection.DataExfiltration = @($exfil).Count
+                    }
                     $successfulFunctions++
                     Write-Host "  Data Exfiltration: $($script:metrics.Detection.DataExfiltration)" -ForegroundColor $(if ($script:metrics.Detection.DataExfiltration -gt 0) { 'Red' } else { 'Green' })
                 } catch { 
@@ -691,15 +717,23 @@ function Get-SecurityMetrics {
                     if ($eventLog) {
                         if ($eventLog.PSObject.Properties['TotalEvents']) {
                             $script:metrics.Analysis.TotalEvents = $eventLog.TotalEvents
+                        } elseif ($eventLog.PSObject.Properties['Statistics'] -and $eventLog.Statistics) {
+                            $script:metrics.Analysis.TotalEvents = $eventLog.Statistics.TotalEventsAnalyzed
                         }
                         if ($eventLog.PSObject.Properties['CriticalEvents']) {
                             $script:metrics.Analysis.CriticalEvents = $eventLog.CriticalEvents
+                        } elseif ($eventLog.PSObject.Properties['Statistics'] -and $eventLog.Statistics) {
+                            $script:metrics.Analysis.CriticalEvents = $eventLog.Statistics.CriticalEvents
                         }
                         if ($eventLog.PSObject.Properties['ErrorEvents']) {
                             $script:metrics.Analysis.ErrorEvents = $eventLog.ErrorEvents
+                        } elseif ($eventLog.PSObject.Properties['Statistics'] -and $eventLog.Statistics) {
+                            $script:metrics.Analysis.ErrorEvents = $eventLog.Statistics.ErrorEvents
                         }
                         if ($eventLog.PSObject.Properties['WarningEvents']) {
                             $script:metrics.Analysis.WarningEvents = $eventLog.WarningEvents
+                        } elseif ($eventLog.PSObject.Properties['Statistics'] -and $eventLog.Statistics) {
+                            $script:metrics.Analysis.WarningEvents = $eventLog.Statistics.WarningEvents
                         }
                         $successfulFunctions++
                         Write-Host "  Event Log Analysis: $($script:metrics.Analysis.TotalEvents) events ($($script:metrics.Analysis.CriticalEvents) critical)" -ForegroundColor $(if ($script:metrics.Analysis.CriticalEvents -gt 0) { 'Red' } else { 'Green' })
@@ -714,8 +748,8 @@ function Get-SecurityMetrics {
                     $totalFunctions++
                     $registry = Get-RegistryAnalysis -ErrorAction Stop
                     if ($registry) {
-                        if ($registry.PSObject.Properties['SuspiciousFindings']) {
-                            $script:metrics.Analysis.RegistryIssues = $registry.SuspiciousFindings
+                        if ($registry.PSObject.Properties['Statistics'] -and $registry.Statistics) {
+                            $script:metrics.Analysis.RegistryIssues = $registry.Statistics.SuspiciousFindings
                         } else {
                             $script:metrics.Analysis.RegistryIssues = @($registry).Count
                         }
@@ -732,8 +766,10 @@ function Get-SecurityMetrics {
                     $totalFunctions++
                     $fileSystem = Get-FileSystemAnalysis -ErrorAction Stop
                     if ($fileSystem) {
-                        if ($fileSystem.PSObject.Properties['SuspiciousFiles']) {
-                            $script:metrics.Analysis.FileSystemIssues = $fileSystem.SuspiciousFiles
+                        if ($fileSystem.PSObject.Properties['Statistics'] -and $fileSystem.Statistics) {
+                            $script:metrics.Analysis.FileSystemIssues = $fileSystem.Statistics.SuspiciousFiles
+                        } elseif ($fileSystem.PSObject.Properties['SuspiciousFiles']) {
+                            $script:metrics.Analysis.FileSystemIssues = @($fileSystem.SuspiciousFiles).Count
                         } else {
                             $script:metrics.Analysis.FileSystemIssues = @($fileSystem).Count
                         }
@@ -750,8 +786,10 @@ function Get-SecurityMetrics {
                     $totalFunctions++
                     $memory = Get-MemoryAnalysis -ErrorAction Stop
                     if ($memory) {
-                        if ($memory.PSObject.Properties['InjectionIndicators']) {
-                            $script:metrics.Analysis.MemoryIssues = $memory.InjectionIndicators
+                        if ($memory.PSObject.Properties['Statistics'] -and $memory.Statistics) {
+                            $script:metrics.Analysis.MemoryIssues = $memory.Statistics.InjectionIndicators
+                        } elseif ($memory.PSObject.Properties['InjectionIndicators']) {
+                            $script:metrics.Analysis.MemoryIssues = @($memory.InjectionIndicators).Count
                         }
                         $successfulFunctions++
                         Write-Host "  Memory Analysis: $($script:metrics.Analysis.MemoryIssues) issues" -ForegroundColor $(if ($script:metrics.Analysis.MemoryIssues -gt 0) { 'Red' } else { 'Green' })
@@ -767,7 +805,7 @@ function Get-SecurityMetrics {
                     $exposed = Get-ExposedServices -ErrorAction Stop
                     if ($exposed) {
                         if ($exposed.PSObject.Properties['ExposedServices']) {
-                            $script:metrics.Analysis.ExposedServices = $exposed.ExposedServices
+                            $script:metrics.Analysis.ExposedServices = @($exposed.ExposedServices).Count
                         } else {
                             $script:metrics.Analysis.ExposedServices = @($exposed).Count
                         }
@@ -814,21 +852,29 @@ function Get-SecurityMetrics {
                             $script:metrics.Compliance.Frameworks.CIS.Score = $cis.CompliancePercentage
                         } elseif ($cis.PSObject.Properties['Compliance']) {
                             $script:metrics.Compliance.Frameworks.CIS.Score = $cis.Compliance
+                        } elseif ($cis.PSObject.Properties['Summary'] -and $cis.Summary) {
+                            $script:metrics.Compliance.Frameworks.CIS.Score = $cis.Summary.CompliancePercentage
                         }
                         
                         # Controls
                         if ($cis.PSObject.Properties['TotalControls']) {
                             $script:metrics.Compliance.Frameworks.CIS.TotalControls = $cis.TotalControls
+                        } elseif ($cis.PSObject.Properties['Summary'] -and $cis.Summary) {
+                            $script:metrics.Compliance.Frameworks.CIS.TotalControls = $cis.Summary.TotalControls
                         }
                         if ($cis.PSObject.Properties['PassedControls']) {
                             $script:metrics.Compliance.Frameworks.CIS.PassedControls = $cis.PassedControls
                         } elseif ($cis.PSObject.Properties['Passed']) {
                             $script:metrics.Compliance.Frameworks.CIS.PassedControls = $cis.Passed
+                        } elseif ($cis.PSObject.Properties['Summary'] -and $cis.Summary) {
+                            $script:metrics.Compliance.Frameworks.CIS.PassedControls = $cis.Summary.Passed
                         }
                         if ($cis.PSObject.Properties['FailedControls']) {
                             $script:metrics.Compliance.Frameworks.CIS.FailedControls = $cis.FailedControls
                         } elseif ($cis.PSObject.Properties['Failed']) {
                             $script:metrics.Compliance.Frameworks.CIS.FailedControls = $cis.Failed
+                        } elseif ($cis.PSObject.Properties['Summary'] -and $cis.Summary) {
+                            $script:metrics.Compliance.Frameworks.CIS.FailedControls = $cis.Summary.Failed
                         }
                         
                         $successfulFunctions++
@@ -851,21 +897,29 @@ function Get-SecurityMetrics {
                             $script:metrics.Compliance.Frameworks.NIST.Score = $nist.CompliancePercentage
                         } elseif ($nist.PSObject.Properties['Compliance']) {
                             $script:metrics.Compliance.Frameworks.NIST.Score = $nist.Compliance
+                        } elseif ($nist.PSObject.Properties['Summary'] -and $nist.Summary) {
+                            $script:metrics.Compliance.Frameworks.NIST.Score = $nist.Summary.CompliancePercentage
                         }
                         
                         # Controls
                         if ($nist.PSObject.Properties['TotalControls']) {
                             $script:metrics.Compliance.Frameworks.NIST.TotalControls = $nist.TotalControls
+                        } elseif ($nist.PSObject.Properties['Summary'] -and $nist.Summary) {
+                            $script:metrics.Compliance.Frameworks.NIST.TotalControls = $nist.Summary.TotalControls
                         }
                         if ($nist.PSObject.Properties['CompliantControls']) {
                             $script:metrics.Compliance.Frameworks.NIST.CompliantControls = $nist.CompliantControls
                         } elseif ($nist.PSObject.Properties['Compliant']) {
                             $script:metrics.Compliance.Frameworks.NIST.CompliantControls = $nist.Compliant
+                        } elseif ($nist.PSObject.Properties['Summary'] -and $nist.Summary) {
+                            $script:metrics.Compliance.Frameworks.NIST.CompliantControls = $nist.Summary.Compliant
                         }
                         if ($nist.PSObject.Properties['NonCompliantControls']) {
                             $script:metrics.Compliance.Frameworks.NIST.NonCompliantControls = $nist.NonCompliantControls
                         } elseif ($nist.PSObject.Properties['NonCompliant']) {
                             $script:metrics.Compliance.Frameworks.NIST.NonCompliantControls = $nist.NonCompliant
+                        } elseif ($nist.PSObject.Properties['Summary'] -and $nist.Summary) {
+                            $script:metrics.Compliance.Frameworks.NIST.NonCompliantControls = $nist.Summary.NonCompliant
                         }
                         
                         $successfulFunctions++
@@ -888,17 +942,25 @@ function Get-SecurityMetrics {
                             $script:metrics.Compliance.Frameworks.PCIDSS.Score = $pci.CompliancePercentage
                         } elseif ($pci.PSObject.Properties['Compliance']) {
                             $script:metrics.Compliance.Frameworks.PCIDSS.Score = $pci.Compliance
+                        } elseif ($pci.PSObject.Properties['Summary'] -and $pci.Summary) {
+                            $script:metrics.Compliance.Frameworks.PCIDSS.Score = $pci.Summary.CompliancePercentage
                         }
                         
                         # Requirements
                         if ($pci.PSObject.Properties['TotalRequirements']) {
                             $script:metrics.Compliance.Frameworks.PCIDSS.TotalRequirements = $pci.TotalRequirements
+                        } elseif ($pci.PSObject.Properties['Summary'] -and $pci.Summary) {
+                            $script:metrics.Compliance.Frameworks.PCIDSS.TotalRequirements = $pci.Summary.TotalRequirements
                         }
                         if ($pci.PSObject.Properties['InPlace']) {
                             $script:metrics.Compliance.Frameworks.PCIDSS.InPlace = $pci.InPlace
+                        } elseif ($pci.PSObject.Properties['Summary'] -and $pci.Summary) {
+                            $script:metrics.Compliance.Frameworks.PCIDSS.InPlace = $pci.Summary.InPlace
                         }
                         if ($pci.PSObject.Properties['NotInPlace']) {
                             $script:metrics.Compliance.Frameworks.PCIDSS.NotInPlace = $pci.NotInPlace
+                        } elseif ($pci.PSObject.Properties['Summary'] -and $pci.Summary) {
+                            $script:metrics.Compliance.Frameworks.PCIDSS.NotInPlace = $pci.Summary.NotInPlace
                         }
                         
                         $successfulFunctions++
@@ -1050,9 +1112,10 @@ function Get-SecurityMetrics {
                         if ($pwdPolicy) {
                             # Calculate password policy score
                             $policyScore = 100
-                            if ($pwdPolicy.PSObject.Properties['MinPasswordLength'] -and $pwdPolicy.MinPasswordLength -lt 14) { $policyScore -= 20 }
-                            if ($pwdPolicy.PSObject.Properties['ComplexityEnabled'] -and -not $pwdPolicy.ComplexityEnabled) { $policyScore -= 30 }
-                            if ($pwdPolicy.PSObject.Properties['MaxPasswordAge'] -and $pwdPolicy.MaxPasswordAge.Days -gt 90) { $policyScore -= 15 }
+                            $dp = if ($pwdPolicy.PSObject.Properties['DefaultPolicy'] -and $pwdPolicy.DefaultPolicy) { $pwdPolicy.DefaultPolicy } else { $pwdPolicy }
+                            if ($dp.PSObject.Properties['MinPasswordLength'] -and $dp.MinPasswordLength -lt 14) { $policyScore -= 20 }
+                            if ($dp.PSObject.Properties['ComplexityEnabled'] -and -not $dp.ComplexityEnabled) { $policyScore -= 30 }
+                            if ($dp.PSObject.Properties['MaxPasswordAge'] -and $dp.MaxPasswordAge -gt 90) { $policyScore -= 15 }
                             $script:metrics.ActiveDirectory.PasswordPolicyScore = [Math]::Max(0, $policyScore)
                         }
                         $successfulFunctions++
@@ -1098,8 +1161,8 @@ function Get-SecurityMetrics {
                     try {
                         $totalFunctions++
                         $m365Security = Test-M365SecurityPosture -ErrorAction Stop
-                        if ($m365Security -and $m365Security.PSObject.Properties['SecurityScore']) {
-                            $script:metrics.Cloud.M365SecurityScore = $m365Security.SecurityScore
+                        if ($m365Security -and $m365Security.PSObject.Properties['ComplianceScore']) {
+                            $script:metrics.Cloud.M365SecurityScore = $m365Security.ComplianceScore
                         }
                         $successfulFunctions++
                         Write-Host "  M365 Security Score: $($script:metrics.Cloud.M365SecurityScore)%" -ForegroundColor Cyan
@@ -1140,23 +1203,25 @@ function Get-SecurityMetrics {
                 try {
                     $totalFunctions++
                     $vulnAssess = Get-VulnerabilityAssessment -ErrorAction Stop
-                    if ($vulnAssess -and $vulnAssess.PSObject.Properties['Summary']) {
+                    if ($vulnAssess -and $vulnAssess.PSObject.Properties['Summary'] -and $vulnAssess.Summary) {
                         $summary = $vulnAssess.Summary
-                        if ($summary.PSObject.Properties['TotalVulnerabilities']) {
-                            $script:metrics.Vulnerability.Total = $summary.TotalVulnerabilities
+                        if ($null -ne $summary.CriticalVulnerabilities) {
+                            $script:metrics.Vulnerability.Critical = $summary.CriticalVulnerabilities
                         }
-                        if ($summary.PSObject.Properties['Critical']) {
-                            $script:metrics.Vulnerability.Critical = $summary.Critical
+                        if ($null -ne $summary.HighVulnerabilities) {
+                            $script:metrics.Vulnerability.High = $summary.HighVulnerabilities
                         }
-                        if ($summary.PSObject.Properties['High']) {
-                            $script:metrics.Vulnerability.High = $summary.High
+                        if ($null -ne $summary.MediumVulnerabilities) {
+                            $script:metrics.Vulnerability.Medium = $summary.MediumVulnerabilities
                         }
-                        if ($summary.PSObject.Properties['Medium']) {
-                            $script:metrics.Vulnerability.Medium = $summary.Medium
+                        if ($null -ne $summary.LowVulnerabilities) {
+                            $script:metrics.Vulnerability.Low = $summary.LowVulnerabilities
                         }
-                        if ($summary.PSObject.Properties['Low']) {
-                            $script:metrics.Vulnerability.Low = $summary.Low
-                        }
+                        $script:metrics.Vulnerability.Total =
+                            $script:metrics.Vulnerability.Critical +
+                            $script:metrics.Vulnerability.High +
+                            $script:metrics.Vulnerability.Medium +
+                            $script:metrics.Vulnerability.Low
                     }
                     $successfulFunctions++
                     Write-Host "  Vulnerabilities: $($script:metrics.Vulnerability.Total) total" -ForegroundColor $(if ($script:metrics.Vulnerability.Total -gt 0) { 'Yellow' } else { 'Green' })
@@ -1185,14 +1250,16 @@ function Get-SecurityMetrics {
                     $totalFunctions++
                     $certs = Test-CertificateHealth -ErrorAction Stop
                     if ($certs) {
-                        if ($certs.PSObject.Properties['IssuesFound']) {
-                            $script:metrics.Vulnerability.CertificateIssues = $certs.IssuesFound
+                        if ($certs.PSObject.Properties['Issues']) {
+                            $script:metrics.Vulnerability.CertificateIssues = @($certs.Issues).Count
                         }
-                        if ($certs.PSObject.Properties['Expired']) {
-                            $script:metrics.Vulnerability.ExpiredCertificates = $certs.Expired
-                        }
-                        if ($certs.PSObject.Properties['WeakSignatures']) {
-                            $script:metrics.Vulnerability.WeakCertificates = $certs.WeakSignatures
+                        if ($certs.PSObject.Properties['Summary'] -and $certs.Summary) {
+                            if ($null -ne $certs.Summary.Expired) {
+                                $script:metrics.Vulnerability.ExpiredCertificates = $certs.Summary.Expired
+                            }
+                            if ($null -ne $certs.Summary.WeakSignature) {
+                                $script:metrics.Vulnerability.WeakCertificates = $certs.Summary.WeakSignature
+                            }
                         }
                     }
                     $successfulFunctions++
@@ -1221,6 +1288,8 @@ function Get-SecurityMetrics {
                     if ($threatIntel) {
                         if ($threatIntel.PSObject.Properties['IOCMatches']) {
                             $script:metrics.ThreatHunting.IOCMatches = @($threatIntel.IOCMatches).Count
+                        } elseif ($threatIntel.PSObject.Properties['Summary'] -and $threatIntel.Summary) {
+                            $script:metrics.ThreatHunting.IOCMatches = $threatIntel.Summary.TotalMatches
                         } else {
                             $script:metrics.ThreatHunting.IOCMatches = @($threatIntel).Count
                         }
@@ -1239,6 +1308,8 @@ function Get-SecurityMetrics {
                     if ($mitre) {
                         if ($mitre.PSObject.Properties['UniqueTechniques']) {
                             $script:metrics.ThreatHunting.MITRETechniques = $mitre.UniqueTechniques
+                        } elseif ($mitre.PSObject.Properties['Summary'] -and $mitre.Summary) {
+                            $script:metrics.ThreatHunting.MITRETechniques = $mitre.Summary.TotalTechniques
                         } else {
                             $script:metrics.ThreatHunting.MITRETechniques = @($mitre).Count
                         }
@@ -1267,8 +1338,8 @@ function Get-SecurityMetrics {
                     $totalFunctions++
                     $artifacts = Get-ArtifactCollection -ErrorAction Stop
                     if ($artifacts) {
-                        if ($artifacts.PSObject.Properties['TotalFiles']) {
-                            $script:metrics.Forensics.ArtifactsCollected = $artifacts.TotalFiles
+                        if ($artifacts.PSObject.Properties['Summary'] -and $artifacts.Summary) {
+                            $script:metrics.Forensics.ArtifactsCollected = $artifacts.Summary.TotalFiles
                         }
                     }
                     $successfulFunctions++
@@ -1285,12 +1356,14 @@ function Get-SecurityMetrics {
                     if ($execArtifacts) {
                         if ($execArtifacts.PSObject.Properties['TotalArtifacts']) {
                             $script:metrics.Forensics.ExecutionArtifacts = $execArtifacts.TotalArtifacts
+                        } elseif ($execArtifacts.PSObject.Properties['Summary'] -and $execArtifacts.Summary) {
+                            $script:metrics.Forensics.ExecutionArtifacts = $execArtifacts.Summary.TotalArtifacts
                         } else {
                             $script:metrics.Forensics.ExecutionArtifacts = @($execArtifacts).Count
                         }
                         
-                        if ($execArtifacts.PSObject.Properties['RecentExecutions']) {
-                            $script:metrics.Forensics.RecentExecutions = @($execArtifacts.RecentExecutions).Count
+                        if ($execArtifacts.PSObject.Properties['Summary'] -and $execArtifacts.Summary) {
+                            $script:metrics.Forensics.RecentExecutions = $execArtifacts.Summary.RecentApps
                         }
                     }
                     $successfulFunctions++
@@ -1342,33 +1415,33 @@ function Get-SecurityMetrics {
                         }
                         
                         # Protection states
-                        if ($defStatus.PSObject.Properties['RealTimeProtectionEnabled']) {
-                            $script:metrics.WindowsDefender.RealTimeProtection = $defStatus.RealTimeProtectionEnabled
-                            $script:metrics.WindowsDefender.ProtectionEnabled = $defStatus.RealTimeProtectionEnabled
+                        if ($defStatus.PSObject.Properties['ProtectionStatus'] -and $defStatus.ProtectionStatus) {
+                            $script:metrics.WindowsDefender.RealTimeProtection = [bool]$defStatus.ProtectionStatus.RealTimeProtectionEnabled
+                            $script:metrics.WindowsDefender.ProtectionEnabled = [bool]$defStatus.ProtectionStatus.RealTimeProtectionEnabled
                         }
-                        if ($defStatus.PSObject.Properties['CloudProtectionLevel']) {
-                            $script:metrics.WindowsDefender.CloudProtection = ($defStatus.CloudProtectionLevel -ne 'NotConfigured')
+                        if ($defStatus.PSObject.Properties['Configuration'] -and $defStatus.Configuration) {
+                            $script:metrics.WindowsDefender.CloudProtection = ($defStatus.Configuration.MAPSReporting -gt 0)
                         }
                         
                         # Signature info
-                        if ($defStatus.PSObject.Properties['SignatureAge']) {
-                            $script:metrics.WindowsDefender.SignatureAge = $defStatus.SignatureAge
-                        }
-                        if ($defStatus.PSObject.Properties['AntivirusSignatureVersion']) {
-                            $script:metrics.WindowsDefender.SignatureVersion = $defStatus.AntivirusSignatureVersion
-                        } elseif ($defStatus.PSObject.Properties['SignatureVersion']) {
-                            $script:metrics.WindowsDefender.SignatureVersion = $defStatus.SignatureVersion
+                        if ($defStatus.PSObject.Properties['SignatureStatus'] -and $defStatus.SignatureStatus) {
+                            if ($defStatus.SignatureStatus.SignatureAge) {
+                                $script:metrics.WindowsDefender.SignatureAge = [int]$defStatus.SignatureStatus.SignatureAge.Days
+                            }
+                            if ($defStatus.SignatureStatus.AntivirusSignatureVersion) {
+                                $script:metrics.WindowsDefender.SignatureVersion = $defStatus.SignatureStatus.AntivirusSignatureVersion
+                            }
                         }
                         
                         # Scan info
-                        if ($defStatus.PSObject.Properties['DaysSinceLastQuickScan']) {
-                            $script:metrics.WindowsDefender.LastScanDays = $defStatus.DaysSinceLastQuickScan
-                        }
-                        if ($defStatus.PSObject.Properties['QuickScanStartTime']) {
-                            $script:metrics.WindowsDefender.LastQuickScan = $defStatus.QuickScanStartTime
-                        }
-                        if ($defStatus.PSObject.Properties['FullScanStartTime']) {
-                            $script:metrics.WindowsDefender.LastFullScan = $defStatus.FullScanStartTime
+                        if ($defStatus.PSObject.Properties['ScanHistory'] -and $defStatus.ScanHistory) {
+                            if ($defStatus.ScanHistory.QuickScanStartTime) {
+                                $script:metrics.WindowsDefender.LastQuickScan = $defStatus.ScanHistory.QuickScanStartTime
+                                $script:metrics.WindowsDefender.LastScanDays = [int]((Get-Date) - [datetime]$defStatus.ScanHistory.QuickScanStartTime).TotalDays
+                            }
+                            if ($defStatus.ScanHistory.FullScanStartTime) {
+                                $script:metrics.WindowsDefender.LastFullScan = $defStatus.ScanHistory.FullScanStartTime
+                            }
                         }
                     }
                     $successfulFunctions++

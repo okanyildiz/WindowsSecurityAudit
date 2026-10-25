@@ -96,45 +96,35 @@ function Find-DataExfiltration {
                 Write-Host "`n[1/4] Checking network transfers..." -ForegroundColor Cyan
                 
                 try {
-                    # Get network interface statistics
-                    $networkStats = Get-NetAdapterStatistics -ErrorAction SilentlyContinue
+                    # Check active connections with high data transfer
+                    $connections = Get-NetTCPConnection -State Established -ErrorAction SilentlyContinue |
+                        Where-Object { $_.RemoteAddress -notmatch '^(127\.|::1|0\.0\.0\.0)' }
                     
-                    if ($networkStats) {
-                        foreach ($adapter in $networkStats) {
-                            $sentGB = [math]::Round($adapter.SentBytes / 1GB, 2)
-                            $receivedGB = [math]::Round($adapter.ReceivedBytes / 1GB, 2)
-                            
-                            # Check active connections with high data transfer
-                            $connections = Get-NetTCPConnection -State Established -ErrorAction SilentlyContinue |
-                                Where-Object { $_.RemoteAddress -notmatch '^(127\.|::1|0\.0\.0\.0)' }
-                            
-                            foreach ($conn in $connections | Select-Object -First 10) {
-                                $process = Get-Process -Id $conn.OwningProcess -ErrorAction SilentlyContinue
-                                
-                                if ($process) {
-                                    # Skip browsers and common legitimate processes
-                                    if ($process.Name -match 'chrome|firefox|edge|teams|zoom|onedrive') {
-                                        continue
-                                    }
-                                    
-                                    $indicator = [PSCustomObject]@{
-                                        Type = 'NetworkTransfer'
-                                        Process = $process.Name
-                                        ProcessId = $conn.OwningProcess
-                                        RemoteAddress = $conn.RemoteAddress
-                                        RemotePort = $conn.RemotePort
-                                        LocalPort = $conn.LocalPort
-                                        Severity = 'Medium'
-                                        Description = "Active connection from $($process.Name) to $($conn.RemoteAddress)"
-                                        Timestamp = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
-                                    }
-                                    
-                                    $results.Indicators.LargeTransfers += $indicator
-                                    $results.Summary.MediumFindings++
-                                    
-                                    Write-Host "  [!] Active: $($process.Name) -> $($conn.RemoteAddress):$($conn.RemotePort)" -ForegroundColor Yellow
-                                }
+                    foreach ($conn in $connections | Select-Object -First 10) {
+                        $process = Get-Process -Id $conn.OwningProcess -ErrorAction SilentlyContinue
+                        
+                        if ($process) {
+                            # Skip browsers and common legitimate processes
+                            if ($process.Name -match 'chrome|firefox|edge|teams|zoom|onedrive') {
+                                continue
                             }
+                            
+                            $indicator = [PSCustomObject]@{
+                                Type = 'NetworkTransfer'
+                                Process = $process.Name
+                                ProcessId = $conn.OwningProcess
+                                RemoteAddress = $conn.RemoteAddress
+                                RemotePort = $conn.RemotePort
+                                LocalPort = $conn.LocalPort
+                                Severity = 'Medium'
+                                Description = "Active connection from $($process.Name) to $($conn.RemoteAddress)"
+                                Timestamp = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
+                            }
+                            
+                            $results.Indicators.LargeTransfers += $indicator
+                            $results.Summary.MediumFindings++
+                            
+                            Write-Host "  [!] Active: $($process.Name) -> $($conn.RemoteAddress):$($conn.RemotePort)" -ForegroundColor Yellow
                         }
                     }
                     
@@ -169,6 +159,10 @@ function Find-DataExfiltration {
                         foreach ($cloudService in $cloudServices) {
                             if ($hostname -like "*$cloudService*") {
                                 $process = Get-Process -Id $conn.OwningProcess -ErrorAction SilentlyContinue
+                                
+                                if (-not $process) {
+                                    break
+                                }
                                 
                                 # Skip if it's a browser (expected behavior)
                                 if ($process.Name -match 'chrome|firefox|edge|msedge') {

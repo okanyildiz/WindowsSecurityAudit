@@ -78,14 +78,15 @@ function Find-NetworkAnomalies {
                 
                 # Get process info
                 $process = Get-Process -Id $listener.OwningProcess -ErrorAction SilentlyContinue
+                $processPath = $null
+                if ($process) {
+                    try { $processPath = $process.Path } catch { $processPath = $null }
+                }
                 
                 # Check for suspicious process listening
-                if ($process) {
-                    $processPath = $process.Path
-                    if ($processPath -match '(Temp|AppData|Users\\Public)' -and $listener.LocalAddress -eq '0.0.0.0') {
-                        $suspicious = $true
-                        $reasons += "Suspicious process location listening on all interfaces"
-                    }
+                if ($processPath -match '(Temp|AppData|Users\\Public)' -and $listener.LocalAddress -eq '0.0.0.0') {
+                    $suspicious = $true
+                    $reasons += "Suspicious process location listening on all interfaces"
                 }
                 
                 if ($suspicious) {
@@ -94,7 +95,7 @@ function Find-NetworkAnomalies {
                         LocalPort = $listener.LocalPort
                         ProcessName = if ($process) { $process.ProcessName } else { 'Unknown' }
                         ProcessId = $listener.OwningProcess
-                        ProcessPath = if ($process) { $process.Path } else { 'Unknown' }
+                        ProcessPath = if ($processPath) { $processPath } else { 'Unknown' }
                         Reasons = ($reasons -join '; ')
                     }
                 }
@@ -123,8 +124,10 @@ function Find-NetworkAnomalies {
                     
                     # Get process info
                     $process = Get-Process -Id $conn.OwningProcess -ErrorAction SilentlyContinue
-                    
+                    $processPath = $null
                     if ($process) {
+                        try { $processPath = $process.Path } catch { $processPath = $null }
+                        
                         # Check for suspicious processes with network connections
                         if ($process.ProcessName -match '(cmd|powershell|wscript|cscript)') {
                             $suspicious = $true
@@ -132,7 +135,7 @@ function Find-NetworkAnomalies {
                         }
                         
                         # Check process path
-                        if ($process.Path -match '(Temp|AppData\\Local\\Temp|Users\\Public)') {
+                        if ($processPath -match '(Temp|AppData\\Local\\Temp|Users\\Public)') {
                             $suspicious = $true
                             $reasons += "Process from suspicious location with network connection"
                         }
@@ -147,7 +150,7 @@ function Find-NetworkAnomalies {
                             State = $conn.State
                             ProcessName = if ($process) { $process.ProcessName } else { 'Unknown' }
                             ProcessId = $conn.OwningProcess
-                            ProcessPath = if ($process) { $process.Path } else { 'Unknown' }
+                            ProcessPath = if ($processPath) { $processPath } else { 'Unknown' }
                             Reasons = ($reasons -join '; ')
                         }
                     }
@@ -158,7 +161,7 @@ function Find-NetworkAnomalies {
             Write-Verbose "Analyzing port usage patterns..."
             $allConnections = Get-NetTCPConnection -ErrorAction SilentlyContinue
             $portGroups = $allConnections | Group-Object -Property LocalPort | 
-                Where-Object { $_.Count -gt 10 -and $_.Name -notin $legitimatePorts }
+                Where-Object { $_.Count -gt 10 -and [int]$_.Name -notin $legitimatePorts }
             
             foreach ($group in $portGroups) {
                 $results.UnusualPorts += [PSCustomObject]@{

@@ -56,9 +56,7 @@ function Export-MemoryDump {
         $isAdmin = ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
         
         if (-not $isAdmin) {
-            Write-Warning "This function requires Administrator privileges!"
-            Write-Host "Please run PowerShell as Administrator and try again." -ForegroundColor Red
-            return
+            throw "This function requires Administrator privileges!"
         }
         
         # Create output directory

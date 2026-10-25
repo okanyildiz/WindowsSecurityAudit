@@ -103,11 +103,11 @@ function New-ForensicTimeline {
                     try {
                         Write-Host "  Scanning: $logName..." -ForegroundColor Gray
                         
-                        $events = Get-WinEvent -FilterHashtable @{
+                        $events = @(Get-WinEvent -FilterHashtable @{
                             LogName = $logName
                             StartTime = $StartTime
                             EndTime = $EndTime
-                        } -ErrorAction SilentlyContinue -MaxEvents 1000
+                        } -ErrorAction SilentlyContinue -MaxEvents 1000)
                         
                         foreach ($event in $events) {
                             # FIXED: Safe message handling with null check
@@ -306,7 +306,7 @@ function New-ForensicTimeline {
             # 5. SORT AND FINALIZE TIMELINE
             Write-Host "`n[*] Sorting timeline events..." -ForegroundColor Cyan
             
-            $timeline.Events = $timeline.Events | Sort-Object Timestamp -Descending
+            $timeline.Events = @($timeline.Events | Sort-Object Timestamp -Descending)
             $timeline.Summary.TotalEvents = $timeline.Events.Count
             
             Write-Host "  Total events in timeline: $($timeline.Summary.TotalEvents)" -ForegroundColor Green

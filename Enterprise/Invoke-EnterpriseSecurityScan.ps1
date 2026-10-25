@@ -326,7 +326,7 @@ function Invoke-EnterpriseSecurityScan {
             
             foreach ($job in $jobs) {
                 try {
-                    $result = $job.Pipeline.EndInvoke($job.Status)
+                    $result = @($job.Pipeline.EndInvoke($job.Status))[0]
                     
                     if ($result.Status -eq 'Success') {
                         $results.Summary.Successful++

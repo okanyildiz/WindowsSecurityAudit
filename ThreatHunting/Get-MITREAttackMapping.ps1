@@ -416,11 +416,12 @@ function Get-MITREAttackMapping {
                         
                         if ($conn.RemotePort -in $nonStandardPorts) {
                             $process = Get-Process -Id $conn.OwningProcess -ErrorAction SilentlyContinue
+                            $processName = if ($process) { $process.Name } else { "PID $($conn.OwningProcess)" }
                             
                             # Skip if it's a known legitimate process
                             $isLegitimate = $false
                             foreach ($legitProc in $legitimateProcesses) {
-                                if ($process.Name -like "*$legitProc*") {
+                                if ($processName -like "*$legitProc*") {
                                     $isLegitimate = $true
                                     break
                                 }
@@ -433,7 +434,7 @@ function Get-MITREAttackMapping {
                                     Tactic = 'CommandAndControl'
                                     Severity = 'High'
                                     DetectionSource = 'Network'
-                                    Evidence = "Non-standard port $($conn.RemotePort) used by $($process.Name) -> $($conn.RemoteAddress)"
+                                    Evidence = "Non-standard port $($conn.RemotePort) used by $processName -> $($conn.RemoteAddress)"
                                     CommandLine = "N/A"
                                     Description = $mitreDB['T1571'].Description
                                     Timestamp = Get-Date -Format "yyyy-MM-dd HH:mm:ss"

@@ -1,0 +1,66 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  lint:
+    name: Lint and test
+    # The module only works on Windows (CIM/WMI, event logs, registry), so the
+    # whole job runs on windows-latest. The tests themselves are cross-platform.
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Pester and PSScriptAnalyzer
+        shell: pwsh
+        run: |
+          Set-PSRepository -Name PSGallery -InstallationPolicy Trusted
+          Install-Module -Name Pester -MinimumVersion 5.5.0 -Force -Scope CurrentUser -SkipPublisherCheck
+          Install-Module -Name PSScriptAnalyzer -Force -Scope CurrentUser
+
+      - name: PSScriptAnalyzer (zero Error-level findings allowed)
+        shell: pwsh
+        run: |
+          $results = @(Invoke-ScriptAnalyzer -Path . -Recurse -Severity Error)
+          if ($results.Count -gt 0) {
+              $results | Format-Table RuleName, Severity, ScriptName, Line, Message -AutoSize |
+                  Out-String -Width 200 | Write-Host
+              Write-Error "PSScriptAnalyzer reported $($results.Count) Error-level finding(s)."
+              exit 1
+          }
+          Write-Host "PSScriptAnalyzer: 0 Error-level findings."
+
+      - name: Import module (PowerShell 7)
+        shell: pwsh
+        run: |
+          Import-Module ./WindowsSecurityAudit.psd1 -Force -ErrorAction Stop
+          $exported = @(Get-Command -Module WindowsSecurityAudit -CommandType Function)
+          Write-Host "Imported OK, $($exported.Count) functions exported."
+          if ($exported.Count -eq 0) { Write-Error "No functions were exported."; exit 1 }
+
+      - name: Import module (Windows PowerShell 5.1)
+        # The module targets Windows PowerShell 5.1+. 'shell: powershell' is the
+        # Windows PowerShell 5.1 desktop edition shipped with the runner, so this
+        # step proves the module still loads under 5.1 (Set-StrictMode -Version Latest
+        # and 5.1-only APIs are exercised here, not under pwsh 7).
+        shell: powershell
+        run: |
+          Import-Module ./WindowsSecurityAudit.psd1 -Force -ErrorAction Stop
+          $exported = @(Get-Command -Module WindowsSecurityAudit -CommandType Function)
+          Write-Host "Imported OK under $($PSVersionTable.PSVersion), $($exported.Count) functions exported."
+          if ($exported.Count -eq 0) { Write-Error "No functions were exported."; exit 1 }
+
+      - name: Run Pester tests
+        shell: pwsh
+        run: |
+          $config = New-PesterConfiguration
+          $config.Run.Path = './tests'
+          $config.Run.Exit = $true          # exit code 1 when any test fails
+          $config.Output.Verbosity = 'Detailed'
+          Invoke-Pester -Configuration $config

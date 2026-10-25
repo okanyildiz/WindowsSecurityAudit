@@ -69,7 +69,7 @@ function Get-DefenderStatus {
                 AntivirusSignatureLastUpdated = $mpStatus.AntivirusSignatureLastUpdated
                 AntispywareSignatureLastUpdated = $mpStatus.AntispywareSignatureLastUpdated
                 NISSignatureLastUpdated = $mpStatus.NISSignatureLastUpdated
-                SignatureAge = (Get-Date) - $mpStatus.AntivirusSignatureLastUpdated
+                SignatureAge = if ($mpStatus.AntivirusSignatureLastUpdated) { (Get-Date) - $mpStatus.AntivirusSignatureLastUpdated } else { $null }
             }
             
             # Scan History
@@ -146,8 +146,10 @@ function Get-DefenderStatus {
             if ($status.ProtectionStatus.NISEnabled) { $healthScore += 15 } else { $status.Recommendations += "Enable Network Inspection System" }
             
             # Check signature age (20 points)
-            $signatureAge = $status.SignatureStatus.SignatureAge.Days
-            if ($signatureAge -le 1) {
+            $signatureAge = if ($status.SignatureStatus.SignatureAge) { $status.SignatureStatus.SignatureAge.Days } else { $null }
+            if ($null -eq $signatureAge) {
+                $status.Recommendations += "Update virus definitions (signature update date unavailable)"
+            } elseif ($signatureAge -le 1) {
                 $healthScore += 20
             } elseif ($signatureAge -le 3) {
                 $healthScore += 15
@@ -234,11 +236,15 @@ function Get-DefenderStatus {
         Write-Host "`nSignatures:" -ForegroundColor Cyan
         Write-Host "  Version: $($status.SignatureStatus.AntivirusSignatureVersion)"
         Write-Host "  Last Updated: $($status.SignatureStatus.AntivirusSignatureLastUpdated)"
-        Write-Host "  Age: $($status.SignatureStatus.SignatureAge.Days) days" -ForegroundColor $(
-            if ($status.SignatureStatus.SignatureAge.Days -le 1) { 'Green' }
-            elseif ($status.SignatureStatus.SignatureAge.Days -le 3) { 'Yellow' }
-            else { 'Red' }
-        )
+        if ($status.SignatureStatus.SignatureAge) {
+            Write-Host "  Age: $($status.SignatureStatus.SignatureAge.Days) days" -ForegroundColor $(
+                if ($status.SignatureStatus.SignatureAge.Days -le 1) { 'Green' }
+                elseif ($status.SignatureStatus.SignatureAge.Days -le 3) { 'Yellow' }
+                else { 'Red' }
+            )
+        } else {
+            Write-Host "  Age: Unknown" -ForegroundColor Red
+        }
         
         Write-Host "`nLast Scans:" -ForegroundColor Cyan
         Write-Host "  Quick Scan: " -NoNewline

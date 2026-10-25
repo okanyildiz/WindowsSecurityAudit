@@ -118,7 +118,7 @@ function Find-APTIndicators {
         # Suspicious locations - using single quotes for $Recycle to avoid variable expansion
         $suspiciousLocations = @(
             "$env:TEMP",
-            "$env:APPDATA\Local\Temp",
+            "$env:LOCALAPPDATA\Temp",
             "C:\Users\Public",
             "C:\Windows\Temp",
             "C:\Temp",
@@ -311,7 +311,7 @@ function Find-APTIndicators {
                                 TaskPath = $task.TaskPath
                                 State = $task.State
                                 Actions = ($actionDetails -join '; ')
-                                RunAs = $task.Principal.UserId
+                                RunAs = if ($task.Principal) { $task.Principal.UserId } else { $null }
                                 SuspiciousScore = $suspiciousScore
                                 Reasons = $reasons -join '; '
                             }
@@ -352,6 +352,10 @@ function Find-APTIndicators {
                     foreach ($keyPath in $persistenceKeys) {
                         if (Test-Path $keyPath) {
                             $values = Get-ItemProperty -Path $keyPath -ErrorAction SilentlyContinue
+                            
+                            if (-not $values) {
+                                continue
+                            }
                             
                             foreach ($property in $values.PSObject.Properties) {
                                 # Skip PowerShell default properties
