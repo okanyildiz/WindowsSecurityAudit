@@ -819,14 +819,16 @@ We work with Fortune 500 companies, government agencies, and organizations of al
 
 ## 🚀 Roadmap
 
-### Version 1.2 (Next)
+### Version 1.3 (Next)
+- [ ] **Version-exact CVE matching (CPE-based)** — honest note: the v1.2.0 NVD integration performs *keyword-based candidate matching* (vendor + product name). It surfaces likely-relevant CVEs, not definitive "your exact version is vulnerable" verdicts. Precise matching requires mapping installed software to CPE identifiers (vendor/product/version tuples), which the registry inventory does not provide today — v1.3 aims to build that CPE dictionary layer
+- [ ] Additional threat feeds (MISP, STIX/TAXII sources)
+- [ ] Automated remediation workflows
+
+### Version 2.0 (Future)
 - [ ] Web-based GUI dashboard
 - [ ] REST API for remote management
 - [ ] Linux/macOS PowerShell Core support
 - [ ] Machine learning anomaly detection
-- [ ] Automated remediation workflows
-
-### Version 2.0 (Future)
 - [ ] Container security scanning
 - [ ] Kubernetes integration
 - [ ] Cloud-native architecture
