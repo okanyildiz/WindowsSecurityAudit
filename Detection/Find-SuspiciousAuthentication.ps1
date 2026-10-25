@@ -80,26 +80,26 @@ function Find-SuspiciousAuthentication {
             
             # 1. Analyze Failed Logons (Event ID 4625)
             Write-Verbose "Analyzing failed logon attempts..."
-            $failedLogons = Get-WinEvent -FilterHashtable @{
+            $failedLogons = @(Get-WinEvent -FilterHashtable @{
                 LogName = 'Security'
                 ID = 4625
                 StartTime = $startTime
-            } -ErrorAction SilentlyContinue
-            
-            if ($failedLogons) {
+            } -ErrorAction SilentlyContinue)
+
+            if ($failedLogons.Count -gt 0) {
                 $results.Statistics.TotalFailedLogons = $failedLogons.Count
-                
+
                 foreach ($event in $failedLogons) {
                     $xml = [xml]$event.ToXml()
                     $eventData = $xml.Event.EventData.Data
-                    
-                    $targetAccount = ($eventData | Where-Object { $_.Name -eq 'TargetUserName' }).'#text'
-                    $targetDomain = ($eventData | Where-Object { $_.Name -eq 'TargetDomainName' }).'#text'
-                    $workstation = ($eventData | Where-Object { $_.Name -eq 'WorkstationName' }).'#text'
-                    $sourceIP = ($eventData | Where-Object { $_.Name -eq 'IpAddress' }).'#text'
-                    $logonType = ($eventData | Where-Object { $_.Name -eq 'LogonType' }).'#text'
-                    $status = ($eventData | Where-Object { $_.Name -eq 'Status' }).'#text'
-                    $subStatus = ($eventData | Where-Object { $_.Name -eq 'SubStatus' }).'#text'
+
+                    $targetAccount = & $getEventValue $eventData 'TargetUserName'
+                    $targetDomain = & $getEventValue $eventData 'TargetDomainName'
+                    $workstation = & $getEventValue $eventData 'WorkstationName'
+                    $sourceIP = & $getEventValue $eventData 'IpAddress'
+                    $logonType = & $getEventValue $eventData 'LogonType'
+                    $status = & $getEventValue $eventData 'Status'
+                    $subStatus = & $getEventValue $eventData 'SubStatus'
                     
                     $results.FailedLogons += [PSCustomObject]@{
                         TimeCreated = $event.TimeCreated
@@ -146,7 +146,7 @@ function Find-SuspiciousAuthentication {
                     $failedArray = @($results.FailedLogons)
                     if ($failedArray.Count -gt 0) {
                         $results.Statistics.UniqueFailedAccounts = (@($failedArray.Account | Select-Object -Unique)).Count
-                        $results.Statistics.UniqueSourceIPs = (@($failedArray | Where-Object { $_.SourceIP -ne '-' } | Select-Object -ExpandProperty SourceIP -Unique)).Count
+                        $results.Statistics.UniqueSourceIPs = (@($failedArray | Where-Object { -not [string]::IsNullOrEmpty($_.SourceIP) -and $_.SourceIP -ne '-' } | Select-Object -ExpandProperty SourceIP -Unique)).Count
                     }
                 } catch {
                     Write-Verbose "Could not calculate unique statistics"
@@ -155,21 +155,21 @@ function Find-SuspiciousAuthentication {
             
             # 2. Account Lockouts (Event ID 4740)
             Write-Verbose "Checking account lockouts..."
-            $lockouts = Get-WinEvent -FilterHashtable @{
+            $lockouts = @(Get-WinEvent -FilterHashtable @{
                 LogName = 'Security'
                 ID = 4740
                 StartTime = $startTime
-            } -ErrorAction SilentlyContinue
-            
-            if ($lockouts) {
+            } -ErrorAction SilentlyContinue)
+
+            if ($lockouts.Count -gt 0) {
                 $results.Statistics.TotalLockouts = $lockouts.Count
-                
+
                 foreach ($event in $lockouts) {
                     $xml = [xml]$event.ToXml()
                     $eventData = $xml.Event.EventData.Data
-                    
-                    $targetAccount = ($eventData | Where-Object { $_.Name -eq 'TargetUserName' }).'#text'
-                    $callerComputer = ($eventData | Where-Object { $_.Name -eq 'TargetDomainName' }).'#text'
+
+                    $targetAccount = & $getEventValue $eventData 'TargetUserName'
+                    $callerComputer = & $getEventValue $eventData 'TargetDomainName'
                     
                     $results.AccountLockouts += [PSCustomObject]@{
                         TimeCreated = $event.TimeCreated
@@ -181,23 +181,23 @@ function Find-SuspiciousAuthentication {
             
             # 3. Special Privileges Assigned (Event ID 4672)
             Write-Verbose "Analyzing privilege escalations..."
-            $privEvents = Get-WinEvent -FilterHashtable @{
+            $privEvents = @(Get-WinEvent -FilterHashtable @{
                 LogName = 'Security'
                 ID = 4672
                 StartTime = $startTime
-            } -ErrorAction SilentlyContinue
-            
-            if ($privEvents) {
+            } -ErrorAction SilentlyContinue)
+
+            if ($privEvents.Count -gt 0) {
                 $results.Statistics.TotalPrivilegeUse = $privEvents.Count
-                
+
                 # Look for unusual privilege assignments
                 foreach ($event in $privEvents) {
                     $xml = [xml]$event.ToXml()
                     $eventData = $xml.Event.EventData.Data
-                    
-                    $subjectAccount = ($eventData | Where-Object { $_.Name -eq 'SubjectUserName' }).'#text'
-                    $subjectDomain = ($eventData | Where-Object { $_.Name -eq 'SubjectDomainName' }).'#text'
-                    $privileges = ($eventData | Where-Object { $_.Name -eq 'PrivilegeList' }).'#text'
+
+                    $subjectAccount = & $getEventValue $eventData 'SubjectUserName'
+                    $subjectDomain = & $getEventValue $eventData 'SubjectDomainName'
+                    $privileges = & $getEventValue $eventData 'PrivilegeList'
                     
                     # Flag if not a well-known admin account
                     if ($subjectAccount -notmatch '(SYSTEM|LOCAL SERVICE|NETWORK SERVICE|Administrator|DWM-\d+|UMFD-\d+)') {
@@ -212,23 +212,23 @@ function Find-SuspiciousAuthentication {
             
             # 4. Explicit Credentials Usage (Event ID 4648)
             Write-Verbose "Checking explicit credential usage..."
-            $explicitCreds = Get-WinEvent -FilterHashtable @{
+            $explicitCreds = @(Get-WinEvent -FilterHashtable @{
                 LogName = 'Security'
                 ID = 4648
                 StartTime = $startTime
-            } -ErrorAction SilentlyContinue
-            
-            if ($explicitCreds) {
+            } -ErrorAction SilentlyContinue)
+
+            if ($explicitCreds.Count -gt 0) {
                 $results.Statistics.TotalExplicitCreds = $explicitCreds.Count
-                
+
                 foreach ($event in $explicitCreds) {
                     $xml = [xml]$event.ToXml()
                     $eventData = $xml.Event.EventData.Data
-                    
-                    $subjectAccount = ($eventData | Where-Object { $_.Name -eq 'SubjectUserName' }).'#text'
-                    $targetAccount = ($eventData | Where-Object { $_.Name -eq 'TargetUserName' }).'#text'
-                    $targetServer = ($eventData | Where-Object { $_.Name -eq 'TargetServerName' }).'#text'
-                    $processName = ($eventData | Where-Object { $_.Name -eq 'ProcessName' }).'#text'
+
+                    $subjectAccount = & $getEventValue $eventData 'SubjectUserName'
+                    $targetAccount = & $getEventValue $eventData 'TargetUserName'
+                    $targetServer = & $getEventValue $eventData 'TargetServerName'
+                    $processName = & $getEventValue $eventData 'ProcessName'
                     
                     $results.ExplicitCredentials += [PSCustomObject]@{
                         TimeCreated = $event.TimeCreated
@@ -304,7 +304,7 @@ function Find-SuspiciousAuthentication {
                         $reason = ""
 
                         # Check for after-hours logon (outside 7 AM - 7 PM)
-                        if ($hour -lt 7 -or $hour -gt 19) {
+                        if ($hour -lt 7 -or $hour -ge 19) {
                             $isUnusual = $true
                             $reason = "After-hours logon"
                         }

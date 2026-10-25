@@ -93,7 +93,7 @@ function Test-PCI-DSS {
                 try {
                     # Req 1.2: Network security controls (firewalls)
                     $firewallProfiles = Get-NetFirewallProfile -ErrorAction SilentlyContinue
-                    $allFirewallsEnabled = @($firewallProfiles | Where-Object { -not $_.Enabled }).Count -eq 0
+                    $allFirewallsEnabled = ($null -ne $firewallProfiles) -and (@($firewallProfiles | Where-Object { $null -ne $_ -and -not $_.Enabled }).Count -eq 0)
                     
                     $req = [PSCustomObject]@{
                         RequirementID = '1.2.1'
@@ -101,7 +101,8 @@ function Test-PCI-DSS {
                         Category = 'Network'
                         Description = 'Firewalls must be enabled and properly configured'
                         Expected = 'All firewall profiles enabled'
-                        Actual = if ($allFirewallsEnabled) { "All enabled" } else { "Some disabled" }
+                        Actual = if ($null -eq $firewallProfiles) { "Unable to retrieve firewall profiles" }
+                                 elseif ($allFirewallsEnabled) { "All enabled" } else { "Some disabled" }
                         Status = if ($allFirewallsEnabled) { 'InPlace' } else { 'NotInPlace' }
                         Priority = 'Critical'
                         Remediation = 'Enable all Windows Firewall profiles (Domain, Private, Public)'
@@ -109,7 +110,7 @@ function Test-PCI-DSS {
                     $results.Requirements += $req
                     
                     # Req 1.3: Inbound traffic restrictions
-                    $defaultInboundBlock = @($firewallProfiles | Where-Object { $_.DefaultInboundAction -ne 'Block' })
+                    $defaultInboundBlock = @($firewallProfiles | Where-Object { $null -ne $_ -and $_.DefaultInboundAction -ne 'Block' })
                     
                     $req = [PSCustomObject]@{
                         RequirementID = '1.3.1'
@@ -117,15 +118,16 @@ function Test-PCI-DSS {
                         Category = 'Network'
                         Description = 'Inbound traffic should be denied by default'
                         Expected = 'Default action: Block'
-                        Actual = if ($defaultInboundBlock.Count -eq 0) { "All blocked" } else { "$($defaultInboundBlock.Count) profiles allow" }
-                        Status = if ($defaultInboundBlock.Count -eq 0) { 'InPlace' } else { 'NotInPlace' }
+                        Actual = if ($null -eq $firewallProfiles) { "Unable to retrieve firewall profiles" }
+                                 elseif ($defaultInboundBlock.Count -eq 0) { "All blocked" } else { "$($defaultInboundBlock.Count) profiles allow" }
+                        Status = if (($null -ne $firewallProfiles) -and $defaultInboundBlock.Count -eq 0) { 'InPlace' } else { 'NotInPlace' }
                         Priority = 'High'
                         Remediation = 'Set default inbound action to Block for all profiles'
                     }
                     $results.Requirements += $req
                     
                     # Req 1.4: Restrict connections between untrusted networks
-                    $publicProfile = $firewallProfiles | Where-Object { $_.Name -eq 'Public' }
+                    $publicProfile = $firewallProfiles | Where-Object { $null -ne $_ -and $_.Name -eq 'Public' }
                     
                     $req = [PSCustomObject]@{
                         RequirementID = '1.4.1'
@@ -133,8 +135,8 @@ function Test-PCI-DSS {
                         Category = 'Network'
                         Description = 'Public network profile must be restrictive'
                         Expected = 'Public profile enabled and blocking inbound'
-                        Actual = "Enabled: $($publicProfile.Enabled), Inbound: $($publicProfile.DefaultInboundAction)"
-                        Status = if ($publicProfile.Enabled -and $publicProfile.DefaultInboundAction -eq 'Block') { 'InPlace' } else { 'NotInPlace' }
+                        Actual = if ($publicProfile) { "Enabled: $($publicProfile.Enabled), Inbound: $($publicProfile.DefaultInboundAction)" } else { "Public profile not found" }
+                        Status = if ($publicProfile -and $publicProfile.Enabled -and $publicProfile.DefaultInboundAction -eq 'Block') { 'InPlace' } else { 'NotInPlace' }
                         Priority = 'High'
                         Remediation = 'Enable Public profile with default inbound block'
                     }

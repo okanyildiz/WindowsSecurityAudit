@@ -276,9 +276,8 @@ function Find-LivingOffLand {
                             $fileName = $file.Name.ToLower()
                             
                             foreach ($lolbin in $lolbinsDB.Keys) {
-                                $binaryName = $lolbin.Replace('.exe', '')
-                                
-                                if ($fileName -like "$binaryName-*") {
+                                # Prefetch files are named "<BINARY>-<hash>.pf" (e.g. CERTUTIL.EXE-1A2B3C4D.pf)
+                                if ($fileName -like "$lolbin-*") {
                                     $detection = [PSCustomObject]@{
                                         DetectionType = 'RecentExecution'
                                         Binary = $lolbin

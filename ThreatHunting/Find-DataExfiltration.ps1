@@ -71,6 +71,10 @@ function Find-DataExfiltration {
             Recommendations = @()
         }
         
+        # Track file paths already counted toward TotalDataMB (Compression and Staging
+        # scan overlapping locations such as $env:TEMP)
+        $countedDataPaths = @{}
+
         # Known cloud services and upload endpoints
         $cloudServices = @(
             'dropbox.com',
@@ -98,7 +102,7 @@ function Find-DataExfiltration {
                 try {
                     # Check active connections with high data transfer
                     $connections = Get-NetTCPConnection -State Established -ErrorAction SilentlyContinue |
-                        Where-Object { $_.RemoteAddress -notmatch '^(127\.|::1|0\.0\.0\.0)' }
+                        Where-Object { $null -ne $_ -and $_.RemoteAddress -notmatch '^(127\.|::1|0\.0\.0\.0)' }
                     
                     foreach ($conn in $connections | Select-Object -First 10) {
                         $process = Get-Process -Id $conn.OwningProcess -ErrorAction SilentlyContinue
@@ -262,7 +266,10 @@ function Find-DataExfiltration {
                                     }
                                     
                                     $results.Indicators.Compression += $indicator
-                                    $results.Summary.TotalDataMB += $sizeMB
+                                    if (-not $countedDataPaths.ContainsKey($archive.FullName)) {
+                                        $countedDataPaths[$archive.FullName] = $true
+                                        $results.Summary.TotalDataMB += $sizeMB
+                                    }
                                     
                                     if ($sizeMB -gt 500) {
                                         $results.Summary.HighFindings++
@@ -330,7 +337,10 @@ function Find-DataExfiltration {
                                 }
                                 
                                 $results.Indicators.Staging += $indicator
-                                $results.Summary.TotalDataMB += $sizeMB
+                                if (-not $countedDataPaths.ContainsKey($file.FullName)) {
+                                    $countedDataPaths[$file.FullName] = $true
+                                    $results.Summary.TotalDataMB += $sizeMB
+                                }
                                 
                                 if ($sizeMB -gt 500) {
                                     $results.Summary.HighFindings++

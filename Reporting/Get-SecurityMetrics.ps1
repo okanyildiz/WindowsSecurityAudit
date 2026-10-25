@@ -1541,13 +1541,13 @@ $penalty += ($script:metrics.Findings.Medium * 5)
 $penalty += ($script:metrics.Findings.Low * 2)
 $penalty += ((ConvertTo-SafeInt $script:metrics.Core.PendingUpdates) * 2)
 
-# Add penalties based on conditions
-if (-not $script:metrics.WindowsDefender.ProtectionEnabled) {
+# Add penalties based on conditions (only for modules that were actually collected)
+if ($script:metrics.WindowsDefender.Enabled -and -not $script:metrics.WindowsDefender.ProtectionEnabled) {
     $penalty += 15
 }
 
 $signatureAge = ConvertTo-SafeInt $script:metrics.WindowsDefender.SignatureAge
-if ($signatureAge -gt 7) {
+if ($script:metrics.WindowsDefender.Enabled -and $signatureAge -gt 7) {
     $penalty += 10
 }
 
@@ -1623,7 +1623,7 @@ if ($script:metrics.Findings.Critical -gt 0) {
 if ($script:metrics.Vulnerability.EOLSoftware -gt 0) {
     $script:metrics.Recommendations.Critical += "Replace or upgrade $($script:metrics.Vulnerability.EOLSoftware) end-of-life software packages"
 }
-if (-not $script:metrics.WindowsDefender.ProtectionEnabled) {
+if ($script:metrics.WindowsDefender.Enabled -and -not $script:metrics.WindowsDefender.ProtectionEnabled) {
     $script:metrics.Recommendations.Critical += "Enable Windows Defender real-time protection immediately"
 }
 if ($script:metrics.Detection.APTIndicators -gt 0) {
@@ -1636,10 +1636,10 @@ if ($script:metrics.Findings.High -gt 0) {
 if ($script:metrics.Core.PendingUpdates -gt 0) {
     $script:metrics.Recommendations.High += "Install $($script:metrics.Core.PendingUpdates) pending security updates"
 }
-if ($script:metrics.WindowsDefender.SignatureAge -gt 7) {
+if ($script:metrics.WindowsDefender.Enabled -and $script:metrics.WindowsDefender.SignatureAge -gt 7) {
     $script:metrics.Recommendations.High += "Update Windows Defender signatures (currently $($script:metrics.WindowsDefender.SignatureAge) days old)"
 }
-if ($script:metrics.ComplianceScore -lt 70) {
+if ($script:metrics.Compliance.Enabled -and $script:metrics.ComplianceScore -lt 70) {
     $script:metrics.Recommendations.High += "Improve compliance score (currently $($script:metrics.ComplianceScore)% - target: 80%+)"
 }
 

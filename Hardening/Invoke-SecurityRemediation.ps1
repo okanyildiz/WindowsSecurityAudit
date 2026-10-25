@@ -203,23 +203,32 @@ function Invoke-SecurityRemediation {
                 FindingPattern = 'guest account|guest user'
                 RequiresAdmin  = $true
                 Action         = {
-                    Disable-LocalUser -Name "Guest" -ErrorAction Stop
+                    # Look up the built-in Guest account by well-known SID RID 501 (culture-invariant)
+                    $guestAccount = @(Get-LocalUser -ErrorAction Stop | Where-Object { $null -ne $_.SID -and $_.SID.Value -match '-501$' }) | Select-Object -First 1
+                    if ($null -eq $guestAccount) {
+                        throw "Built-in Guest account (RID 501) was not found on this system."
+                    }
+                    Disable-LocalUser -SID $guestAccount.SID -ErrorAction Stop
                 }
                 Verify         = {
-                    $guest = Get-LocalUser -Name "Guest" -ErrorAction Stop
-                    return (-not $guest.Enabled)
+                    $guest = @(Get-LocalUser -ErrorAction Stop | Where-Object { $null -ne $_.SID -and $_.SID.Value -match '-501$' }) | Select-Object -First 1
+                    return ($null -ne $guest -and -not $guest.Enabled)
                 }
                 Rollback       = {
                     $wasEnabled = $false
+                    $guestSid = $null
                     try {
-                        $guest = Get-LocalUser -Name "Guest" -ErrorAction Stop
-                        $wasEnabled = [bool]$guest.Enabled
+                        $guest = @(Get-LocalUser -ErrorAction Stop | Where-Object { $null -ne $_.SID -and $_.SID.Value -match '-501$' }) | Select-Object -First 1
+                        if ($null -ne $guest) {
+                            $wasEnabled = [bool]$guest.Enabled
+                            $guestSid = $guest.SID.Value
+                        }
                     }
                     catch {
                         $wasEnabled = $false
                     }
-                    if ($wasEnabled) {
-                        return @("Enable-LocalUser -Name 'Guest'")
+                    if ($wasEnabled -and $guestSid) {
+                        return @("Enable-LocalUser -SID '$guestSid'")
                     }
                     return @("# Guest account was already disabled; no rollback action required")
                 }
@@ -318,6 +327,10 @@ function Invoke-SecurityRemediation {
                 }
                 elseif ($null -ne $item.PSObject.Properties['Finding']) {
                     $allFindings += $item
+                }
+                elseif ($item -is [System.Collections.IEnumerable] -and $item -isnot [string] -and $item -isnot [hashtable]) {
+                    # A bare findings array bound directly to -InputObject (pipeline input arrives item-by-item)
+                    $allFindings += @($item)
                 }
             }
 
@@ -445,9 +458,6 @@ function Invoke-SecurityRemediation {
             # --- Write rollback script (captured pre-change values only) ---
             if ($GenerateRollback -and @($rollbackScriptLines).Count -gt 0) {
                 try {
-                    if (-not (Test-Path -Path $RollbackDirectory)) {
-                        New-Item -Path $RollbackDirectory -ItemType Directory -Force | Out-Null
-                    }
                     $rollbackFile = Join-Path -Path $RollbackDirectory -ChildPath "SecurityRemediation_Rollback_$(Get-Date -Format 'yyyyMMdd_HHmmss').ps1"
 
                     $header = @(
@@ -459,6 +469,9 @@ function Invoke-SecurityRemediation {
                     )
 
                     if ($PSCmdlet.ShouldProcess($rollbackFile, "Write rollback script")) {
+                        if (-not (Test-Path -Path $RollbackDirectory)) {
+                            New-Item -Path $RollbackDirectory -ItemType Directory -Force | Out-Null
+                        }
                         Set-Content -Path $rollbackFile -Value (($header + $rollbackScriptLines) -join [Environment]::NewLine) -Encoding UTF8 -ErrorAction Stop
                         $results.RollbackPath = $rollbackFile
                         Write-Host "`n[ROLLBACK] Rollback script written: $rollbackFile" -ForegroundColor Green

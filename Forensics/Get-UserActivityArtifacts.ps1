@@ -405,16 +405,16 @@ function Get-UserActivityArtifacts {
                 }
 
                 if (@($results.RecycleBin).Count -gt 0) {
-                    $results.RecycleBin | Export-Csv -Path (Join-Path $OutputPath 'RecycleBin.csv') -NoTypeInformation
+                    $results.RecycleBin | Export-Csv -Path (Join-Path $OutputPath 'RecycleBin.csv') -NoTypeInformation -Encoding UTF8
                 }
                 if (@($results.RecentLinks).Count -gt 0) {
-                    $results.RecentLinks | Export-Csv -Path (Join-Path $OutputPath 'RecentLinks.csv') -NoTypeInformation
+                    $results.RecentLinks | Export-Csv -Path (Join-Path $OutputPath 'RecentLinks.csv') -NoTypeInformation -Encoding UTF8
                 }
                 if (@($results.JumpLists).Count -gt 0) {
-                    $results.JumpLists | Export-Csv -Path (Join-Path $OutputPath 'JumpLists.csv') -NoTypeInformation
+                    $results.JumpLists | Export-Csv -Path (Join-Path $OutputPath 'JumpLists.csv') -NoTypeInformation -Encoding UTF8
                 }
                 if (@($results.Timeline).Count -gt 0) {
-                    $results.Timeline | Export-Csv -Path (Join-Path $OutputPath 'Timeline.csv') -NoTypeInformation
+                    $results.Timeline | Export-Csv -Path (Join-Path $OutputPath 'Timeline.csv') -NoTypeInformation -Encoding UTF8
                 }
 
                 Write-Host "`nCSV exports written to: $OutputPath" -ForegroundColor Green

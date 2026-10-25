@@ -504,7 +504,7 @@ function New-SecurityDashboard {
                     Write-Host "  [19/54] Test-CISBenchmark: $($c.ComplianceScore)%" -ForegroundColor Green 
                 } catch { 
                     Write-Warning "  Test-CISBenchmark failed: $_"
-                    $script:dashboardData.Compliance.CIS = @{ ComplianceScore = 0; Status = "Error" }
+                    $script:dashboardData.Compliance.CIS = @{ ComplianceScore = $null; Status = "Error" }
                 }
                 
                 try { 
@@ -517,7 +517,7 @@ function New-SecurityDashboard {
                     Write-Host "  [20/54] Test-NISTCompliance: $($c.ComplianceScore)%" -ForegroundColor Green 
                 } catch { 
                     Write-Warning "  Test-NISTCompliance failed: $_"
-                    $script:dashboardData.Compliance.NIST = @{ ComplianceScore = 0; Status = "Error" }
+                    $script:dashboardData.Compliance.NIST = @{ ComplianceScore = $null; Status = "Error" }
                 }
                 
                 try { 
@@ -530,7 +530,7 @@ function New-SecurityDashboard {
                     Write-Host "  [21/54] Test-PCI-DSS: $($c.ComplianceScore)%" -ForegroundColor Green 
                 } catch { 
                     Write-Warning "  Test-PCI-DSS failed: $_"
-                    $script:dashboardData.Compliance.PCIDSS = @{ ComplianceScore = 0; Status = "Error" }
+                    $script:dashboardData.Compliance.PCIDSS = @{ ComplianceScore = $null; Status = "Error" }
                 }
                 
                 try { 
@@ -953,15 +953,17 @@ function New-SecurityDashboard {
                 $script:dashboardData.ExecutiveSummary.TotalFindings += $adVulns
             }
             
-            # Compliance score with proper null checks
+            # Compliance score with proper null checks (a genuine 0% score is
+            # included in the average; failed collectors carry a $null score and
+            # are excluded)
             $scores = @()
-            if ($script:dashboardData.Compliance.CIS -and $script:dashboardData.Compliance.CIS.ComplianceScore) { 
+            if ($script:dashboardData.Compliance.CIS -and $null -ne $script:dashboardData.Compliance.CIS.ComplianceScore) { 
                 $scores += $script:dashboardData.Compliance.CIS.ComplianceScore 
             }
-            if ($script:dashboardData.Compliance.NIST -and $script:dashboardData.Compliance.NIST.ComplianceScore) { 
+            if ($script:dashboardData.Compliance.NIST -and $null -ne $script:dashboardData.Compliance.NIST.ComplianceScore) { 
                 $scores += $script:dashboardData.Compliance.NIST.ComplianceScore 
             }
-            if ($script:dashboardData.Compliance.PCIDSS -and $script:dashboardData.Compliance.PCIDSS.ComplianceScore) { 
+            if ($script:dashboardData.Compliance.PCIDSS -and $null -ne $script:dashboardData.Compliance.PCIDSS.ComplianceScore) { 
                 $scores += $script:dashboardData.Compliance.PCIDSS.ComplianceScore 
             }
             

@@ -82,11 +82,11 @@ function Find-StaleADObjects {
                 Write-Host "`n[1/3] Scanning for stale user accounts..." -ForegroundColor Cyan
                 
                 try {
-                    # Get users that haven't logged on in X days
-                    $staleUsers = Get-ADUser -Filter {
+                    # Get users that haven't logged on in X days (@() wraps $null so .Count is safe under strict mode)
+                    $staleUsers = @(Get-ADUser -Filter {
                         Enabled -eq $true -and 
                         LastLogonDate -lt $cutoffDate
-                    } -Properties LastLogonDate, PasswordLastSet, whenCreated, Description -Server $Domain
+                    } -Properties LastLogonDate, PasswordLastSet, whenCreated, Description -Server $Domain)
                     
                     foreach ($user in $staleUsers) {
                         $daysSinceLogon = if ($user.LastLogonDate) {
@@ -139,11 +139,11 @@ function Find-StaleADObjects {
                 Write-Host "`n[2/3] Scanning for stale computer accounts..." -ForegroundColor Cyan
                 
                 try {
-                    # Get computers that haven't connected in X days
-                    $staleComputers = Get-ADComputer -Filter {
+                    # Get computers that haven't connected in X days (@() wraps $null so .Count is safe under strict mode)
+                    $staleComputers = @(Get-ADComputer -Filter {
                         Enabled -eq $true -and 
                         LastLogonDate -lt $cutoffDate
-                    } -Properties LastLogonDate, OperatingSystem, whenCreated, Description -Server $Domain
+                    } -Properties LastLogonDate, OperatingSystem, whenCreated, Description -Server $Domain)
                     
                     foreach ($computer in $staleComputers) {
                         $daysSinceLogon = if ($computer.LastLogonDate) {
@@ -198,7 +198,9 @@ function Find-StaleADObjects {
                     foreach ($group in $allGroups) {
                         $members = Get-ADGroupMember -Identity $group -Server $Domain -ErrorAction SilentlyContinue
                         
-                        if ($members.Count -eq 0) {
+                        # Get-ADGroupMember returns $null (not an empty array) for empty
+                        # groups, and $null.Count is $null, so a .Count -eq 0 check never fires
+                        if (-not $members) {
                             $groupAge = (New-TimeSpan -Start $group.whenCreated -End (Get-Date)).Days
                             
                             $results.StaleGroups += [PSCustomObject]@{

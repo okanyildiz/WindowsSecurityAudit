@@ -179,6 +179,9 @@ function Export-MemoryDump {
             if (-not $result.Success) {
                 Write-Host "`n[2/3] Attempting MiniDumpWriteDump method..." -ForegroundColor Cyan
                 
+                $processHandle = [IntPtr]::Zero
+                $fileStream = $null
+                
                 try {
                     # FIXED: Define complete P/Invoke signatures with proper types
                     Add-Type -TypeDefinition @"
@@ -254,7 +257,9 @@ public class ProcessDump {
                     )
                     
                     $fileStream.Close()
+                    $fileStream = $null
                     [ProcessDump]::CloseHandle($processHandle) | Out-Null
+                    $processHandle = [IntPtr]::Zero
                     
                     if ($success -and (Test-Path $dumpFilePath)) {
                         $result.Success = $true
@@ -270,6 +275,10 @@ public class ProcessDump {
                 catch {
                     Write-Warning "MiniDumpWriteDump failed: $_"
                     $result.ErrorMessage = $_.Exception.Message
+                    
+                    # Release resources if the attempt failed after they were acquired
+                    if ($null -ne $fileStream) { $fileStream.Dispose() }
+                    if ($processHandle -ne [IntPtr]::Zero) { [ProcessDump]::CloseHandle($processHandle) | Out-Null }
                     
                     # Clean up failed dump file
                     if (Test-Path $dumpFilePath) {

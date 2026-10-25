@@ -174,7 +174,7 @@ function Find-ADBackdoors {
                                 
                                 if ($account) {
                                     # Check if it's a legitimate DC or admin account
-                                    $isLegitimate = $account.Name -match "Domain Controllers|Enterprise Admins|Administrators"
+                                    $isLegitimate = $account.Name -match "Domain Controllers|Enterprise Admins|Domain Admins|^Administrators$"
                                     
                                     if (-not $isLegitimate) {
                                         $results.Backdoors.DCSync += [PSCustomObject]@{
@@ -258,11 +258,13 @@ function Find-ADBackdoors {
                 
                 try {
                     # Check for unconstrained delegation
-                    $unconstrainedDelegation = Get-ADComputer -Filter {TrustedForDelegation -eq $true} -Properties TrustedForDelegation -Server $Domain
+                    $unconstrainedDelegation = Get-ADComputer -Filter {TrustedForDelegation -eq $true} -Properties TrustedForDelegation, PrimaryGroupID -Server $Domain
                     
                     foreach ($computer in $unconstrainedDelegation) {
-                        # Domain Controllers are expected to have this
-                        if ($computer.Name -notmatch "DC|Domain Controller") {
+                        # Domain Controllers are expected to have this (PrimaryGroupID 516 = RWDC, 521 = RODC);
+                        # matching on the computer name would miss DCs with arbitrary names and
+                        # falsely excuse non-DCs whose names merely contain "DC"
+                        if ($computer.PrimaryGroupID -notin @(516, 521)) {
                             $results.Backdoors.DangerousDelegations += [PSCustomObject]@{
                                 Severity = 'High'
                                 Object = $computer.Name

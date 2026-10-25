@@ -311,23 +311,25 @@ function Update-DefenderConfiguration {
             Write-Host "`n[ADDITIONAL] Applying recommended settings..." -ForegroundColor Cyan
             
             try {
-                # Enable behavior monitoring
-                Set-MpPreference -DisableBehaviorMonitoring $false
-                Write-Host "  + Behavior Monitoring enabled" -ForegroundColor Green
-                
-                # Enable IOAV protection
-                Set-MpPreference -DisableIOAVProtection $false
-                Write-Host "  + IOAV Protection enabled" -ForegroundColor Green
-                
-                # Enable script scanning
-                Set-MpPreference -DisableScriptScanning $false
-                Write-Host "  + Script Scanning enabled" -ForegroundColor Green
-                
-                # Check for signatures before scan
-                Set-MpPreference -CheckForSignaturesBeforeRunningScan $true
-                Write-Host "  + Check signatures before scan enabled" -ForegroundColor Green
-                
-                $results.Changes += "Additional protections enabled"
+                if ($PSCmdlet.ShouldProcess($env:COMPUTERNAME, "Enable recommended Defender protections (behavior monitoring, IOAV, script scanning, signature check before scan)")) {
+                    # Enable behavior monitoring
+                    Set-MpPreference -DisableBehaviorMonitoring $false
+                    Write-Host "  + Behavior Monitoring enabled" -ForegroundColor Green
+                    
+                    # Enable IOAV protection
+                    Set-MpPreference -DisableIOAVProtection $false
+                    Write-Host "  + IOAV Protection enabled" -ForegroundColor Green
+                    
+                    # Enable script scanning
+                    Set-MpPreference -DisableScriptScanning $false
+                    Write-Host "  + Script Scanning enabled" -ForegroundColor Green
+                    
+                    # Check for signatures before scan
+                    Set-MpPreference -CheckForSignaturesBeforeRunningScan $true
+                    Write-Host "  + Check signatures before scan enabled" -ForegroundColor Green
+                    
+                    $results.Changes += "Additional protections enabled"
+                }
             }
             catch {
                 Write-Verbose "Some additional settings could not be configured: $_"

@@ -363,9 +363,9 @@ if ($highSeverityProcs.Count -gt 0) {
         <h2>System Details</h2>
         <table>
             <tr><th>Component</th><th>Status</th></tr>
-            <tr><td>Windows Defender</td><td>$(if ($baseline.WindowsDefender -is [PSCustomObject]) { $baseline.WindowsDefender.RealTimeProtectionEnabled } else { $baseline.WindowsDefender })</td></tr>
+            <tr><td>Windows Defender</td><td>$(if ($null -ne $baseline.WindowsDefender -and $baseline.WindowsDefender.PSObject.Properties['RealTimeProtectionEnabled']) { $baseline.WindowsDefender.RealTimeProtectionEnabled } else { $baseline.WindowsDefender })</td></tr>
             <tr><td>Firewall</td><td>$(if ($baseline.Firewall -is [array] -and $baseline.Firewall.Count -gt 0) { $baseline.Firewall[0].Enabled } else { $baseline.Firewall })</td></tr>
-            <tr><td>UAC</td><td>$(if ($baseline.UAC -is [PSCustomObject]) { $baseline.UAC.EnableLUA -eq 1 } else { $baseline.UAC })</td></tr>
+            <tr><td>UAC</td><td>$(if ($null -ne $baseline.UAC -and $baseline.UAC.PSObject.Properties['EnableLUA']) { $baseline.UAC.EnableLUA -eq 1 } else { $baseline.UAC })</td></tr>
             <tr><td>Persistence Mechanisms</td><td>$($persistence.TotalFindings) total ($($persistence.SuspiciousCount) suspicious)</td></tr>
             <tr><td>Network Anomalies</td><td>$($network.TotalAnomalies)</td></tr>
             <tr><td>Failed Logons</td><td>$($auth.Statistics.TotalFailedLogons)</td></tr>

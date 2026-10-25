@@ -156,7 +156,7 @@ function Find-LateralMovement {
                     
                     if ($remoteEvents) {
                         $groupedEvents = $remoteEvents | Group-Object -Property { 
-                            $_.Properties[7].Value 
+                            $_.Properties[8].Value 
                         } | Sort-Object Count -Descending
                         
                         foreach ($group in $groupedEvents | Select-Object -First 5) {
@@ -166,11 +166,11 @@ function Find-LateralMovement {
                                 Type = 'RemoteExecution'
                                 Process = 'N/A'
                                 ProcessId = 'N/A'
-                                TargetServer = $event.Properties[7].Value
+                                TargetServer = $event.Properties[8].Value
                                 Account = $event.Properties[1].Value
                                 Count = $group.Count
                                 Severity = if ($group.Count -gt 10) { 'High' } else { 'Medium' }
-                                Description = "Explicit credential logon to $($event.Properties[7].Value) - $($group.Count) times"
+                                Description = "Explicit credential logon to $($event.Properties[8].Value) - $($group.Count) times"
                                 Timestamp = $event.TimeCreated.ToString("yyyy-MM-dd HH:mm:ss")
                             }
                             
@@ -182,7 +182,7 @@ function Find-LateralMovement {
                                 $results.Summary.MediumFindings++
                             }
                             
-                            Write-Host "  [!] Explicit credential logon: $($event.Properties[7].Value) ($($group.Count) times)" -ForegroundColor Yellow
+                            Write-Host "  [!] Explicit credential logon: $($event.Properties[8].Value) ($($group.Count) times)" -ForegroundColor Yellow
                         }
                     }
                     else {

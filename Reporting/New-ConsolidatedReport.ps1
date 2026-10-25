@@ -253,8 +253,11 @@ function New-ConsolidatedReport {
                 if ($null -eq $Data) { return $null }
 
                 # Direct score properties in priority order
+                # NOTE: $null -as [double] yields 0, so null must be filtered BEFORE
+                # the numeric cast or every missing property would score as 0
                 foreach ($name in @('OverallSecurityScore', 'SecurityScore', 'ComplianceScore', 'Score')) {
                     $value = Get-SafeProperty $Data $name $null
+                    if ($null -eq $value) { continue }
                     $num = $value -as [double]
                     if ($null -ne $num) { return [Math]::Round($num, 1) }
                 }
@@ -264,6 +267,7 @@ function New-ConsolidatedReport {
                 if ($null -ne $summary) {
                     foreach ($name in @('OverallSecurityScore', 'SecurityScore', 'ComplianceScore', 'CompliancePercentage', 'Score')) {
                         $value = Get-SafeProperty $summary $name $null
+                        if ($null -eq $value) { continue }
                         $num = $value -as [double]
                         if ($null -ne $num) { return [Math]::Round($num, 1) }
                     }
@@ -413,16 +417,18 @@ function New-ConsolidatedReport {
                 $totalFindings.Low      += $result.Findings.Low
 
                 $categoryScores += @{
-                    Section = $section
-                    Score   = $(if ($null -ne $result.Score) { $result.Score } else { 0 })
-                    Status  = $result.Status
+                    Section  = $section
+                    Score    = $(if ($null -ne $result.Score) { $result.Score } else { 0 })
+                    HasScore = ($null -ne $result.Score)
+                    Status   = $result.Status
                 }
             }
 
             $grandTotal = $totalFindings.Critical + $totalFindings.High + $totalFindings.Medium + $totalFindings.Low
 
-            # Overall score: average of known section scores, $null if none collected
-            $knownScores = @($categoryScores | Where-Object { $_.Status -ne 'Not collected' } | ForEach-Object { $_.Score } | Where-Object { $_ -gt 0 })
+            # Overall score: average of sections that produced a score, $null if none did
+            # (HasScore distinguishes a genuinely collected 0 from "no score available")
+            $knownScores = @($categoryScores | Where-Object { $_.Status -ne 'Not collected' -and $_.HasScore } | ForEach-Object { $_.Score })
             $overallScore = $null
             if (@($knownScores).Count -gt 0) {
                 $overallScore = [Math]::Round(($knownScores | Measure-Object -Average).Average, 1)

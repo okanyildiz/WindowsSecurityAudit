@@ -158,7 +158,7 @@ function Test-ADSecurityPosture {
             # 3. Domain Controllers
             Write-Host "`n[3/5] Checking Domain Controllers..." -ForegroundColor Cyan
             
-            $dcs = Get-ADDomainController -Filter * -Server $Domain
+            $dcs = @(Get-ADDomainController -Filter * -Server $Domain)
             $dcScore = 0
             $maxDCScore = 20
             
@@ -202,7 +202,7 @@ function Test-ADSecurityPosture {
             if ($IncludeTrusts) {
                 Write-Host "`n[4/5] Analyzing Domain Trusts..." -ForegroundColor Cyan
                 
-                $trusts = Get-ADTrust -Filter * -Server $Domain
+                $trusts = @(Get-ADTrust -Filter * -Server $Domain)
                 $trustScore = 0
                 $maxTrustScore = 20
                 
@@ -244,7 +244,7 @@ function Test-ADSecurityPosture {
             if ($IncludeGPO) {
                 Write-Host "`n[5/5] Analyzing Group Policy Objects..." -ForegroundColor Cyan
                 
-                $gpos = Get-GPO -All -Domain $Domain
+                $gpos = @(Get-GPO -All -Domain $Domain)
                 $gpoScore = 0
                 $maxGPOScore = 20
                 

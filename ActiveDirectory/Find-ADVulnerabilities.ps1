@@ -81,8 +81,8 @@ function Find-ADVulnerabilities {
                 Write-Host "`n[1/3] Checking for Kerberoastable accounts..." -ForegroundColor Cyan
                 
                 try {
-                    # Find accounts with SPN set
-                    $kerberoastableUsers = Get-ADUser -Filter {ServicePrincipalName -like "*"} -Properties ServicePrincipalName, PasswordLastSet, Enabled, AdminCount -Server $Domain
+                    # Find accounts with SPN set (@() wraps $null so .Count is safe under strict mode)
+                    $kerberoastableUsers = @(Get-ADUser -Filter {ServicePrincipalName -like "*"} -Properties ServicePrincipalName, PasswordLastSet, Enabled, AdminCount -Server $Domain)
                     
                     foreach ($user in $kerberoastableUsers) {
                         $severity = 'Medium'
@@ -136,8 +136,8 @@ function Find-ADVulnerabilities {
                 Write-Host "`n[2/3] Checking for AS-REP Roastable accounts..." -ForegroundColor Cyan
                 
                 try {
-                    # Find accounts with "Do not require Kerberos preauthentication"
-                    $asrepUsers = Get-ADUser -Filter {DoesNotRequirePreAuth -eq $true} -Properties DoesNotRequirePreAuth, PasswordLastSet, Enabled, AdminCount -Server $Domain
+                    # Find accounts with "Do not require Kerberos preauthentication" (@() wraps $null so .Count is safe under strict mode)
+                    $asrepUsers = @(Get-ADUser -Filter {DoesNotRequirePreAuth -eq $true} -Properties DoesNotRequirePreAuth, PasswordLastSet, Enabled, AdminCount -Server $Domain)
                     
                     foreach ($user in $asrepUsers) {
                         $severity = 'High'
@@ -189,7 +189,7 @@ function Find-ADVulnerabilities {
                 try {
                     # Check for users with "Password Never Expires"
                     Write-Host "  Checking password policies..." -ForegroundColor Yellow
-                    $neverExpireUsers = Get-ADUser -Filter {PasswordNeverExpires -eq $true -and Enabled -eq $true} -Properties PasswordNeverExpires, AdminCount -Server $Domain
+                    $neverExpireUsers = @(Get-ADUser -Filter {PasswordNeverExpires -eq $true -and Enabled -eq $true} -Properties PasswordNeverExpires, AdminCount -Server $Domain)
                     
                     foreach ($user in $neverExpireUsers) {
                         $severity = if ($user.AdminCount -eq 1) { 'High' } else { 'Medium' }

@@ -258,20 +258,29 @@ function New-ExecutiveReport {
             
             $metrics = $null
             
-            # If MetricsFile is actually a PSCustomObject (piped from Get-SecurityMetrics)
-            if ($MetricsFile -is [PSCustomObject]) {
-                $metrics = $MetricsFile
-                Write-Host "  Using provided metrics object" -ForegroundColor Green
-            }
-            # If MetricsFile is a path to JSON file
-            elseif ($MetricsFile -and (Test-Path $MetricsFile)) {
-                try {
-                    $metrics = Get-Content $MetricsFile -Raw | ConvertFrom-Json
-                    Write-Host "  Loaded metrics from: $MetricsFile" -ForegroundColor Green
-                } catch {
-                    Write-Error "Failed to load metrics file: $_"
+            # A string is always a file path - this check must come FIRST:
+            # '-is [PSCustomObject]' is unreliable for cmdlet-emitted values
+            # (they can test as PSCustomObject regardless of their real type)
+            if ($MetricsFile -is [string] -and -not [string]::IsNullOrWhiteSpace($MetricsFile)) {
+                if (Test-Path $MetricsFile) {
+                    try {
+                        $metrics = Get-Content $MetricsFile -Raw | ConvertFrom-Json
+                        Write-Host "  Loaded metrics from: $MetricsFile" -ForegroundColor Green
+                    } catch {
+                        Write-Error "Failed to load metrics file: $_"
+                        return
+                    }
+                } else {
+                    # An explicit path was provided but does not exist - never
+                    # silently fall back to unrelated history data
+                    Write-Error "Metrics file not found: $MetricsFile"
                     return
                 }
+            }
+            # If MetricsFile is an in-memory metrics object (piped from Get-SecurityMetrics)
+            elseif ($MetricsFile) {
+                $metrics = $MetricsFile
+                Write-Host "  Using provided metrics object" -ForegroundColor Green
             }
             # Try to load most recent from history
             else {
@@ -1022,16 +1031,26 @@ function New-ExecutiveReport {
                     $pdfFile = Join-Path $OutputPath "SecurityReport_$timestamp.pdf"
                     $htmlFile = Join-Path $OutputPath "SecurityReport_$timestamp.html"
                     
-                    if (Test-Path $htmlFile) {
-                        # Try to use wkhtmltopdf if available
-                        $wkhtmltopdf = Get-Command wkhtmltopdf -ErrorAction SilentlyContinue
-                        if ($wkhtmltopdf) {
-                            & wkhtmltopdf $htmlFile $pdfFile
+                    # PDF-only runs still need the intermediate HTML - generate it if the
+                    # HTML format was not requested
+                    if (-not (Test-Path $htmlFile)) {
+                        Write-Host "  Generating intermediate HTML for PDF conversion..." -ForegroundColor Gray
+                        $pdfHtmlContent = Generate-HTMLReport -ReportData $reportData
+                        $pdfHtmlContent | Out-File $htmlFile -Encoding UTF8 -Force
+                    }
+                    
+                    # Try to use wkhtmltopdf if available
+                    $wkhtmltopdf = Get-Command wkhtmltopdf -ErrorAction SilentlyContinue
+                    if ($wkhtmltopdf) {
+                        & wkhtmltopdf "$htmlFile" "$pdfFile"
+                        if (Test-Path $pdfFile) {
                             $outputFiles += $pdfFile
                             Write-Host "  PDF report saved: $pdfFile" -ForegroundColor Green
                         } else {
-                            Write-Warning "  wkhtmltopdf not found - install from: https://wkhtmltopdf.org/"
+                            Write-Warning "  wkhtmltopdf did not produce a PDF file"
                         }
+                    } else {
+                        Write-Warning "  wkhtmltopdf not found - install from: https://wkhtmltopdf.org/"
                     }
                 } catch {
                     Write-Warning "  Failed to generate PDF report: $_"
@@ -1147,13 +1166,17 @@ function Generate-HTMLReport {
         return 1  # Single item
     }
     
+    # HTML-encode caller-supplied strings before embedding them in markup
+    $safeTitle = [System.Net.WebUtility]::HtmlEncode("$($ReportData.ReportTitle)")
+    $safeCompany = [System.Net.WebUtility]::HtmlEncode("$($ReportData.CompanyName)")
+    
     $html = @"
 <!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>$($ReportData.ReportTitle)</title>
+    <title>$safeTitle</title>
     <style>
         * { margin: 0; padding: 0; box-sizing: border-box; }
         body {
@@ -1375,10 +1398,10 @@ function Generate-HTMLReport {
         
         <div class="header">
             $(if ($ReportData.LogoDataUri) {
-                "<img src='$($ReportData.LogoDataUri)' alt='$($ReportData.CompanyName) Logo' style='max-height: 80px; max-width: 300px; margin-bottom: 15px;' />"
+                "<img src='$($ReportData.LogoDataUri)' alt='$safeCompany Logo' style='max-height: 80px; max-width: 300px; margin-bottom: 15px;' />"
             })
-            <h1>$($ReportData.ReportTitle)</h1>
-            <div class="subtitle">$($ReportData.CompanyName)</div>
+            <h1>$safeTitle</h1>
+            <div class="subtitle">$safeCompany</div>
             <div class="subtitle">Generated: $($ReportData.GeneratedDate)</div>
         </div>
         
@@ -1702,7 +1725,7 @@ function Generate-HTMLReport {
         })
         
         <div class="footer">
-            <p><strong>$($ReportData.CompanyName) - Security Assessment Report</strong></p>
+            <p><strong>$safeCompany - Security Assessment Report</strong></p>
             <p>Generated: $($ReportData.GeneratedDate)</p>
             <p>WindowsSecurityAudit Module v1.2.0</p>
             $(if ($ReportData.Confidential) {
@@ -1730,11 +1753,13 @@ function Generate-ExecutiveSummary {
     }
     
     # Simplified 1-page executive summary
+    $safeCompany = [System.Net.WebUtility]::HtmlEncode("$($ReportData.CompanyName)")
+    
     $html = @"
 <!DOCTYPE html>
 <html>
 <head>
-    <title>Executive Summary - $($ReportData.CompanyName)</title>
+    <title>Executive Summary - $safeCompany</title>
     <style>
         body { font-family: 'Segoe UI', sans-serif; padding: 40px; max-width: 800px; margin: 0 auto; }
         h1 { color: #667eea; border-bottom: 3px solid #667eea; padding-bottom: 10px; }
@@ -1748,7 +1773,7 @@ function Generate-ExecutiveSummary {
 </head>
 <body>
     <h1>Executive Summary</h1>
-    <p><strong>$($ReportData.CompanyName)</strong> | $($ReportData.GeneratedDate)</p>
+    <p><strong>$safeCompany</strong> | $($ReportData.GeneratedDate)</p>
     
     <div class="summary-box">
         <h2>Overall Security Posture</h2>

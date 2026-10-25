@@ -178,7 +178,7 @@ function ConvertTo-SiemEvent {
                     $extension += ' cs3={0} cs3Label=TechniqueId' -f (ConvertTo-CefExtensionEscaped $techniqueId)
                 }
 
-                Write-Output ($header + '| ' + $extension)
+                Write-Output ($header + '|' + $extension)
             }
         }
         catch {

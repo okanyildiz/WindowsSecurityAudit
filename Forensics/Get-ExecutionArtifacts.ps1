@@ -93,12 +93,14 @@ function Get-ExecutionArtifacts {
                         $prefetchFiles = @(Get-ChildItem -Path $prefetchPath -Filter "*.pf" -ErrorAction SilentlyContinue)
                         
                         foreach ($file in $prefetchFiles) {
-                            # Extract executable name from prefetch filename (format: EXECUTABLE-HASH.pf)
-                            $executableName = ($file.BaseName -split '-')[0]
+                            # Prefetch filename format: EXECUTABLE.EXE-8HEXDIGITS.pf. The executable
+                            # name itself may contain hyphens, so strip only the trailing hash suffix
+                            # instead of splitting on the first hyphen
+                            $executableName = $file.BaseName -replace '-[0-9A-Fa-f]{8}$', ''
                             
                             $results.Artifacts += [PSCustomObject]@{
                                 Source = 'Prefetch'
-                                ExecutableName = "$executableName.exe"
+                                ExecutableName = $executableName
                                 FullPath = $null
                                 Timestamp = $file.LastWriteTime
                                 TimestampType = 'Last Executed (Approximate)'
@@ -246,11 +248,12 @@ function Get-ExecutionArtifacts {
                                 Source = 'ShimCache'
                                 ExecutableName = 'ShimCache Binary Data'
                                 FullPath = $shimCachePath
-                                Timestamp = Get-Date
+                                Timestamp = $null  # No timestamp extracted - do not fabricate scan time
                                 TimestampType = 'Registry Key'
                                 Details = @{
                                     Note = 'Binary data present - use ShimCacheParser.exe for full analysis'
                                     DataSize = $shimData.AppCompatCache.Length
+                                    TimestampNote = 'Timestamp not extracted (binary parsing not implemented)'
                                 }
                             }
                             
@@ -465,7 +468,7 @@ function Get-ExecutionArtifacts {
                 if ($Format -in @('CSV', 'All')) {
                     $csvPath = Join-Path $OutputPath "$reportName.csv"
                     $results.Artifacts | Select-Object Source, ExecutableName, FullPath, Timestamp, TimestampType | 
-                        Export-Csv $csvPath -NoTypeInformation
+                        Export-Csv $csvPath -NoTypeInformation -Encoding UTF8
                     Write-Host "  CSV report saved: $csvPath" -ForegroundColor Green
                 }
                 
@@ -525,7 +528,9 @@ function ConvertFrom-ROT13 {
     $result = ""
     foreach ($char in $Text.ToCharArray()) {
         if ($char -match '[A-Za-z]') {
-            $base = if ($char -match '[A-Z]') { 65 } else { 97 }
+            # -cmatch is mandatory here: -match is case-insensitive, which would
+            # pin $base to 65 and corrupt every lowercase letter
+            $base = if ($char -cmatch '[A-Z]') { 65 } else { 97 }
             $result += [char](($([int]$char - $base + 13) % 26) + $base)
         }
         else {
@@ -610,8 +615,13 @@ function Generate-ExecutionArtifactsHTML {
     foreach ($artifact in $Results.Artifacts) {
         $sourceClass = "source-$($artifact.Source.ToLower())"
         $timestamp = if ($null -ne $artifact.Timestamp) { $artifact.Timestamp.ToString('yyyy-MM-dd HH:mm:ss') } else { 'N/A' }
+        $executableName = if ($artifact.ExecutableName) {
+            $artifact.ExecutableName -replace '&', '&amp;' -replace '<', '&lt;' -replace '>', '&gt;'
+        } else {
+            'N/A'
+        }
         $fullPath = if ($artifact.FullPath) { 
-            $artifact.FullPath -replace '<', '&lt;' -replace '>', '&gt;'
+            $artifact.FullPath -replace '&', '&amp;' -replace '<', '&lt;' -replace '>', '&gt;'
         } else { 
             'N/A' 
         }
@@ -619,7 +629,7 @@ function Generate-ExecutionArtifactsHTML {
         $html += @"
             <tr>
                 <td><span class="source-badge $sourceClass">$($artifact.Source)</span></td>
-                <td><strong>$($artifact.ExecutableName)</strong></td>
+                <td><strong>$executableName</strong></td>
                 <td><span class="path">$fullPath</span></td>
                 <td>$timestamp</td>
                 <td><small>$($artifact.TimestampType)</small></td>

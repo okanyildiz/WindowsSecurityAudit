@@ -398,7 +398,7 @@ function Export-ComplianceEvidence {
             
             # Generate Chain of Custody
             $custodyPath = Join-Path $directories.Metadata "Chain_of_Custody.txt"
-            $ipInfo = Get-NetIPAddress -AddressFamily IPv4 -ErrorAction SilentlyContinue | Where-Object {$_.InterfaceAlias -notlike '*Loopback*'} | Select-Object -First 1
+            $ipInfo = Get-NetIPAddress -AddressFamily IPv4 -ErrorAction SilentlyContinue | Where-Object {$null -ne $_ -and $_.InterfaceAlias -notlike '*Loopback*'} | Select-Object -First 1
             $ipAddress = if ($ipInfo) { $ipInfo.IPAddress } else { 'N/A' }
             $custody = @"
 CHAIN OF CUSTODY DOCUMENTATION

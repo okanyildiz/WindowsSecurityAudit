@@ -50,14 +50,21 @@ function Find-SuspiciousProcesses {
         # Legitimate system processes that should only run from System32
         $systemProcesses = @(
             'svchost', 'lsass', 'services', 'csrss', 'winlogon',
-            'smss', 'wininit', 'taskhost', 'dwm', 'explorer'
+            'smss', 'wininit', 'taskhost', 'dwm'
         )
     }
     
     process {
         try {
             # Get all running processes with detailed info
-            $processes = Get-Process -IncludeUserName -ErrorAction SilentlyContinue
+            # -IncludeUserName requires elevation; fall back to a plain listing so a
+            # non-elevated run still scans processes instead of silently returning nothing
+            $processes = @(Get-Process -IncludeUserName -ErrorAction SilentlyContinue)
+            $includeUserNames = $true
+            if ($processes.Count -eq 0) {
+                $processes = @(Get-Process -ErrorAction SilentlyContinue)
+                $includeUserNames = $false
+            }
             
             foreach ($proc in $processes) {
                 $suspicionScore = 0
@@ -196,14 +203,21 @@ function Find-SuspiciousProcesses {
                     
                     # If suspicion score is high enough, add to results
                     if ($suspicionScore -ge 40) {
+                        # StartTime/CPU getters throw for protected processes; capture them
+                        # safely so an inaccessible property never drops a flagged process
+                        $procStartTime = $null
+                        try { $procStartTime = $proc.StartTime } catch { $procStartTime = $null }
+                        $procCpu = $null
+                        try { $procCpu = $proc.CPU } catch { $procCpu = $null }
+
                         $suspiciousProcesses += [PSCustomObject]@{
                             ProcessName = $proc.ProcessName
                             ProcessId = $proc.Id
                             Path = $processPath
                             CommandLine = if ($cimProcess) { $cimProcess.CommandLine } else { 'N/A' }
-                            UserName = $proc.UserName
-                            StartTime = $proc.StartTime
-                            CPU = [math]::Round($proc.CPU, 2)
+                            UserName = if ($includeUserNames) { $proc.UserName } else { 'N/A' }
+                            StartTime = $procStartTime
+                            CPU = if ($null -ne $procCpu) { [math]::Round($procCpu, 2) } else { $null }
                             WorkingSet = [math]::Round($proc.WorkingSet64 / 1MB, 2)
                             SuspicionScore = $suspicionScore
                             Reasons = ($suspicionReasons -join '; ')

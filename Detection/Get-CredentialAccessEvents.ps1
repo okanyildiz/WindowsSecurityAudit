@@ -53,7 +53,9 @@ function Get-CredentialAccessEvents {
         $startTime = (Get-Date).AddHours(-$Hours)
 
         # Granted-access masks that are normal for DLL loads / telemetry against lsass.exe
-        $normalAccessMasks = @('0x1000', '0x1400', '0x1410')
+        # (masks containing PROCESS_VM_READ 0x0010 never reach this list - the bit test
+        # below classifies them as suspicious first)
+        $normalAccessMasks = @('0x1000', '0x1400')
         # PROCESS_VM_READ (0x0010) or broad rights (PROCESS_ALL_ACCESS style) are suspicious
         $suspiciousAccessMasks = @('0x1010', '0x101a', '0x103a', '0x143a', '0x1f0fff', '0x1fffff')
 

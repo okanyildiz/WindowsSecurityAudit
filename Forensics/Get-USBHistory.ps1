@@ -98,6 +98,18 @@ function Get-USBHistory {
                                     $installDate = $props.FirstInstallDate
                                 }
                                 
+                                # Registry date values are REG_SZ strings, not DateTime - coerce so
+                                # date sorting and .ToString('yyyy-MM-dd HH:mm:ss') rendering stay safe
+                                if ($null -ne $installDate -and $installDate -isnot [DateTime]) {
+                                    $parsedInstallDate = [DateTime]::MinValue
+                                    if ([DateTime]::TryParse([string]$installDate, [ref]$parsedInstallDate)) {
+                                        $installDate = $parsedInstallDate
+                                    }
+                                    else {
+                                        $installDate = $null
+                                    }
+                                }
+                                
                                 $deviceInfo = [PSCustomObject]@{
                                     Type = 'Storage'
                                     FriendlyName = $friendlyName
@@ -165,6 +177,18 @@ function Get-USBHistory {
                                     }
                                     catch {
                                         # Timestamp not available
+                                    }
+                                    
+                                    # Registry date values are REG_SZ strings, not DateTime - coerce so
+                                    # date sorting and .ToString('yyyy-MM-dd HH:mm:ss') rendering stay safe
+                                    if ($null -ne $installDate -and $installDate -isnot [DateTime]) {
+                                        $parsedInstallDate = [DateTime]::MinValue
+                                        if ([DateTime]::TryParse([string]$installDate, [ref]$parsedInstallDate)) {
+                                            $installDate = $parsedInstallDate
+                                        }
+                                        else {
+                                            $installDate = $null
+                                        }
                                     }
                                     
                                     $deviceInfo = [PSCustomObject]@{
@@ -312,7 +336,7 @@ function Get-USBHistory {
                 # Export CSV
                 if ($Format -in @('CSV', 'All')) {
                     $csvPath = Join-Path $OutputPath "$reportName.csv"
-                    $results.USBDevices | Export-Csv $csvPath -NoTypeInformation
+                    $results.USBDevices | Export-Csv $csvPath -NoTypeInformation -Encoding UTF8
                     Write-Host "  CSV report saved: $csvPath" -ForegroundColor Green
                 }
                 
@@ -431,15 +455,19 @@ function Generate-USBHistoryHTML {
         } else { 
             'Unknown' 
         }
-        $friendlyName = $device.FriendlyName -replace '<', '&lt;' -replace '>', '&gt;'
+        $friendlyName = $device.FriendlyName -replace '&', '&amp;' -replace '<', '&lt;' -replace '>', '&gt;'
+        # Device instance IDs legitimately contain '&' (e.g. "...&0") - escape for HTML
+        $vendor = $device.Vendor -replace '&', '&amp;' -replace '<', '&lt;' -replace '>', '&gt;'
+        $product = $device.Product -replace '&', '&amp;' -replace '<', '&lt;' -replace '>', '&gt;'
+        $serialNumber = $device.SerialNumber -replace '&', '&amp;' -replace '<', '&lt;' -replace '>', '&gt;'
         
         $html += @"
             <tr>
                 <td><span class="device-type $typeClass">$($device.Type)</span></td>
                 <td><strong>$friendlyName</strong></td>
-                <td>$($device.Vendor)</td>
-                <td>$($device.Product)</td>
-                <td><span class="serial">$($device.SerialNumber)</span></td>
+                <td>$vendor</td>
+                <td>$product</td>
+                <td><span class="serial">$serialNumber</span></td>
                 <td>$lastConnected</td>
             </tr>
 "@
@@ -466,7 +494,7 @@ function Generate-USBHistoryHTML {
             } else { 
                 'N/A' 
             }
-            $message = $event.Message -replace '<', '&lt;' -replace '>', '&gt;'
+            $message = $event.Message -replace '&', '&amp;' -replace '<', '&lt;' -replace '>', '&gt;'
             
             $html += @"
             <tr>

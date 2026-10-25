@@ -225,6 +225,15 @@ function Get-ThreatIntelligence {
                     return 1
                 }
             }
+            elseif ($Kind -eq 'ipv6') {
+                $ipv6Value = $Value.ToLower()
+                if ($ipv6Value -notmatch '^[0-9a-f:]+$' -or $ipv6Value -notmatch ':') { return 0 }
+                if (-not $iocDatabase.MaliciousIPs.ContainsKey($ipv6Value)) {
+                    $iocDatabase.MaliciousIPs[$ipv6Value] = @{ Severity = $Severity; Description = $Description }
+                    $feedEntryCount++
+                    return 1
+                }
+            }
             elseif ($Kind -eq 'domain') {
                 $escapedHost = [regex]::Escape($Value)
                 if (-not $networkIndicatorKeys.ContainsKey($escapedHost)) {
@@ -282,6 +291,10 @@ function Get-ThreatIntelligence {
                 $matchedAny = $true
                 $extracted += @{ Kind = 'ip'; Value = $regexMatch.Groups[1].Value; Label = 'ipv4-addr' }
             }
+            foreach ($regexMatch in [regex]::Matches($Pattern, "\[ipv6-addr:value\s*=\s*'([^']+)'\]")) {
+                $matchedAny = $true
+                $extracted += @{ Kind = 'ipv6'; Value = $regexMatch.Groups[1].Value; Label = 'ipv6-addr' }
+            }
             foreach ($regexMatch in [regex]::Matches($Pattern, "\[domain-name:value\s*=\s*'([^']+)'\]")) {
                 $matchedAny = $true
                 $extracted += @{ Kind = 'domain'; Value = $regexMatch.Groups[1].Value; Label = 'domain-name' }
@@ -294,7 +307,7 @@ function Get-ThreatIntelligence {
                 $matchedAny = $true
                 $extracted += @{ Kind = 'sha256'; Value = $regexMatch.Groups[1].Value; Label = 'SHA-256' }
             }
-            foreach ($regexMatch in [regex]::Matches($Pattern, "\[file:hashes\.MD5\s*=\s*'([^']+)'\]")) {
+            foreach ($regexMatch in [regex]::Matches($Pattern, "\[file:hashes\.'?MD5'?\s*=\s*'([^']+)'\]")) {
                 $matchedAny = $true
                 $extracted += @{ Kind = 'md5'; Value = $regexMatch.Groups[1].Value; Label = 'MD5' }
             }
@@ -347,7 +360,7 @@ function Get-ThreatIntelligence {
                 
                 if ($cacheExists) {
                     $cacheItem = Get-Item $cacheFile
-                    $cacheAgeHours = [math]::Round(((Get-Date) - $cacheItem.LastWriteTime).TotalHours, 1)
+                    $cacheAgeHours = [math]::Max(0, [math]::Round(((Get-Date) - $cacheItem.LastWriteTime).TotalHours, 1))
                 }
                 
                 $shouldDownload = $UpdateFeeds -and (-not $cacheExists -or $cacheAgeHours -ge $FeedMaxAgeHours)
@@ -369,7 +382,7 @@ function Get-ThreatIntelligence {
                         $content = Get-Content $cacheFile -ErrorAction Stop
                         $source = 'download'
                         $cacheItem = Get-Item $cacheFile
-                        $cacheAgeHours = [math]::Round(((Get-Date) - $cacheItem.LastWriteTime).TotalHours, 1)
+                        $cacheAgeHours = [math]::Max(0, [math]::Round(((Get-Date) - $cacheItem.LastWriteTime).TotalHours, 1))
                     }
                     catch {
                         if ($cacheExists) {
@@ -457,7 +470,7 @@ function Get-ThreatIntelligence {
                     
                     if ($mispCacheExists) {
                         $mispCacheItem = Get-Item $mispCacheFile
-                        $mispCacheAgeHours = [math]::Round(((Get-Date) - $mispCacheItem.LastWriteTime).TotalHours, 1)
+                        $mispCacheAgeHours = [math]::Max(0, [math]::Round(((Get-Date) - $mispCacheItem.LastWriteTime).TotalHours, 1))
                     }
                     
                     $mispShouldDownload = $UpdateFeeds -and (-not $mispCacheExists -or $mispCacheAgeHours -ge $FeedMaxAgeHours)
@@ -475,7 +488,7 @@ function Get-ThreatIntelligence {
                             ($mispResponse | ConvertTo-Json -Depth 10) | Set-Content -Path $mispCacheFile -ErrorAction Stop
                             $mispSource = 'download'
                             $mispCacheItem = Get-Item $mispCacheFile
-                            $mispCacheAgeHours = [math]::Round(((Get-Date) - $mispCacheItem.LastWriteTime).TotalHours, 1)
+                            $mispCacheAgeHours = [math]::Max(0, [math]::Round(((Get-Date) - $mispCacheItem.LastWriteTime).TotalHours, 1))
                         }
                         catch {
                             if ($mispCacheExists) {
@@ -561,7 +574,7 @@ function Get-ThreatIntelligence {
                     
                     if ($taxiiCacheExists) {
                         $taxiiCacheItem = Get-Item $taxiiCacheFile
-                        $taxiiCacheAgeHours = [math]::Round(((Get-Date) - $taxiiCacheItem.LastWriteTime).TotalHours, 1)
+                        $taxiiCacheAgeHours = [math]::Max(0, [math]::Round(((Get-Date) - $taxiiCacheItem.LastWriteTime).TotalHours, 1))
                     }
                     
                     $taxiiShouldDownload = $UpdateFeeds -and (-not $taxiiCacheExists -or $taxiiCacheAgeHours -ge $FeedMaxAgeHours)
@@ -615,7 +628,7 @@ function Get-ThreatIntelligence {
                             ($taxiiObjects | ConvertTo-Json -Depth 10) | Set-Content -Path $taxiiCacheFile -ErrorAction Stop
                             $taxiiSource = 'download'
                             $taxiiCacheItem = Get-Item $taxiiCacheFile
-                            $taxiiCacheAgeHours = [math]::Round(((Get-Date) - $taxiiCacheItem.LastWriteTime).TotalHours, 1)
+                            $taxiiCacheAgeHours = [math]::Max(0, [math]::Round(((Get-Date) - $taxiiCacheItem.LastWriteTime).TotalHours, 1))
                         }
                         catch {
                             if ($taxiiCacheExists) {

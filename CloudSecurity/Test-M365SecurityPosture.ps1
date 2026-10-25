@@ -209,7 +209,7 @@ function Test-M365SecurityPosture {
                 try {
                     $caPolicies = Get-MgIdentityConditionalAccessPolicy -All -ErrorAction Stop
                     
-                    $enabledPolicies = ($caPolicies | Where-Object { $_.State -eq 'enabled' }).Count
+                    $enabledPolicies = @($caPolicies | Where-Object { $_.State -eq 'enabled' }).Count
                     
                     if ($enabledPolicies -gt 0) {
                         $results.SecurityFindings += [PSCustomObject]@{

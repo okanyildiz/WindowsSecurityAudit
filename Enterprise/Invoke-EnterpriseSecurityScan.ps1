@@ -12,7 +12,7 @@ function Invoke-EnterpriseSecurityScan {
     .PARAMETER ScanType
         Type of scan: Quick, Standard, or Comprehensive
     .PARAMETER MaxThreads
-        Maximum number of concurrent scans (default: 10)
+        Maximum number of concurrent scans (1-512, default: 10)
     .PARAMETER OutputPath
         Path to save scan results
     .EXAMPLE
@@ -35,6 +35,7 @@ function Invoke-EnterpriseSecurityScan {
         [string]$ScanType = 'Standard',
         
         [Parameter()]
+        [ValidateRange(1, 512)]
         [int]$MaxThreads = 10,
         
         [Parameter()]
@@ -196,12 +197,14 @@ function Invoke-EnterpriseSecurityScan {
                     # Check disk space
                     $drives = Get-CimInstance -ClassName Win32_LogicalDisk -Filter "DriveType=3"
                     foreach ($drive in $drives) {
-                        $freePercent = ($drive.FreeSpace / $drive.Size) * 100
-                        if ($freePercent -lt 10) {
-                            $result.Findings += [PSCustomObject]@{
-                                Severity = 'High'
-                                Category = 'Disk Space'
-                                Finding = "Drive $($drive.DeviceID) has less than 10% free space"
+                        if ($drive.Size -gt 0) {
+                            $freePercent = ($drive.FreeSpace / $drive.Size) * 100
+                            if ($freePercent -lt 10) {
+                                $result.Findings += [PSCustomObject]@{
+                                    Severity = 'High'
+                                    Category = 'Disk Space'
+                                    Finding = "Drive $($drive.DeviceID) has less than 10% free space"
+                                }
                             }
                         }
                     }
@@ -225,13 +228,14 @@ function Invoke-EnterpriseSecurityScan {
     }
     
     process {
+        $runspacePool = $null
+        $jobs = @()
         try {
             Write-Host "`nStarting parallel scan of $($ComputerName.Count) systems..." -ForegroundColor Cyan
             
             # Create runspace pool for parallel execution
             $runspacePool = [runspacefactory]::CreateRunspacePool(1, $MaxThreads)
             $runspacePool.Open()
-            $jobs = @()
             
             foreach ($computer in $ComputerName) {
                 Write-Verbose "Queuing scan for: $computer"
@@ -360,14 +364,26 @@ function Invoke-EnterpriseSecurityScan {
                 }
             }
             
-            # Close runspace pool
-            $runspacePool.Close()
-            $runspacePool.Dispose()
+            # Runspace pool is closed/disposed in the finally block below
             
         }
         catch {
             Write-Error "Error during enterprise scan: $_"
             throw
+        }
+        finally {
+            # Guarantee cleanup of async pipelines and the runspace pool, even on failure
+            foreach ($job in $jobs) {
+                if ($null -ne $job.Pipeline) {
+                    $job.Pipeline.Dispose()
+                }
+            }
+            if ($null -ne $runspacePool) {
+                if ($runspacePool.RunspacePoolStateInfo.State -eq 'Opened') {
+                    $runspacePool.Close()
+                }
+                $runspacePool.Dispose()
+            }
         }
     }
     

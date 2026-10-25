@@ -267,16 +267,18 @@ function Get-MITREAttackMapping {
     continue
 }
                             
-                            # Skip if no process name defined
-                            if (-not $technique.ContainsKey('ProcessName')) {
-                                continue
+                            # Techniques without a ProcessName anchor (e.g. T1055, T1027, T1486)
+                            # match any non-whitelisted process by command line
+                            $nameMatches = $true
+                            if ($technique.ContainsKey('ProcessName')) {
+                                $nameMatches = ($process.Name -match $technique.ProcessName)
                             }
                             
                             $matched = $false
                             $matchedIndicator = ""
                             
                             # Check if process name matches
-                            if ($process.Name -match $technique.ProcessName) {
+                            if ($nameMatches) {
                                 # If technique requires command line analysis
                                 if ($technique.RequiresCommandLine) {
                                     if ($process.CommandLine) {
@@ -487,7 +489,7 @@ function Get-MITREAttackMapping {
                             $results.TacticBreakdown.DefenseEvasion += $detection
                         }
                         
-                        Write-Host "  [!] Detected: T1070.001 - Event Log Clearing ($($logCleared.Count) events)" -ForegroundColor Red
+                        Write-Host "  [!] Detected: T1070.001 - Event Log Clearing ($(@($logCleared).Count) events)" -ForegroundColor Red
                     }
                     else {
                         Write-Host "  No suspicious event log activity detected" -ForegroundColor Green

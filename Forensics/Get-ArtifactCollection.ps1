@@ -204,8 +204,8 @@ function Get-ArtifactCollection {
                         $safeName = $logName -replace '/', '-'
                         $logPath = Join-Path $paths.EventLogs "$safeName.evtx"
                         
-                        # Export using wevtutil
-                        wevtutil epl $logName $logPath /ow:true 2>&1 | Out-Null
+                        # Export using wevtutil (quote the destination: output path may contain spaces)
+                        wevtutil epl $logName "$logPath" /ow:true 2>&1 | Out-Null
                         
                         if (Test-Path $logPath) {
                             Write-Host "    Exported successfully" -ForegroundColor Green
@@ -241,7 +241,7 @@ function Get-ArtifactCollection {
 
                             $savePath = Join-Path $paths.Registry $hive.Name
 
-                            $regOutput = reg save $hive.RegPath $savePath /y 2>&1
+                            $regOutput = reg save $hive.RegPath "$savePath" /y 2>&1
 
                             if (Test-Path $savePath) {
                                 Write-Host "    Saved successfully" -ForegroundColor Green
@@ -382,7 +382,7 @@ function Get-ArtifactCollection {
                 
                 try {
                     # Running processes
-                    Get-Process | Select-Object Name, Id, Path, StartTime, @{N='WorkingSetMB';E={[Math]::Round($_.WorkingSet/1MB,2)}} |
+                    Get-Process | Select-Object Name, Id, Path, StartTime, @{N='WorkingSetMB';E={[Math]::Round($_.WorkingSet64/1MB,2)}} |
                         ConvertTo-Json | Out-File (Join-Path $paths.Execution "Processes.json")
                     
                     # Services
@@ -503,7 +503,10 @@ function Get-ArtifactCollection {
                     if (Test-Path $zipPath) {
                         $zipFile = Get-Item $zipPath
                         $zipSizeMB = [Math]::Round($zipFile.Length / 1MB, 2)
-                        $compressionRatio = [Math]::Round((1 - ($zipFile.Length / $results.Summary.TotalSize)) * 100, 1)
+                        # TotalSize can be 0/$null when every collector produced no files
+                        $compressionRatio = if ($results.Summary.TotalSize -gt 0) {
+                            [Math]::Round((1 - ($zipFile.Length / $results.Summary.TotalSize)) * 100, 1)
+                        } else { 0 }
                         
                         Write-Host "  Archive created: $zipPath" -ForegroundColor Green
                         Write-Host "  Compressed Size: $zipSizeMB MB" -ForegroundColor Cyan

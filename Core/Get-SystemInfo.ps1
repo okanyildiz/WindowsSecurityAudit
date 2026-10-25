@@ -110,7 +110,7 @@ function Get-SystemInfo {
 # Security Settings
 $info.Security = [PSCustomObject]@{
     LocalUsers = (@(Get-LocalUser)).Count
-    LocalAdministrators = (@(Get-LocalGroupMember -Group "Administrators" -ErrorAction SilentlyContinue)).Count
+    LocalAdministrators = (@(Get-LocalGroupMember -SID 'S-1-5-32-544' -ErrorAction SilentlyContinue)).Count
     PasswordPolicy = Get-LocalUser | Where-Object { $_.PasswordRequired -eq $false } | 
         Select-Object Name, Enabled
     FirewallProfiles = Get-NetFirewallProfile | Select-Object Name, Enabled

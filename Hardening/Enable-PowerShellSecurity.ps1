@@ -214,14 +214,16 @@ function Enable-PowerShellSecurity {
             Write-Host "`n[WSMAN] Configuring Windows Remote Management Security..." -ForegroundColor Cyan
             
             try {
-                # Disable Basic Authentication
-                Set-Item WSMan:\localhost\Service\Auth\Basic -Value $false -Force
-                $results.Changes += "WSMAN Basic Authentication disabled"
-                Write-Host "  WSMAN Basic Auth: Disabled" -ForegroundColor Green
-                
-                # Enable Kerberos
-                Set-Item WSMan:\localhost\Service\Auth\Kerberos -Value $true -Force
-                Write-Host "  WSMAN Kerberos: Enabled" -ForegroundColor Green
+                if ($PSCmdlet.ShouldProcess("WSMAN Service", "Disable Basic authentication and enable Kerberos")) {
+                    # Disable Basic Authentication
+                    Set-Item WSMan:\localhost\Service\Auth\Basic -Value $false -Force
+                    $results.Changes += "WSMAN Basic Authentication disabled"
+                    Write-Host "  WSMAN Basic Auth: Disabled" -ForegroundColor Green
+                    
+                    # Enable Kerberos
+                    Set-Item WSMan:\localhost\Service\Auth\Kerberos -Value $true -Force
+                    Write-Host "  WSMAN Kerberos: Enabled" -ForegroundColor Green
+                }
                 
             } catch {
                 Write-Warning "  Could not configure WSMAN: $_"

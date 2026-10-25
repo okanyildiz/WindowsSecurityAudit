@@ -139,9 +139,11 @@ function Enable-AuditPolicies {
             # Force audit policy subcategory settings
             try {
                 $regPath = "HKLM:\System\CurrentControlSet\Control\Lsa"
-                Set-ItemProperty -Path $regPath -Name "SCENoApplyLegacyAuditPolicy" -Value 1 -Type DWord -Force
-                Write-Host "  + Advanced audit policy mode enabled" -ForegroundColor Green
-                $results.PoliciesConfigured += "Advanced Audit Policy Mode"
+                if ($PSCmdlet.ShouldProcess($regPath, "Enable advanced audit policy mode (SCENoApplyLegacyAuditPolicy)")) {
+                    Set-ItemProperty -Path $regPath -Name "SCENoApplyLegacyAuditPolicy" -Value 1 -Type DWord -Force
+                    Write-Host "  + Advanced audit policy mode enabled" -ForegroundColor Green
+                    $results.PoliciesConfigured += "Advanced Audit Policy Mode"
+                }
             }
             catch {
                 $results.Errors += "Failed to enable advanced audit mode: $_"
@@ -151,14 +153,16 @@ function Enable-AuditPolicies {
             # Increase Security event log size
             try {
                 $logName = 'Security'
-                $log = Get-WinEvent -ListLog $logName
-                
-                # Set to 1GB
-                $log.MaximumSizeInBytes = 1GB
-                $log.SaveChanges()
-                
-                Write-Host "  + Security log size increased to 1GB" -ForegroundColor Green
-                $results.PoliciesConfigured += "Security Log Size: 1GB"
+                if ($PSCmdlet.ShouldProcess($logName, "Set Security event log maximum size to 1GB")) {
+                    $log = Get-WinEvent -ListLog $logName
+                    
+                    # Set to 1GB
+                    $log.MaximumSizeInBytes = 1GB
+                    $log.SaveChanges()
+                    
+                    Write-Host "  + Security log size increased to 1GB" -ForegroundColor Green
+                    $results.PoliciesConfigured += "Security Log Size: 1GB"
+                }
             }
             catch {
                 $results.Errors += "Failed to increase log size: $_"
@@ -167,9 +171,11 @@ function Enable-AuditPolicies {
             
             # Enable log retention
             try {
-                wevtutil sl Security /rt:false /ab:true
-                Write-Host "  + Security log retention enabled" -ForegroundColor Green
-                $results.PoliciesConfigured += "Security Log Retention"
+                if ($PSCmdlet.ShouldProcess("Security", "Configure Security log retention (archive full log, no overwrite)")) {
+                    wevtutil sl Security /rt:false /ab:true
+                    Write-Host "  + Security log retention enabled" -ForegroundColor Green
+                    $results.PoliciesConfigured += "Security Log Retention"
+                }
             }
             catch {
                 $results.Errors += "Failed to configure log retention: $_"
@@ -180,12 +186,14 @@ function Enable-AuditPolicies {
                 Write-Host "`n[PROCESS] Enabling command line process auditing..." -ForegroundColor Cyan
                 try {
                     $regPath = "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System\Audit"
-                    if (-not (Test-Path $regPath)) {
-                        New-Item -Path $regPath -Force | Out-Null
+                    if ($PSCmdlet.ShouldProcess($regPath, "Enable command line process auditing")) {
+                        if (-not (Test-Path $regPath)) {
+                            New-Item -Path $regPath -Force | Out-Null
+                        }
+                        Set-ItemProperty -Path $regPath -Name "ProcessCreationIncludeCmdLine_Enabled" -Value 1 -Type DWord -Force
+                        Write-Host "  + Command line auditing enabled" -ForegroundColor Green
+                        $results.PoliciesConfigured += "Command Line Process Auditing"
                     }
-                    Set-ItemProperty -Path $regPath -Name "ProcessCreationIncludeCmdLine_Enabled" -Value 1 -Type DWord -Force
-                    Write-Host "  + Command line auditing enabled" -ForegroundColor Green
-                    $results.PoliciesConfigured += "Command Line Process Auditing"
                 }
                 catch {
                     $results.Errors += "Failed to enable command line auditing: $_"
@@ -203,33 +211,39 @@ function Enable-AuditPolicies {
                     "$env:USERPROFILE\Documents"
                 )
                 
+                $fileAuditApplied = $false
                 foreach ($path in $pathsToAudit) {
                     if (Test-Path $path) {
                         try {
-                            # Get current ACL
-                            $acl = Get-Acl $path
-                            
-                            # Create audit rule for Everyone - Track both Success and Failure
-                            $auditRule = New-Object System.Security.AccessControl.FileSystemAuditRule(
-                                "Everyone",
-                                "Delete,DeleteSubdirectoriesAndFiles,ChangePermissions,TakeOwnership",
-                                "ContainerInherit,ObjectInherit",
-                                "None",
-                                "Success,Failure"
-                            )
-                            
-                            # Add audit rule
-                            $acl.AddAuditRule($auditRule)
-                            Set-Acl -Path $path -AclObject $acl
-                            
-                            Write-Host "  + Auditing enabled on: $path" -ForegroundColor Green
+                            if ($PSCmdlet.ShouldProcess($path, "Add file system audit rule (Everyone: Delete/ChangePermissions/TakeOwnership)")) {
+                                # Get current ACL
+                                $acl = Get-Acl $path
+                                
+                                # Create audit rule for Everyone - Track both Success and Failure
+                                $auditRule = New-Object System.Security.AccessControl.FileSystemAuditRule(
+                                    "Everyone",
+                                    "Delete,DeleteSubdirectoriesAndFiles,ChangePermissions,TakeOwnership",
+                                    "ContainerInherit,ObjectInherit",
+                                    "None",
+                                    "Success,Failure"
+                                )
+                                
+                                # Add audit rule
+                                $acl.AddAuditRule($auditRule)
+                                Set-Acl -Path $path -AclObject $acl
+                                
+                                Write-Host "  + Auditing enabled on: $path" -ForegroundColor Green
+                                $fileAuditApplied = $true
+                            }
                         }
                         catch {
                             Write-Warning "  - Failed to audit: $path"
                         }
                     }
                 }
-                $results.PoliciesConfigured += "File System Auditing"
+                if ($fileAuditApplied) {
+                    $results.PoliciesConfigured += "File System Auditing"
+                }
             }
             
             # Registry Auditing
@@ -242,30 +256,36 @@ function Enable-AuditPolicies {
                     "HKLM:\SYSTEM\CurrentControlSet\Services"
                 )
                 
+                $registryAuditApplied = $false
                 foreach ($regKey in $regKeysToAudit) {
                     if (Test-Path $regKey) {
                         try {
-                            $acl = Get-Acl $regKey
-                            
-                            $auditRule = New-Object System.Security.AccessControl.RegistryAuditRule(
-                                "Everyone",
-                                "SetValue,CreateSubKey,Delete",
-                                "ContainerInherit",
-                                "None",
-                                "Success,Failure"
-                            )
-                            
-                            $acl.AddAuditRule($auditRule)
-                            Set-Acl -Path $regKey -AclObject $acl
-                            
-                            Write-Host "  + Auditing enabled on: $regKey" -ForegroundColor Green
+                            if ($PSCmdlet.ShouldProcess($regKey, "Add registry audit rule (Everyone: SetValue/CreateSubKey/Delete)")) {
+                                $acl = Get-Acl $regKey
+                                
+                                $auditRule = New-Object System.Security.AccessControl.RegistryAuditRule(
+                                    "Everyone",
+                                    "SetValue,CreateSubKey,Delete",
+                                    "ContainerInherit",
+                                    "None",
+                                    "Success,Failure"
+                                )
+                                
+                                $acl.AddAuditRule($auditRule)
+                                Set-Acl -Path $regKey -AclObject $acl
+                                
+                                Write-Host "  + Auditing enabled on: $regKey" -ForegroundColor Green
+                                $registryAuditApplied = $true
+                            }
                         }
                         catch {
                             Write-Warning "  - Failed to audit: $regKey"
                         }
                     }
                 }
-                $results.PoliciesConfigured += "Registry Auditing"
+                if ($registryAuditApplied) {
+                    $results.PoliciesConfigured += "Registry Auditing"
+                }
             }
             
         }

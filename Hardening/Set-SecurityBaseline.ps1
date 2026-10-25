@@ -72,6 +72,7 @@ function Set-SecurityBaseline {
             
             $uacPath = "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System"
             
+            if ($PSCmdlet.ShouldProcess($env:COMPUTERNAME, "Apply UAC hardening settings")) {
             try {
                 # Enable UAC
                 Set-ItemProperty -Path $uacPath -Name "EnableLUA" -Value 1 -Type DWord -Force
@@ -103,11 +104,13 @@ function Set-SecurityBaseline {
                 $results.Errors += "UAC configuration failed: $_"
                 Write-Warning "  UAC configuration failed: $_"
             }
+            }
             
             # Category 2: Windows Firewall
             Write-Host "`n[2/7] Configuring Windows Firewall..." -ForegroundColor Cyan
             
             if ($ConfigureFirewall -or $BaselineLevel -in @('Recommended', 'Strict')) {
+                if ($PSCmdlet.ShouldProcess($env:COMPUTERNAME, "Apply Windows Firewall baseline settings")) {
                 try {
                     # Enable firewall for all profiles
                     Set-NetFirewallProfile -Profile Domain,Public,Private -Enabled True
@@ -140,6 +143,7 @@ function Set-SecurityBaseline {
                     $results.Errors += "Firewall configuration failed: $_"
                     Write-Warning "  Firewall configuration failed: $_"
                 }
+                }
             }
             else {
                 Write-Host "  Firewall: Skipped" -ForegroundColor Yellow
@@ -148,6 +152,7 @@ function Set-SecurityBaseline {
             # Category 3: Windows Defender
             Write-Host "`n[3/7] Configuring Windows Defender..." -ForegroundColor Cyan
             
+            if ($PSCmdlet.ShouldProcess($env:COMPUTERNAME, "Apply Windows Defender baseline settings")) {
             try {
                 # Enable Real-Time Protection
                 Set-MpPreference -DisableRealtimeMonitoring $false -ErrorAction Stop
@@ -188,10 +193,12 @@ function Set-SecurityBaseline {
                 $results.Errors += "Windows Defender configuration failed: $_"
                 Write-Warning "  Windows Defender configuration failed: $_"
             }
+            }
             
             # Category 4: Network Security
             Write-Host "`n[4/7] Configuring Network Security..." -ForegroundColor Cyan
             
+            if ($PSCmdlet.ShouldProcess($env:COMPUTERNAME, "Apply network security baseline settings")) {
             try {
                 # Disable SMBv1
                 if ($DisableSMBv1 -or $BaselineLevel -in @('Recommended', 'Strict')) {
@@ -237,14 +244,19 @@ function Set-SecurityBaseline {
                 $results.Errors += "Network security configuration failed: $_"
                 Write-Warning "  Network security configuration failed: $_"
             }
+            }
             
             # Category 5: Account Security
             Write-Host "`n[5/7] Configuring Account Security..." -ForegroundColor Cyan
             
+            if ($PSCmdlet.ShouldProcess($env:COMPUTERNAME, "Apply account security baseline settings")) {
             try {
-                # Disable Guest account
-                Disable-LocalUser -Name "Guest" -ErrorAction SilentlyContinue
-                $results.Changes += "Guest account disabled"
+                # Disable Guest account (well-known SID RID 501 - culture-invariant)
+                $guestToDisable = @(Get-LocalUser -ErrorAction SilentlyContinue | Where-Object { $null -ne $_.SID -and $_.SID.Value -match '-501$' }) | Select-Object -First 1
+                if ($null -ne $guestToDisable -and $guestToDisable.Enabled) {
+                    Disable-LocalUser -SID $guestToDisable.SID -ErrorAction SilentlyContinue
+                    $results.Changes += "Guest account disabled"
+                }
                 
                 # Rename Administrator account (if desired in Strict mode)
                 if ($BaselineLevel -eq 'Strict') {
@@ -275,10 +287,12 @@ function Set-SecurityBaseline {
                 $results.Errors += "Account security configuration failed: $_"
                 Write-Warning "  Account security configuration failed: $_"
             }
+            }
             
             # Category 6: System Security
             Write-Host "`n[6/7] Configuring System Security..." -ForegroundColor Cyan
             
+            if ($PSCmdlet.ShouldProcess($env:COMPUTERNAME, "Apply system security baseline settings")) {
             try {
                 # Disable AutoRun/AutoPlay
                 $autorunPath = "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\Explorer"
@@ -340,11 +354,13 @@ function Set-SecurityBaseline {
                 $results.Errors += "System security configuration failed: $_"
                 Write-Warning "  System security configuration failed: $_"
             }
+            }
             
             # Category 7: BitLocker Encryption
             Write-Host "`n[7/7] Configuring BitLocker..." -ForegroundColor Cyan
             
             if ($EnableBitLocker) {
+                if ($PSCmdlet.ShouldProcess("C:", "Enable BitLocker encryption on the system drive")) {
                 try {
                     $volume = Get-BitLockerVolume -MountPoint "C:" -ErrorAction Stop
                     
@@ -372,6 +388,7 @@ function Set-SecurityBaseline {
                     $results.Errors += "BitLocker configuration failed: $_"
                     Write-Warning "  BitLocker failed: $_"
                     Write-Warning "  Note: TPM may be required, or device may not support BitLocker"
+                }
                 }
             }
             else {

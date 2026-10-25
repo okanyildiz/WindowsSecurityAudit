@@ -333,7 +333,7 @@ function New-ForensicTimeline {
                 if ($Format -in @('CSV', 'All')) {
                     $csvPath = Join-Path $OutputPath "$reportName.csv"
                     $timeline.Events | Select-Object Timestamp, Source, Category, Level, Message | 
-                        Export-Csv $csvPath -NoTypeInformation
+                        Export-Csv $csvPath -NoTypeInformation -Encoding UTF8
                     Write-Host "  CSV timeline saved: $csvPath" -ForegroundColor Green
                 }
                 
@@ -495,7 +495,7 @@ function Generate-TimelineHTML {
         $sourceClass = "source-$($event.Source.ToLower())"
         $timestamp = if ($event.Timestamp) { $event.Timestamp.ToString('yyyy-MM-dd HH:mm:ss') } else { 'N/A' }
         $message = if ($event.Message) { 
-            $event.Message -replace '<', '&lt;' -replace '>', '&gt;'
+            $event.Message -replace '&', '&amp;' -replace '<', '&lt;' -replace '>', '&gt;'
         } else { 
             'No message available' 
         }

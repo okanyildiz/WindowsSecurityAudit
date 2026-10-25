@@ -102,13 +102,13 @@ function Get-AzureADRiskySignIns {
             # Get risky sign-ins
             Write-Host "`nRetrieving risky sign-in events..." -ForegroundColor Cyan
             
-            $startDate = (Get-Date).AddDays(-$DaysBack)
+            $startDate = (Get-Date).ToUniversalTime().AddDays(-$DaysBack)
             $filterDate = $startDate.ToString('yyyy-MM-ddTHH:mm:ssZ')
             
             $riskyDetections = Get-MgRiskDetection -Filter "detectedDateTime ge $filterDate" -All -ErrorAction Stop
             
             if ($riskyDetections) {
-                Write-Host "Found $($riskyDetections.Count) risk detections" -ForegroundColor Yellow
+                Write-Host "Found $(@($riskyDetections).Count) risk detections" -ForegroundColor Yellow
                 
                 foreach ($detection in $riskyDetections) {
                     if ($RiskLevel -ne 'All' -and $detection.RiskLevel -ne $RiskLevel.ToLower()) {
@@ -149,9 +149,9 @@ function Get-AzureADRiskySignIns {
             
             # Calculate summary
             $results.Summary.TotalRiskySignIns = $results.RiskySignIns.Count
-            $results.Summary.HighRisk = ($results.RiskySignIns | Where-Object { $_.RiskLevel -eq 'high' }).Count
-            $results.Summary.MediumRisk = ($results.RiskySignIns | Where-Object { $_.RiskLevel -eq 'medium' }).Count
-            $results.Summary.LowRisk = ($results.RiskySignIns | Where-Object { $_.RiskLevel -eq 'low' }).Count
+            $results.Summary.HighRisk = @($results.RiskySignIns | Where-Object { $_.RiskLevel -eq 'high' }).Count
+            $results.Summary.MediumRisk = @($results.RiskySignIns | Where-Object { $_.RiskLevel -eq 'medium' }).Count
+            $results.Summary.LowRisk = @($results.RiskySignIns | Where-Object { $_.RiskLevel -eq 'low' }).Count
             
             # Export if requested
             if ($ExportPath -and $results.RiskySignIns.Count -gt 0) {

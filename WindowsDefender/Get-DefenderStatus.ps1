@@ -76,10 +76,10 @@ function Get-DefenderStatus {
             $status.ScanHistory = [PSCustomObject]@{
                 QuickScanStartTime = $mpStatus.QuickScanStartTime
                 QuickScanEndTime = $mpStatus.QuickScanEndTime
-                QuickScanAge = if ($mpStatus.QuickScanAge) { $mpStatus.QuickScanAge } else { "Never" }
+                QuickScanAge = if ($null -ne $mpStatus.QuickScanEndTime -and $null -ne $mpStatus.QuickScanAge) { $mpStatus.QuickScanAge } else { "Never" }
                 FullScanStartTime = $mpStatus.FullScanStartTime
                 FullScanEndTime = $mpStatus.FullScanEndTime
-                FullScanAge = if ($mpStatus.FullScanAge) { $mpStatus.FullScanAge } else { "Never" }
+                FullScanAge = if ($null -ne $mpStatus.FullScanEndTime -and $null -ne $mpStatus.FullScanAge) { $mpStatus.FullScanAge } else { "Never" }
             }
             
             # Get Defender preferences/configuration

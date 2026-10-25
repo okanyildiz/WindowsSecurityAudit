@@ -21,7 +21,7 @@ function Invoke-DefenderScan {
         PSCustomObject with scan results
     #>
     
-    [CmdletBinding()]
+    [CmdletBinding(SupportsShouldProcess = $true)]
     param(
         [Parameter(Mandatory = $true)]
         [ValidateSet('Quick', 'Full', 'Custom', 'Offline')]
@@ -81,22 +81,28 @@ function Invoke-DefenderScan {
             # Update signatures if requested
             if ($UpdateSignatures) {
                 Write-Host "`nUpdating virus definitions..." -ForegroundColor Cyan
-                try {
-                    Update-MpSignature -ErrorAction Stop
-                    $mpStatus = Get-MpComputerStatus
-                    $results.SignatureUpdate.Updated = $true
-                    $results.SignatureUpdate.Version = $mpStatus.AntivirusSignatureVersion
-                    Write-Host "Signatures updated to version: $($mpStatus.AntivirusSignatureVersion)" -ForegroundColor Green
-                }
-                catch {
-                    $results.SignatureUpdate.Error = $_.Exception.Message
-                    Write-Warning "Failed to update signatures: $_"
+                if ($PSCmdlet.ShouldProcess($env:COMPUTERNAME, "Update Defender signatures")) {
+                    try {
+                        Update-MpSignature -ErrorAction Stop
+                        $mpStatus = Get-MpComputerStatus
+                        $results.SignatureUpdate.Updated = $true
+                        $results.SignatureUpdate.Version = $mpStatus.AntivirusSignatureVersion
+                        Write-Host "Signatures updated to version: $($mpStatus.AntivirusSignatureVersion)" -ForegroundColor Green
+                    }
+                    catch {
+                        $results.SignatureUpdate.Error = $_.Exception.Message
+                        Write-Warning "Failed to update signatures: $_"
+                    }
                 }
             }
             
             # Start the scan
             Write-Host "`nStarting $ScanType scan..." -ForegroundColor Cyan
             
+            if (-not $PSCmdlet.ShouldProcess($env:COMPUTERNAME, "Start $ScanType scan")) {
+                $results.Status = 'WhatIf'
+            }
+            else {
             switch ($ScanType) {
                 'Quick' {
                     Write-Host "This may take a few minutes..." -ForegroundColor Yellow
@@ -104,12 +110,13 @@ function Invoke-DefenderScan {
                         if ($Priority -eq 'Low') {
                             Start-MpScan -ScanType QuickScan -AsJob | Out-Null
                             Write-Host "Quick scan started as background job" -ForegroundColor Green
+                            $results.Status = 'Started'
                         }
                         else {
                             Start-MpScan -ScanType QuickScan
                             Write-Host "Quick scan completed" -ForegroundColor Green
+                            $results.Status = 'Completed'
                         }
-                        $results.Status = 'Completed'
                     }
                     catch {
                         $results.Status = 'Failed'
@@ -126,6 +133,7 @@ function Invoke-DefenderScan {
                             Start-MpScan -ScanType FullScan -AsJob | Out-Null
                             Write-Host "Full scan started as background job" -ForegroundColor Green
                             Write-Host "Use Get-MpThreat to check results later" -ForegroundColor Yellow
+                            $results.Status = 'Started'
                         }
                         else {
                             $job = Start-MpScan -ScanType FullScan -AsJob
@@ -149,6 +157,9 @@ function Invoke-DefenderScan {
                                 Write-Warning "Scan job state: $($job.State)"
                                 $results.Status = $job.State
                             }
+                            
+                            # Clean up the completed scan job so it does not linger in the session
+                            Remove-Job -Job $job -Force -ErrorAction SilentlyContinue
                         }
                     }
                     catch {
@@ -194,6 +205,7 @@ function Invoke-DefenderScan {
                         $results.Status = 'Cancelled'
                     }
                 }
+            }
             }
             
             # Wait a moment for scan results to be processed
@@ -276,6 +288,7 @@ function Invoke-DefenderScan {
             switch ($results.Status) {
                 'Completed' { 'Green' }
                 'Running' { 'Yellow' }
+                'Started' { 'Yellow' }
                 'Failed' { 'Red' }
                 'Cancelled' { 'Yellow' }
                 'Initiated' { 'Green' }
@@ -324,7 +337,7 @@ function Invoke-DefenderScan {
         Write-Host "  3. Review detected threats in Windows Security" -ForegroundColor White
         Write-Host "  4. Schedule regular scans during off-peak hours" -ForegroundColor White
         
-        if ($Priority -eq 'Low' -and $results.Status -eq 'Completed') {
+        if ($Priority -eq 'Low' -and $results.Status -eq 'Started') {
             Write-Host "`nNote: Background scan may still be running. Check Windows Security for status." -ForegroundColor Yellow
         }
         

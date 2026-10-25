@@ -332,8 +332,8 @@ function Test-NISTCompliance {
                 try {
                     # SC-7: Boundary Protection - FIX: Wrap in @()
                     $firewallProfiles = Get-NetFirewallProfile -ErrorAction SilentlyContinue
-                    $disabledFirewalls = @($firewallProfiles | Where-Object { -not $_.Enabled })
-                    $allFirewallsEnabled = $disabledFirewalls.Count -eq 0
+                    $disabledFirewalls = @($firewallProfiles | Where-Object { $null -ne $_ -and -not $_.Enabled })
+                    $allFirewallsEnabled = ($null -ne $firewallProfiles) -and ($disabledFirewalls.Count -eq 0)
                     
                     $control = [PSCustomObject]@{
                         ControlID = 'SC-7'
@@ -341,7 +341,8 @@ function Test-NISTCompliance {
                         ControlFamily = 'SystemProtection'
                         Description = 'Firewall must protect system boundaries'
                         Expected = 'All firewall profiles enabled'
-                        Actual = if ($allFirewallsEnabled) { "All enabled" } else { "Some disabled" }
+                        Actual = if ($null -eq $firewallProfiles) { "Unable to retrieve firewall profiles" }
+                                 elseif ($allFirewallsEnabled) { "All enabled" } else { "Some disabled" }
                         Status = if ($allFirewallsEnabled) { 'Compliant' } else { 'NonCompliant' }
                         Impact = 'Critical'
                         Remediation = 'Enable Windows Firewall for all profiles'

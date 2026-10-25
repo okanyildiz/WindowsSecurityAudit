@@ -219,7 +219,7 @@ function Get-ADPasswordPolicy {
                         Write-Host "  Found $($psos.Count) Fine-Grained Password Policies" -ForegroundColor Yellow
                         
                         foreach ($pso in $psos) {
-                            $appliesTo = Get-ADFineGrainedPasswordPolicySubject -Identity $pso -Server $Domain
+                            $appliesTo = @(Get-ADFineGrainedPasswordPolicySubject -Identity $pso -Server $Domain)
                             
                             $psoInfo = [PSCustomObject]@{
                                 Name = $pso.Name
@@ -230,7 +230,7 @@ function Get-ADPasswordPolicy {
                                 MaxPasswordAge = $pso.MaxPasswordAge.Days
                                 LockoutThreshold = $pso.LockoutThreshold
                                 AppliesTo = $appliesTo.Count
-                                AppliesToObjects = if ($appliesTo) { $appliesTo.Name -join ', ' } else { 'None' }
+                                AppliesToObjects = if ($appliesTo.Count -gt 0) { $appliesTo.Name -join ', ' } else { 'None' }
                             }
                             
                             $analysis.FineGrainedPolicies += $psoInfo

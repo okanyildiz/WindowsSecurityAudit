@@ -416,8 +416,8 @@ function Invoke-SecurityAssessment {
                 Details = "$($localUsers.Count) enabled accounts"
             }
             
-            # Administrator account status
-            $adminAccount = Get-LocalUser -Name "Administrator" -ErrorAction SilentlyContinue
+            # Administrator account status (well-known SID RID 500 - culture-invariant)
+            $adminAccount = @(Get-LocalUser -ErrorAction SilentlyContinue | Where-Object { $null -ne $_.SID -and $_.SID.Value -match '-500$' }) | Select-Object -First 1
             if ($adminAccount -and $adminAccount.Enabled -eq $false) {
                 $accountSecurity.CategoryScore += 20
                 $accountSecurity.Checks += [PSCustomObject]@{
@@ -442,8 +442,8 @@ function Invoke-SecurityAssessment {
                 }
             }
             
-            # Guest account
-            $guestAccount = Get-LocalUser -Name "Guest" -ErrorAction SilentlyContinue
+            # Guest account (well-known SID RID 501 - culture-invariant)
+            $guestAccount = @(Get-LocalUser -ErrorAction SilentlyContinue | Where-Object { $null -ne $_.SID -and $_.SID.Value -match '-501$' }) | Select-Object -First 1
             if ($guestAccount -and $guestAccount.Enabled -eq $false) {
                 $accountSecurity.CategoryScore += 15
                 $accountSecurity.Checks += [PSCustomObject]@{
