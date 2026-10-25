@@ -50,6 +50,23 @@
 - 🧪 **318 Pester tests** (`tests/WindowsSecurityAudit.Tests.ps1`) covering the public API surface
 - ⚙️ **GitHub Actions CI** (`.github/workflows/ci.yml`) on windows-latest: PSScriptAnalyzer Error gate, module import verified under both **PowerShell 7 (pwsh)** and **Windows PowerShell 5.1**, plus the full Pester suite
 
+### 📦 Already in the Toolbox (v1.0.0)
+
+Everything below shipped with the original release and keeps getting sharper:
+
+| Category | Highlights |
+|----------|------------|
+| **Core Security** | `Get-SecurityBaseline` (0-100 posture score), `Get-SystemInfo`, `Test-SystemIntegrity` (SFC/DISM), `Get-EventIdDescription` |
+| **Threat Detection** | Persistence mechanisms, suspicious processes, network anomalies, authentication attacks (brute force, pass-the-hash) |
+| **Threat Hunting** | APT indicators, data exfiltration, lateral movement, LOLBins abuse, MITRE ATT&CK mapping, IOC matching (incl. custom IOC files) |
+| **Compliance** | CIS Benchmark, NIST 800-53, PCI-DSS 4.0 validation with audit-ready evidence export |
+| **Vulnerability Management** | CVE assessment, EOL software, exposed services, certificate health, patch compliance |
+| **Active Directory** | Backdoor & DCSync detection, privileged account audit, stale objects, password policies, security posture |
+| **Forensics & Response** | Memory dumps, USB history, execution artifacts, forensic timelines, one-command incident response |
+| **Enterprise & Reporting** | Multi-system parallel scanning, executive reports, live HTML dashboards, security metrics & KPIs |
+| **Cloud Security** | Azure AD risky sign-ins, M365 security posture, cloud compliance status |
+| **Hardening** | Audit policies, PowerShell security (logging, transcription), security baseline enforcement — all with `-WhatIf` support |
+
 ---
 
 ## ☕ Support This Project
