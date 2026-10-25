@@ -14,7 +14,7 @@ Set-StrictMode -Version Latest
 
 # Module variables
 $script:ModuleRoot = $PSScriptRoot
-$script:ModuleVersion = '1.4.0'
+$script:ModuleVersion = '1.5.0'
 
 # Import all function files
 $Public = @(Get-ChildItem -Path "$PSScriptRoot\Core\*.ps1" -ErrorAction SilentlyContinue)

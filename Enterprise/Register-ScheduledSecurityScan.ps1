@@ -9,6 +9,18 @@ function Register-ScheduledSecurityScan {
         findings are detected. The script is then registered as a Scheduled Task
         running as SYSTEM at the chosen cadence (Daily, Weekly on Monday, or
         Monthly on the 1st). Use -Unregister to remove the scheduled task.
+        The generated script embeds the webhook URL (a shared secret), so on
+        Windows its file permissions are restricted to Administrators and SYSTEM.
+
+        Alert deduplication is enabled by default: the generated script persists a
+        stable SHA256 fingerprint (first 16 hex chars over Category + Finding text)
+        of each finding to State\last-findings.json under the output path. On
+        subsequent runs findings are classified as New, Persisting, or Resolved.
+        An alarm is sent only for new Critical/High findings or persisting
+        Critical/High findings older than -RealertAfterDays; a quiet resolved note
+        (no alarm tone) is sent when findings disappear. The first run, a broken or
+        missing state file, and -DisableAlertDedup all fall back to alerting on any
+        Critical finding. State write failures never suppress alerts.
     .PARAMETER ScanType
         Type of scan to schedule: Quick, Standard, or Full (default: Standard).
         Mapped to Invoke-SecurityAssessment as Quick=Basic, Standard=Standard, Full=Advanced.
@@ -28,6 +40,14 @@ function Register-ScheduledSecurityScan {
         Optional sender address for email alerts (requires EmailTo and SmtpServer)
     .PARAMETER SmtpServer
         Optional SMTP server for email alerts (requires EmailTo and EmailFrom)
+    .PARAMETER DisableAlertDedup
+        Turns off alert deduplication in the generated scan script. With dedup
+        disabled the script alerts on every run whenever a Critical finding
+        exists (the pre-dedup behavior)
+    .PARAMETER RealertAfterDays
+        Number of days after which a persisting Critical/High finding (first seen
+        this many days ago or more) triggers a repeat alert (default: 7, range
+        1-3650). Only used when alert deduplication is enabled
     .PARAMETER Unregister
         Removes the scheduled security scan task and exits without registering anything
     .PARAMETER WhatIf
@@ -43,6 +63,9 @@ function Register-ScheduledSecurityScan {
     .EXAMPLE
         Register-ScheduledSecurityScan -ScanType Quick -Frequency Monthly -EmailTo secops@contoso.com -EmailFrom audit@contoso.com -SmtpServer smtp.contoso.com
         Registers a monthly Quick scan that emails an alert when Critical findings exist
+    .EXAMPLE
+        Register-ScheduledSecurityScan -Frequency Daily -WebhookUrl 'https://outlook.office.com/webhook/...' -RealertAfterDays 14
+        Registers a daily scan with alert deduplication (on by default) that re-alerts on Critical/High findings persisting for 14 days or more
     .EXAMPLE
         Register-ScheduledSecurityScan -Unregister -Confirm:$false
         Removes the scheduled security scan task
@@ -79,6 +102,13 @@ function Register-ScheduledSecurityScan {
         [string]$SmtpServer,
 
         [Parameter()]
+        [switch]$DisableAlertDedup,
+
+        [Parameter()]
+        [ValidateRange(1, 3650)]
+        [int]$RealertAfterDays = 7,
+
+        [Parameter()]
         [switch]$Unregister
     )
 
@@ -112,6 +142,12 @@ function Register-ScheduledSecurityScan {
         }
 
         $webhookConfigured = (-not [string]::IsNullOrWhiteSpace($WebhookUrl))
+
+        # Alert dedup is opt-out; the generated script embeds both values
+        $alertDedupEnabled = (-not $DisableAlertDedup)
+        if ($DisableAlertDedup -and $PSBoundParameters.ContainsKey('RealertAfterDays')) {
+            Write-Warning "RealertAfterDays is ignored because alert deduplication is disabled."
+        }
     }
 
     process {
@@ -169,6 +205,7 @@ function Register-ScheduledSecurityScan {
         Write-Host "Output Path: $OutputPath" -ForegroundColor Yellow
         Write-Host "Webhook Alerts: $webhookConfigured" -ForegroundColor Yellow
         Write-Host "Email Alerts: $emailConfigured" -ForegroundColor Yellow
+        Write-Host "Alert Dedup: $(if ($alertDedupEnabled) { "True (re-alert after $RealertAfterDays days)" } else { 'False' })" -ForegroundColor Yellow
 
         $scriptPath = Join-Path $OutputPath 'Invoke-ScheduledSecurityScan.ps1'
 
@@ -179,6 +216,8 @@ function Register-ScheduledSecurityScan {
         $safeEmailTo = if ($emailConfigured) { $EmailTo -replace "'", "''" } else { '' }
         $safeEmailFrom = if ($emailConfigured) { $EmailFrom -replace "'", "''" } else { '' }
         $safeSmtpServer = if ($emailConfigured) { $SmtpServer -replace "'", "''" } else { '' }
+        $safeAlertDedup = if ($alertDedupEnabled) { '$true' } else { '$false' }
+        $safeRealertAfterDays = "$RealertAfterDays"
 
         $scanScriptTemplate = @'
 # ============================================================================
@@ -190,16 +229,42 @@ function Register-ScheduledSecurityScan {
 
 $ErrorActionPreference = 'Continue'
 
-$modulePath     = '__MODULE_PATH__'
-$scanOutputRoot = '__OUTPUT_PATH__'
-$assessmentType = '__ASSESSMENT_TYPE__'
-$webhookUrl     = '__WEBHOOK_URL__'
-$emailTo        = '__EMAIL_TO__'
-$emailFrom      = '__EMAIL_FROM__'
-$smtpServer     = '__SMTP_SERVER__'
+try {
+    [Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12
+}
+catch {
+    Write-Verbose "Could not enforce TLS 1.2: $_"
+}
+
+$modulePath       = '__MODULE_PATH__'
+$scanOutputRoot   = '__OUTPUT_PATH__'
+$assessmentType   = '__ASSESSMENT_TYPE__'
+$webhookUrl       = '__WEBHOOK_URL__'
+$emailTo          = '__EMAIL_TO__'
+$emailFrom        = '__EMAIL_FROM__'
+$smtpServer       = '__SMTP_SERVER__'
+$alertDedup       = __ALERT_DEDUP__
+$realertAfterDays = __REALERT_AFTER_DAYS__
 
 $runStamp = Get-Date -Format 'yyyyMMdd_HHmmss'
 $runPath = Join-Path $scanOutputRoot "Scan_$runStamp"
+
+# Stable fingerprint of a finding: first 16 hex chars of SHA256 over Category + Finding text
+function Get-FindingFingerprint {
+    param(
+        [string]$Category,
+        [string]$Finding
+    )
+
+    $sha256 = [System.Security.Cryptography.SHA256]::Create()
+    try {
+        $hashBytes = $sha256.ComputeHash([System.Text.Encoding]::UTF8.GetBytes("$Category`n$Finding"))
+        return (([System.BitConverter]::ToString($hashBytes)) -replace '-', '').Substring(0, 16).ToLowerInvariant()
+    }
+    finally {
+        $sha256.Dispose()
+    }
+}
 
 try {
     if (-not (Test-Path $runPath)) {
@@ -223,29 +288,172 @@ try {
         $overallScore = "$($assessment.OverallScore)"
     }
 
+    $runNow = Get-Date
+    $runStampText = $runNow.ToString('yyyy-MM-dd HH:mm:ss')
+
+    # Fingerprint the current findings (first occurrence wins for duplicates)
+    $currentFingerprints = @{}
+    foreach ($finding in $findings) {
+        $fCat = ''
+        $fTxt = ''
+        $fSev = ''
+        if ($null -ne $finding.PSObject.Properties['Category']) { $fCat = "$($finding.Category)" }
+        if ($null -ne $finding.PSObject.Properties['Finding']) { $fTxt = "$($finding.Finding)" }
+        if ($null -ne $finding.PSObject.Properties['Severity']) { $fSev = "$($finding.Severity)" }
+        $fingerprint = Get-FindingFingerprint -Category $fCat -Finding $fTxt
+        if (-not $currentFingerprints.ContainsKey($fingerprint)) {
+            $currentFingerprints[$fingerprint] = [PSCustomObject]@{
+                Fingerprint = $fingerprint
+                Category = $fCat
+                Finding = $fTxt
+                Severity = $fSev
+            }
+        }
+    }
+
+    # Load the previous dedup state; a missing or broken state degrades to normal alerting
+    $stateDir = Join-Path $scanOutputRoot 'State'
+    $stateFile = Join-Path $stateDir 'last-findings.json'
+    $previousState = @{}
+    $stateLoaded = $false
+
+    if ($alertDedup -and (Test-Path $stateFile)) {
+        try {
+            $parsedState = Get-Content -Path $stateFile -Raw -ErrorAction Stop | ConvertFrom-Json -ErrorAction Stop
+            if ($null -eq $parsedState -or $null -eq $parsedState.PSObject.Properties['Findings'] -or $null -eq $parsedState.Findings) {
+                Write-Warning "Alert dedup state file '$stateFile' has no findings data. Alerting without dedup for this run."
+            }
+            else {
+                foreach ($stateEntry in @($parsedState.Findings)) {
+                    if ($null -eq $stateEntry.PSObject.Properties['Fingerprint'] -or [string]::IsNullOrWhiteSpace("$($stateEntry.Fingerprint)")) { continue }
+                    $sCat = ''
+                    $sTxt = ''
+                    $sSev = ''
+                    $sFirstSeen = $null
+                    if ($null -ne $stateEntry.PSObject.Properties['Category']) { $sCat = "$($stateEntry.Category)" }
+                    if ($null -ne $stateEntry.PSObject.Properties['Finding']) { $sTxt = "$($stateEntry.Finding)" }
+                    if ($null -ne $stateEntry.PSObject.Properties['Severity']) { $sSev = "$($stateEntry.Severity)" }
+                    if ($null -ne $stateEntry.PSObject.Properties['FirstSeen'] -and -not [string]::IsNullOrWhiteSpace("$($stateEntry.FirstSeen)")) {
+                        $parsedDate = [datetime]::MinValue
+                        if ([datetime]::TryParseExact("$($stateEntry.FirstSeen)", 'yyyy-MM-dd HH:mm:ss', [System.Globalization.CultureInfo]::InvariantCulture, [System.Globalization.DateTimeStyles]::None, [ref]$parsedDate)) {
+                            $sFirstSeen = $parsedDate
+                        }
+                    }
+                    $previousState["$($stateEntry.Fingerprint)"] = [PSCustomObject]@{
+                        Fingerprint = "$($stateEntry.Fingerprint)"
+                        Category = $sCat
+                        Finding = $sTxt
+                        Severity = $sSev
+                        FirstSeen = $sFirstSeen
+                    }
+                }
+                $stateLoaded = $true
+            }
+        }
+        catch {
+            Write-Warning "Could not load alert dedup state file '$stateFile': $($_.Exception.Message). Alerting without dedup for this run."
+        }
+    }
+
+    # Classify current findings against the previous state
+    $newFindings = @()
+    $persistingFindings = @()
+    $resolvedFindings = @()
+
+    if ($alertDedup) {
+        foreach ($fingerprint in @($currentFingerprints.Keys)) {
+            if ($stateLoaded -and $previousState.ContainsKey($fingerprint)) {
+                $persistingFindings += [PSCustomObject]@{
+                    Fingerprint = $fingerprint
+                    Category = $currentFingerprints[$fingerprint].Category
+                    Finding = $currentFingerprints[$fingerprint].Finding
+                    Severity = $currentFingerprints[$fingerprint].Severity
+                    FirstSeen = $previousState[$fingerprint].FirstSeen
+                }
+            }
+            else {
+                $newFindings += $currentFingerprints[$fingerprint]
+            }
+        }
+        if ($stateLoaded) {
+            foreach ($fingerprint in @($previousState.Keys)) {
+                if (-not $currentFingerprints.ContainsKey($fingerprint)) {
+                    $resolvedFindings += $previousState[$fingerprint]
+                }
+            }
+        }
+    }
+
+    # Decide whether and how to alert
+    $alertFindings = @()
+    $alertReason = 'None'
+
+    if ($alertDedup -and $stateLoaded) {
+        $newAlerts = @($newFindings | Where-Object { $_.Severity -eq 'Critical' -or $_.Severity -eq 'High' })
+        $realerts = @($persistingFindings | Where-Object {
+            if ($_.Severity -ne 'Critical' -and $_.Severity -ne 'High') { return $false }
+            if ($null -eq $_.FirstSeen) { return $true }
+            return (($runNow - $_.FirstSeen).TotalDays -ge $realertAfterDays)
+        })
+        $alertFindings = @($newAlerts) + @($realerts)
+        if ($alertFindings.Count -gt 0) {
+            $alertReason = 'Alarm'
+        }
+        elseif ($resolvedFindings.Count -gt 0) {
+            $alertReason = 'Resolved'
+        }
+    }
+    else {
+        # First run, dedup disabled, or unreadable state: alert on any Critical finding
+        $alertFindings = $criticalFindings
+        if ($criticalFindings.Count -gt 0) {
+            $alertReason = 'Alarm'
+        }
+    }
+
     $runSummary = [PSCustomObject]@{
         ComputerName = $env:COMPUTERNAME
-        RunDate = Get-Date -Format 'yyyy-MM-dd HH:mm:ss'
+        RunDate = $runStampText
         AssessmentType = $assessmentType
         OverallScore = $overallScore
         TotalFindings = $findings.Count
         CriticalFindings = $criticalFindings.Count
         HighFindings = $highFindings.Count
+        NewFindings = $newFindings.Count
+        PersistingFindings = $persistingFindings.Count
+        ResolvedFindings = $resolvedFindings.Count
+        AlertDedup = $alertDedup
+        RealertAfterDays = $realertAfterDays
+        AlertReason = $alertReason
         ReportPath = $runPath
         AlertSent = $false
     }
 
-    if ($criticalFindings.Count -gt 0) {
+    if ($alertReason -eq 'Alarm') {
         # ---------- Webhook alert (Teams/Slack-style incoming webhook) ----------
         if (-not [string]::IsNullOrWhiteSpace($webhookUrl)) {
             try {
-                $factBlocks = @($criticalFindings | ForEach-Object {
+                $factBlocks = @($alertFindings | ForEach-Object {
                     $cat = ''
                     $txt = ''
                     if ($null -ne $_.PSObject.Properties['Category']) { $cat = "$($_.Category)" }
                     if ($null -ne $_.PSObject.Properties['Finding']) { $txt = "$($_.Finding)" }
                     @{ title = $cat; value = $txt }
                 })
+
+                $alertFacts = @(
+                    @{ title = 'Computer'; value = "$env:COMPUTERNAME" }
+                    @{ title = 'Scan Time'; value = $runStampText }
+                    @{ title = 'Overall Score'; value = $overallScore }
+                    @{ title = 'Critical'; value = "$($criticalFindings.Count)" }
+                    @{ title = 'High'; value = "$($highFindings.Count)" }
+                    @{ title = 'Report'; value = "$runPath" }
+                )
+                if ($alertDedup) {
+                    $alertFacts += @{ title = 'Since Last Run: New'; value = "$($newFindings.Count)" }
+                    $alertFacts += @{ title = 'Since Last Run: Persisting'; value = "$($persistingFindings.Count)" }
+                    $alertFacts += @{ title = 'Since Last Run: Resolved'; value = "$($resolvedFindings.Count)" }
+                }
 
                 $payload = @{
                     type = 'message'
@@ -258,15 +466,8 @@ try {
                                 version = '1.2'
                                 body = @(
                                     @{ type = 'TextBlock'; size = 'Large'; weight = 'Bolder'; color = 'Attention'; text = "CRITICAL Security Findings - $env:COMPUTERNAME" }
-                                    @{ type = 'TextBlock'; text = "Scheduled $assessmentType security scan completed with $($criticalFindings.Count) critical finding(s)."; wrap = $true }
-                                    @{ type = 'FactSet'; facts = @(
-                                        @{ title = 'Computer'; value = "$env:COMPUTERNAME" }
-                                        @{ title = 'Scan Time'; value = (Get-Date -Format 'yyyy-MM-dd HH:mm:ss') }
-                                        @{ title = 'Overall Score'; value = $overallScore }
-                                        @{ title = 'Critical'; value = "$($criticalFindings.Count)" }
-                                        @{ title = 'High'; value = "$($highFindings.Count)" }
-                                        @{ title = 'Report'; value = "$runPath" }
-                                    ) + $factBlocks }
+                                    @{ type = 'TextBlock'; text = "Scheduled $assessmentType security scan completed with $($alertFindings.Count) critical/high finding(s) requiring attention."; wrap = $true }
+                                    @{ type = 'FactSet'; facts = @($alertFacts) + $factBlocks }
                                     @{ type = 'TextBlock'; text = 'Review the full report and remediate the critical findings as soon as possible.'; wrap = $true }
                                 )
                             }
@@ -286,7 +487,85 @@ try {
         # ---------- Email alert ----------
         if (-not [string]::IsNullOrWhiteSpace($emailTo) -and -not [string]::IsNullOrWhiteSpace($emailFrom) -and -not [string]::IsNullOrWhiteSpace($smtpServer)) {
             try {
-                $mailRows = ($criticalFindings | ForEach-Object {
+                $mailRows = ($alertFindings | ForEach-Object {
+                    $cat = ''
+                    $txt = ''
+                    if ($null -ne $_.PSObject.Properties['Category']) { $cat = "$($_.Category)" }
+                    if ($null -ne $_.PSObject.Properties['Finding']) { $txt = "$($_.Finding)" }
+                    "<tr><td style='padding:6px;border:1px solid #ccc;'>$cat</td><td style='padding:6px;border:1px solid #ccc;'>$txt</td></tr>"
+                }) -join "`n"
+
+                $dedupSummaryHtml = ''
+                if ($alertDedup) {
+                    $dedupSummaryHtml = "<p>Since last run: <b>$($newFindings.Count)</b> new, <b>$($persistingFindings.Count)</b> persisting, <b>$($resolvedFindings.Count)</b> resolved finding(s).</p>"
+                }
+
+                $mailBody = @"
+<html><body style='font-family:Arial;'>
+<h2 style='color:#c00;'>Critical Security Findings - $env:COMPUTERNAME</h2>
+<p>Scheduled <b>$assessmentType</b> scan on <b>$runStampText</b> found <b>$($criticalFindings.Count)</b> critical and <b>$($highFindings.Count)</b> high finding(s). Overall score: <b>$overallScore</b>.</p>
+$dedupSummaryHtml
+<table style='border-collapse:collapse;'>
+<tr><th style='padding:6px;border:1px solid #ccc;background:#333;color:#fff;'>Category</th><th style='padding:6px;border:1px solid #ccc;background:#333;color:#fff;'>Finding</th></tr>
+$mailRows
+</table>
+<p>Full report: $runPath</p>
+</body></html>
+"@
+
+                Send-MailMessage -To $emailTo -From $emailFrom -SmtpServer $smtpServer -Subject "[SECURITY ALERT] $($alertFindings.Count) critical/high finding(s) on $env:COMPUTERNAME" -Body $mailBody -BodyAsHtml -Encoding UTF8 -ErrorAction Stop
+                $runSummary.AlertSent = $true
+            }
+            catch {
+                Write-Warning "Failed to send email alert: $($_.Exception.Message)"
+            }
+        }
+    }
+    elseif ($alertReason -eq 'Resolved') {
+        # ---------- Resolved note (informational, no alarm tone) ----------
+        if (-not [string]::IsNullOrWhiteSpace($webhookUrl)) {
+            try {
+                $resolvedFacts = @(
+                    @{ title = 'Computer'; value = "$env:COMPUTERNAME" }
+                    @{ title = 'Scan Time'; value = $runStampText }
+                    @{ title = 'Overall Score'; value = $overallScore }
+                    @{ title = 'Since Last Run: New'; value = "$($newFindings.Count)" }
+                    @{ title = 'Since Last Run: Persisting'; value = "$($persistingFindings.Count)" }
+                    @{ title = 'Since Last Run: Resolved'; value = "$($resolvedFindings.Count)" }
+                    @{ title = 'Report'; value = "$runPath" }
+                )
+
+                $payload = @{
+                    type = 'message'
+                    attachments = @(
+                        @{
+                            contentType = 'application/vnd.microsoft.card.adaptive'
+                            content = @{
+                                '$schema' = 'http://adaptivecards.io/schemas/adaptive-card.json'
+                                type = 'AdaptiveCard'
+                                version = '1.2'
+                                body = @(
+                                    @{ type = 'TextBlock'; size = 'Large'; weight = 'Bolder'; color = 'Good'; text = "Security Findings Resolved - $env:COMPUTERNAME" }
+                                    @{ type = 'TextBlock'; text = "Scheduled $assessmentType security scan: $($resolvedFindings.Count) finding(s) resolved since the last run. No new critical or high findings."; wrap = $true }
+                                    @{ type = 'FactSet'; facts = $resolvedFacts }
+                                )
+                            }
+                        }
+                    )
+                }
+
+                $jsonBody = $payload | ConvertTo-Json -Depth 12
+                Invoke-RestMethod -Uri $webhookUrl -Method Post -Body $jsonBody -ContentType 'application/json; charset=utf-8' -ErrorAction Stop
+                $runSummary.AlertSent = $true
+            }
+            catch {
+                Write-Warning "Failed to send webhook alert: $($_.Exception.Message)"
+            }
+        }
+
+        if (-not [string]::IsNullOrWhiteSpace($emailTo) -and -not [string]::IsNullOrWhiteSpace($emailFrom) -and -not [string]::IsNullOrWhiteSpace($smtpServer)) {
+            try {
+                $resolvedRows = ($resolvedFindings | ForEach-Object {
                     $cat = ''
                     $txt = ''
                     if ($null -ne $_.PSObject.Properties['Category']) { $cat = "$($_.Category)" }
@@ -296,22 +575,56 @@ try {
 
                 $mailBody = @"
 <html><body style='font-family:Arial;'>
-<h2 style='color:#c00;'>Critical Security Findings - $env:COMPUTERNAME</h2>
-<p>Scheduled <b>$assessmentType</b> scan on <b>$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')</b> found <b>$($criticalFindings.Count)</b> critical and <b>$($highFindings.Count)</b> high finding(s). Overall score: <b>$overallScore</b>.</p>
+<h2 style='color:#080;'>Security Findings Resolved - $env:COMPUTERNAME</h2>
+<p>Scheduled <b>$assessmentType</b> scan on <b>$runStampText</b>: <b>$($resolvedFindings.Count)</b> finding(s) resolved since the last run. No new critical or high findings. Overall score: <b>$overallScore</b>.</p>
+<p>Since last run: <b>$($newFindings.Count)</b> new, <b>$($persistingFindings.Count)</b> persisting, <b>$($resolvedFindings.Count)</b> resolved finding(s).</p>
 <table style='border-collapse:collapse;'>
-<tr><th style='padding:6px;border:1px solid #ccc;background:#333;color:#fff;'>Category</th><th style='padding:6px;border:1px solid #ccc;background:#333;color:#fff;'>Finding</th></tr>
-$mailRows
+<tr><th style='padding:6px;border:1px solid #ccc;background:#333;color:#fff;'>Category</th><th style='padding:6px;border:1px solid #ccc;background:#333;color:#fff;'>Resolved Finding</th></tr>
+$resolvedRows
 </table>
 <p>Full report: $runPath</p>
 </body></html>
 "@
 
-                Send-MailMessage -To $emailTo -From $emailFrom -SmtpServer $smtpServer -Subject "[SECURITY ALERT] $($criticalFindings.Count) critical finding(s) on $env:COMPUTERNAME" -Body $mailBody -BodyAsHtml -Encoding UTF8 -ErrorAction Stop
+                Send-MailMessage -To $emailTo -From $emailFrom -SmtpServer $smtpServer -Subject "[SECURITY UPDATE] $($resolvedFindings.Count) finding(s) resolved on $env:COMPUTERNAME" -Body $mailBody -BodyAsHtml -Encoding UTF8 -ErrorAction Stop
                 $runSummary.AlertSent = $true
             }
             catch {
                 Write-Warning "Failed to send email alert: $($_.Exception.Message)"
             }
+        }
+    }
+
+    # Persist the dedup state after every run; write failures never suppress alerts
+    if ($alertDedup) {
+        try {
+            if (-not (Test-Path $stateDir)) {
+                New-Item -Path $stateDir -ItemType Directory -Force | Out-Null
+            }
+            $stateFindings = @()
+            foreach ($fingerprint in @($currentFingerprints.Keys)) {
+                $currentEntry = $currentFingerprints[$fingerprint]
+                $firstSeenText = $runStampText
+                if ($previousState.ContainsKey($fingerprint) -and $null -ne $previousState[$fingerprint].FirstSeen) {
+                    $firstSeenText = $previousState[$fingerprint].FirstSeen.ToString('yyyy-MM-dd HH:mm:ss')
+                }
+                $stateFindings += [PSCustomObject]@{
+                    Fingerprint = $fingerprint
+                    Category = $currentEntry.Category
+                    Finding = $currentEntry.Finding
+                    Severity = $currentEntry.Severity
+                    FirstSeen = $firstSeenText
+                    LastSeen = $runStampText
+                }
+            }
+            [PSCustomObject]@{
+                ComputerName = $env:COMPUTERNAME
+                RunTimestamp = $runStampText
+                Findings = $stateFindings
+            } | ConvertTo-Json -Depth 5 | Out-File -FilePath $stateFile -Encoding UTF8 -Force
+        }
+        catch {
+            Write-Warning "Could not write alert dedup state file '$stateFile': $($_.Exception.Message). Alerting is not affected."
         }
     }
 
@@ -355,9 +668,36 @@ exit 0
                     Replace('__WEBHOOK_URL__', $safeWebhookUrl).
                     Replace('__EMAIL_TO__', $safeEmailTo).
                     Replace('__EMAIL_FROM__', $safeEmailFrom).
-                    Replace('__SMTP_SERVER__', $safeSmtpServer)
+                    Replace('__SMTP_SERVER__', $safeSmtpServer).
+                    Replace('__ALERT_DEDUP__', $safeAlertDedup).
+                    Replace('__REALERT_AFTER_DAYS__', $safeRealertAfterDays)
 
                 $scanScript | Out-File $scriptPath -Encoding UTF8 -Force
+
+                # The script embeds the webhook URL (a shared secret) and runs as SYSTEM,
+                # so restrict it to Administrators and SYSTEM instead of the permissive
+                # ProgramData default
+                if ($env:OS -eq 'Windows_NT') {
+                    try {
+                        $scriptAcl = Get-Acl -Path $scriptPath -ErrorAction Stop
+                        $scriptAcl.SetAccessRuleProtection($true, $false)
+                        foreach ($existingRule in @($scriptAcl.Access)) {
+                            $null = $scriptAcl.RemoveAccessRule($existingRule)
+                        }
+                        foreach ($identity in @('NT AUTHORITY\SYSTEM', 'BUILTIN\Administrators')) {
+                            $accessRule = New-Object System.Security.AccessControl.FileSystemAccessRule(
+                                $identity,
+                                [System.Security.AccessControl.FileSystemRights]::FullControl,
+                                [System.Security.AccessControl.AccessControlType]::Allow)
+                            $scriptAcl.AddAccessRule($accessRule)
+                        }
+                        Set-Acl -Path $scriptPath -AclObject $scriptAcl -ErrorAction Stop
+                    }
+                    catch {
+                        Write-Warning "Could not restrict permissions on '$scriptPath'; the file contains the webhook URL and may be readable by other local users: $_"
+                    }
+                }
+
                 Write-Host "Scan script created: $scriptPath" -ForegroundColor Green
             }
             catch {
@@ -399,7 +739,8 @@ exit 0
                     'Weekly'  { 'every Monday' }
                     'Monthly' { 'on the 1st of every month' }
                 }
-                $taskDescription = "WindowsSecurityAudit $ScanType scan ($assessmentType) runs $frequencyNote at $($Time.ToString('HH:mm')). Alerts on Critical findings. Managed by Register-ScheduledSecurityScan."
+                $dedupNote = if ($alertDedupEnabled) { "on, re-alert after $RealertAfterDays days" } else { 'off' }
+                $taskDescription = "WindowsSecurityAudit $ScanType scan ($assessmentType) runs $frequencyNote at $($Time.ToString('HH:mm')). Alerts on Critical findings (alert dedup: $dedupNote). Managed by Register-ScheduledSecurityScan."
 
                 Register-ScheduledTask -TaskName $taskName -Action $action -Trigger $trigger -Principal $principal -Settings $settings -Description $taskDescription -Force -ErrorAction Stop | Out-Null
 
@@ -425,6 +766,8 @@ exit 0
                 OutputPath = $OutputPath
                 WebhookAlertEnabled = $webhookConfigured
                 EmailAlertEnabled = $emailConfigured
+                AlertDedupEnabled = $alertDedupEnabled
+                RealertAfterDays = $RealertAfterDays
             }
         }
         else {
@@ -443,6 +786,8 @@ exit 0
                 OutputPath = $OutputPath
                 WebhookAlertEnabled = $webhookConfigured
                 EmailAlertEnabled = $emailConfigured
+                AlertDedupEnabled = $alertDedupEnabled
+                RealertAfterDays = $RealertAfterDays
             }
         }
     }
@@ -458,6 +803,7 @@ exit 0
                 Write-Host "Schedule: $($scanResult.Frequency) at $($scanResult.ScheduledTime)" -ForegroundColor Cyan
                 Write-Host "Script: $($scanResult.ScriptPath)" -ForegroundColor Cyan
                 Write-Host "Reports: $($scanResult.OutputPath)" -ForegroundColor Cyan
+                Write-Host "Alert Dedup: $($scanResult.AlertDedupEnabled)" -ForegroundColor Cyan
 
                 if ($scanResult.Status -eq 'Registered' -and -not $scanResult.WebhookAlertEnabled -and -not $scanResult.EmailAlertEnabled) {
                     Write-Warning "No alerting configured. Critical findings will be logged but no webhook or email alert will be sent."

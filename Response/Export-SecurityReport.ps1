@@ -6,6 +6,11 @@ function Export-SecurityReport {
         Creates detailed security reports in multiple formats (HTML, JSON, CSV, NDJSON, CEF)
         with findings, recommendations, and executive summaries. NDJSON and CEF formats
         produce SIEM-ready finding exports via ConvertTo-SiemEvent (.ndjson / .cef files).
+        When -StreamTo is specified, findings are additionally streamed live to a SIEM
+        HTTP endpoint (Splunk HEC, Microsoft Sentinel, or a generic webhook) via
+        Send-SiemEvent after the report files are written. A streaming failure never
+        fails report generation; the outcome is noted on the console and in the
+        StreamResult property of the output.
     .PARAMETER ReportType
         Type of report: Executive, Technical, or Compliance
     .PARAMETER Format
@@ -17,12 +22,26 @@ function Export-SecurityReport {
     .PARAMETER NoAutoOpen
         Do not automatically open the HTML report after generation.
         Use for headless or SYSTEM-context runs where no interactive session exists.
+    .PARAMETER StreamTo
+        Optional SIEM destination type to stream findings to after the report files are
+        written: SplunkHEC, Sentinel, or GenericWebhook. Requires -StreamUri.
+    .PARAMETER StreamUri
+        SIEM endpoint URL used with -StreamTo.
+    .PARAMETER StreamToken
+        Credential for the streaming endpoint (Splunk HEC token or Sentinel shared key).
+        Sent only in request headers, never logged in full.
+    .PARAMETER StreamFormat
+        Event format for streaming: NDJSON (default) or CEF.
     .EXAMPLE
         Export-SecurityReport -ReportType Technical -Format HTML -OutputPath "C:\Reports"
         Export-SecurityReport -ReportType Executive -Format All -IncludeCharts
         Export-SecurityReport -ReportType Technical -Format NDJSON -NoAutoOpen
+        Export-SecurityReport -ReportType Technical -Format JSON -NoAutoOpen -StreamTo SplunkHEC -StreamUri "https://splunk.contoso.com:8088/services/collector" -StreamToken $hecToken
     .OUTPUTS
-        String path to generated report
+        String path(s) to generated report files. When -StreamTo is specified, returns a
+        PSCustomObject with Files (string array) and StreamResult (PSCustomObject with
+        BatchesSent, EventsSent, Failed, DurationSec; $null if streaming did not run)
+        properties.
     #>
     
     [CmdletBinding()]
@@ -42,7 +61,21 @@ function Export-SecurityReport {
         [switch]$IncludeCharts,
         
         [Parameter()]
-        [switch]$NoAutoOpen
+        [switch]$NoAutoOpen,
+
+        [Parameter()]
+        [ValidateSet('SplunkHEC', 'Sentinel', 'GenericWebhook')]
+        [string]$StreamTo,
+
+        [Parameter()]
+        [string]$StreamUri,
+
+        [Parameter()]
+        [string]$StreamToken,
+
+        [Parameter()]
+        [ValidateSet('NDJSON', 'CEF')]
+        [string]$StreamFormat = 'NDJSON'
     )
     
     begin {
@@ -54,6 +87,7 @@ function Export-SecurityReport {
         
         $timestamp = Get-Date -Format 'yyyyMMdd_HHmmss'
         $reportBaseName = "SecurityReport_${ReportType}_$timestamp"
+        $streamResult = $null
     }
     
     process {
@@ -383,7 +417,31 @@ if ($highSeverityProcs.Count -gt 0) {
                 $htmlContent | Out-File $htmlPath -Encoding UTF8
                 $generatedFiles += $htmlPath
             }
-            
+
+            if (-not [string]::IsNullOrWhiteSpace($StreamTo)) {
+                Write-Host "Streaming findings to $StreamTo endpoint..." -ForegroundColor Yellow
+                try {
+                    if ([string]::IsNullOrWhiteSpace($StreamUri)) {
+                        Write-Warning "StreamTo was specified without StreamUri; skipping SIEM streaming."
+                    }
+                    else {
+                        $streamParams = @{
+                            Destination = $StreamTo
+                            Uri         = $StreamUri
+                            Format      = $StreamFormat
+                        }
+                        if (-not [string]::IsNullOrWhiteSpace($StreamToken)) {
+                            $streamParams['Token'] = $StreamToken
+                        }
+                        $streamResult = @($reportData.Findings) | Send-SiemEvent @streamParams
+                        Write-Host "Streamed $($streamResult.EventsSent) of $(@($reportData.Findings).Count) finding event(s) to $StreamTo ($($streamResult.Failed) failed)." -ForegroundColor Green
+                    }
+                }
+                catch {
+                    Write-Warning "SIEM streaming failed; report files were still generated: $_"
+                }
+            }
+
         }
         catch {
             Write-Error "Error generating report: $_"
@@ -397,6 +455,15 @@ if ($highSeverityProcs.Count -gt 0) {
         foreach ($file in $generatedFiles) {
             Write-Host "  - $file" -ForegroundColor White
         }
+
+        if (-not [string]::IsNullOrWhiteSpace($StreamTo)) {
+            if ($null -ne $streamResult) {
+                Write-Host "SIEM Stream ($StreamTo): $($streamResult.EventsSent) event(s) sent in $($streamResult.BatchesSent) batch(es), $($streamResult.Failed) failed, $($streamResult.DurationSec)s" -ForegroundColor Cyan
+            }
+            else {
+                Write-Host "SIEM Stream ($StreamTo): not delivered (see warnings above)" -ForegroundColor Yellow
+            }
+        }
         
         # Open HTML report if generated
         if (-not $NoAutoOpen -and @($generatedFiles | Where-Object { $_ -match '\.html$' }).Count -gt 0) {
@@ -409,6 +476,13 @@ if ($highSeverityProcs.Count -gt 0) {
             }
         }
         
+        if (-not [string]::IsNullOrWhiteSpace($StreamTo)) {
+            return [PSCustomObject]@{
+                Files        = $generatedFiles
+                StreamResult = $streamResult
+            }
+        }
+
         return $generatedFiles
     }
 }

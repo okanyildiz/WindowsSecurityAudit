@@ -27,12 +27,14 @@ function Get-ThreatIntelligence {
         Optional AbuseIPDB API key; enables the AbuseIPDB blacklist feed (sent only as a request header)
     .PARAMETER MISPUrl
         Base URL of a MISP instance (requires -MISPApiKey); attributes are pulled via attributes/restSearch
+        (types: ip-dst, domain, hostname, url, uri, md5, sha1, sha256, email-src, email-dst, filename, mutex)
     .PARAMETER MISPApiKey
         MISP API auth key (requires -MISPUrl); sent only as the Authorization request header and never logged
     .PARAMETER TaxiiServerUrl
         Base URL of a TAXII 2.x server (requires -TaxiiCollection); indicator objects are pulled from the collection
     .PARAMETER TaxiiCollection
-        TAXII collection ID or title to pull STIX indicators from (requires -TaxiiServerUrl)
+        TAXII collection ID or title to pull STIX indicators from (requires -TaxiiServerUrl);
+        paginated envelopes are followed automatically via the 'more'/'next' pattern (up to 20 pages)
     .PARAMETER TaxiiUsername
         Optional TAXII username; sent only as a Basic auth request header together with -TaxiiPassword
     .PARAMETER TaxiiPassword
@@ -173,6 +175,12 @@ function Get-ThreatIntelligence {
                 )
                 
                 NetworkIndicators = @()
+                
+                EmailIndicators = @()
+                
+                FileNameIndicators = @()
+                
+                MutexIndicators = @()
             }
         }
         
@@ -180,6 +188,9 @@ function Get-ThreatIntelligence {
         $feedStats = @()
         $feedEntryCount = 0
         $networkIndicatorKeys = @{}
+        $emailIndicatorKeys = @{}
+        $fileNameIndicatorKeys = @{}
+        $mutexIndicatorKeys = @{}
         
         $mispEnabled = $false
         if (-not [string]::IsNullOrWhiteSpace($MISPUrl) -or -not [string]::IsNullOrWhiteSpace($MISPApiKey)) {
@@ -266,11 +277,39 @@ function Get-ThreatIntelligence {
                     }
                 }
             }
-            elseif ($Kind -eq 'md5' -or $Kind -eq 'sha256') {
+            elseif ($Kind -eq 'md5' -or $Kind -eq 'sha1' -or $Kind -eq 'sha256') {
                 $hashValue = $Value.ToLower()
                 if ($hashValue -notmatch '^[0-9a-f]+$') { return 0 }
                 if (-not $iocDatabase.MaliciousHashes.ContainsKey($hashValue)) {
                     $iocDatabase.MaliciousHashes[$hashValue] = @{ Severity = $Severity; Description = $Description }
+                    $feedEntryCount++
+                    return 1
+                }
+            }
+            elseif ($Kind -eq 'email') {
+                if ($Value -notmatch '^[^@\s]+@[^@\s]+$') { return 0 }
+                $escapedEmail = [regex]::Escape($Value)
+                if (-not $emailIndicatorKeys.ContainsKey($escapedEmail)) {
+                    $emailIndicatorKeys[$escapedEmail] = $true
+                    $iocDatabase.SuspiciousPatterns.EmailIndicators += @{ Pattern = $escapedEmail; Severity = $Severity; Description = $Description }
+                    $feedEntryCount++
+                    return 1
+                }
+            }
+            elseif ($Kind -eq 'filename') {
+                if ($Value -match '[\\/]') { return 0 }
+                $escapedFileName = [regex]::Escape($Value)
+                if (-not $fileNameIndicatorKeys.ContainsKey($escapedFileName)) {
+                    $fileNameIndicatorKeys[$escapedFileName] = $true
+                    $iocDatabase.SuspiciousPatterns.FileNameIndicators += @{ Pattern = $escapedFileName; Severity = $Severity; Description = $Description }
+                    $feedEntryCount++
+                    return 1
+                }
+            }
+            elseif ($Kind -eq 'mutex') {
+                if (-not $mutexIndicatorKeys.ContainsKey($Value)) {
+                    $mutexIndicatorKeys[$Value] = $true
+                    $iocDatabase.SuspiciousPatterns.MutexIndicators += @{ Name = $Value; Severity = $Severity; Description = "$Description (cataloged only - no live mutex check)" }
                     $feedEntryCount++
                     return 1
                 }
@@ -480,7 +519,7 @@ function Get-ThreatIntelligence {
                             Write-Host "  Querying MISP instance at $MISPUrl..." -ForegroundColor Yellow
                             $mispBody = @{
                                 returnFormat = 'json'
-                                type = @('ip-dst', 'domain', 'url', 'md5', 'sha256')
+                                type = @('ip-dst', 'domain', 'hostname', 'url', 'uri', 'md5', 'sha1', 'sha256', 'email-src', 'email-dst', 'filename', 'mutex')
                                 to_ids = 'yes'
                             } | ConvertTo-Json
                             $mispResponse = Invoke-RestMethod -Method Post -Uri "$($MISPUrl.TrimEnd('/'))/attributes/restSearch" -Headers @{ 'Authorization' = $MISPApiKey; 'Accept' = 'application/json' } -Body $mispBody -ContentType 'application/json' -TimeoutSec 60 -ErrorAction Stop
@@ -537,11 +576,18 @@ function Get-ThreatIntelligence {
                             
                             $indicatorKind = $null
                             switch ($attributeType) {
-                                'ip-dst' { $indicatorKind = 'ip' }
-                                'domain' { $indicatorKind = 'domain' }
-                                'url'    { $indicatorKind = 'url' }
-                                'md5'    { $indicatorKind = 'md5' }
-                                'sha256' { $indicatorKind = 'sha256' }
+                                'ip-dst'    { $indicatorKind = 'ip' }
+                                'domain'    { $indicatorKind = 'domain' }
+                                'hostname'  { $indicatorKind = 'domain' }
+                                'url'       { $indicatorKind = 'url' }
+                                'uri'       { $indicatorKind = 'url' }
+                                'md5'       { $indicatorKind = 'md5' }
+                                'sha1'      { $indicatorKind = 'sha1' }
+                                'sha256'    { $indicatorKind = 'sha256' }
+                                'email-src' { $indicatorKind = 'email' }
+                                'email-dst' { $indicatorKind = 'email' }
+                                'filename'  { $indicatorKind = 'filename' }
+                                'mutex'     { $indicatorKind = 'mutex' }
                             }
                             if ($null -eq $indicatorKind) {
                                 Write-Verbose "Skipping unsupported MISP attribute type: $attributeType"
@@ -570,6 +616,8 @@ function Get-ThreatIntelligence {
                     $taxiiObjects = $null
                     $taxiiSource = 'none'
                     $taxiiCacheAgeHours = $null
+                    $taxiiPagesFetched = 0
+                    $taxiiMaxPages = 20
                     $taxiiCacheExists = Test-Path $taxiiCacheFile
                     
                     if ($taxiiCacheExists) {
@@ -620,10 +668,33 @@ function Get-ThreatIntelligence {
                             }
                             if ($null -eq $targetCollectionId) { throw "TAXII collection '$TaxiiCollection' not found on server" }
                             
-                            $objectsResponse = Invoke-RestMethod -Method Get -Uri "$apiRoot/collections/$targetCollectionId/objects?types=indicator" -Headers $taxiiHeaders -TimeoutSec 60 -ErrorAction Stop
                             $taxiiObjects = @()
-                            if ($null -ne $objectsResponse -and $objectsResponse.PSObject.Properties['objects'] -and $null -ne $objectsResponse.objects) {
-                                $taxiiObjects = @($objectsResponse.objects)
+                            $taxiiNextToken = $null
+                            $taxiiMorePages = $true
+                            while ($taxiiMorePages -and $taxiiPagesFetched -lt $taxiiMaxPages) {
+                                $objectsUri = "$apiRoot/collections/$targetCollectionId/objects?types=indicator"
+                                if (-not [string]::IsNullOrWhiteSpace($taxiiNextToken)) {
+                                    $objectsUri += "&next=$([System.Uri]::EscapeDataString($taxiiNextToken))"
+                                }
+                                $objectsResponse = Invoke-RestMethod -Method Get -Uri $objectsUri -Headers $taxiiHeaders -TimeoutSec 60 -ErrorAction Stop
+                                $taxiiPagesFetched++
+                                if ($null -ne $objectsResponse -and $objectsResponse.PSObject.Properties['objects'] -and $null -ne $objectsResponse.objects) {
+                                    $taxiiObjects += @($objectsResponse.objects)
+                                }
+                                $taxiiMorePages = $false
+                                if ($null -ne $objectsResponse -and $objectsResponse.PSObject.Properties['more'] -and $true -eq $objectsResponse.more) {
+                                    $nextPageToken = if ($objectsResponse.PSObject.Properties['next']) { [string]$objectsResponse.next } else { $null }
+                                    if (-not [string]::IsNullOrWhiteSpace($nextPageToken)) {
+                                        $taxiiNextToken = $nextPageToken
+                                        $taxiiMorePages = $true
+                                    }
+                                    else {
+                                        Write-Warning "TAXII server indicated more pages but returned no 'next' token - stopping pagination"
+                                    }
+                                }
+                            }
+                            if ($taxiiMorePages -and $taxiiPagesFetched -ge $taxiiMaxPages) {
+                                Write-Warning "TAXII page cap ($taxiiMaxPages) reached - using indicators from the first $taxiiPagesFetched pages"
                             }
                             ($taxiiObjects | ConvertTo-Json -Depth 10) | Set-Content -Path $taxiiCacheFile -ErrorAction Stop
                             $taxiiSource = 'download'
@@ -679,6 +750,8 @@ function Get-ThreatIntelligence {
                     $feedStats += [PSCustomObject]@{
                         Feed = 'TAXII'
                         EntryCount = $taxiiEntriesAdded
+                        ObjectsFetched = if ($null -ne $taxiiObjects) { @($taxiiObjects).Count } else { 0 }
+                        PagesFetched = $taxiiPagesFetched
                         CacheAgeHours = $taxiiCacheAgeHours
                         Source = $taxiiSource
                     }
@@ -850,6 +923,39 @@ function Get-ThreatIntelligence {
                                     break
                                 }
                             }
+                            
+                            # Check against feed-derived email indicators (heuristic: malicious mailboxes can appear in commands)
+                            foreach ($pattern in $iocDatabase.SuspiciousPatterns.EmailIndicators) {
+                                if ($process.CommandLine -match $pattern.Pattern) {
+                                    $match = [PSCustomObject]@{
+                                        Type = 'Process'
+                                        IOCType = 'FeedEmailIndicator'
+                                        Indicator = $pattern.Pattern
+                                        ProcessId = $process.ProcessId
+                                        ProcessName = $process.Name
+                                        CommandLine = if ($process.CommandLine.Length -gt 200) { 
+                                            $process.CommandLine.Substring(0, 200) + "..." 
+                                        } else { 
+                                            $process.CommandLine 
+                                        }
+                                        Severity = $pattern.Severity
+                                        Description = $pattern.Description
+                                        Timestamp = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
+                                    }
+                                    
+                                    $results.Matches.ProcessIOCs += $match
+                                    $foundCount++
+                                    
+                                    switch ($pattern.Severity) {
+                                        'Critical' { $results.Summary.CriticalMatches++ }
+                                        'High' { $results.Summary.HighMatches++ }
+                                        'Medium' { $results.Summary.MediumMatches++ }
+                                    }
+                                    
+                                    Write-Host "  [!] MATCH: Email indicator '$($pattern.Pattern)' in $($process.Name)" -ForegroundColor Red
+                                    break
+                                }
+                            }
                         }
                     }
                     
@@ -996,6 +1102,36 @@ function Get-ThreatIntelligence {
                                         }
                                         
                                         Write-Host "  [!] MATCH: $($file.Name) in suspicious location" -ForegroundColor Yellow
+                                        break
+                                    }
+                                }
+                                
+                                # Check file name against feed-derived filename indicators
+                                foreach ($pattern in $iocDatabase.SuspiciousPatterns.FileNameIndicators) {
+                                    if ($file.Name -match $pattern.Pattern) {
+                                        $match = [PSCustomObject]@{
+                                            Type = 'File'
+                                            IOCType = 'FeedFileNameIndicator'
+                                            Indicator = $pattern.Pattern
+                                            FilePath = $file.FullName
+                                            FileName = $file.Name
+                                            Size = $file.Length
+                                            Created = $file.CreationTime.ToString("yyyy-MM-dd HH:mm:ss")
+                                            Severity = $pattern.Severity
+                                            Description = $pattern.Description
+                                            Timestamp = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
+                                        }
+                                        
+                                        $results.Matches.FileIOCs += $match
+                                        $foundCount++
+                                        
+                                        switch ($pattern.Severity) {
+                                            'Critical' { $results.Summary.CriticalMatches++ }
+                                            'High' { $results.Summary.HighMatches++ }
+                                            'Medium' { $results.Summary.MediumMatches++ }
+                                        }
+                                        
+                                        Write-Host "  [!] MATCH: Filename indicator '$($file.Name)'" -ForegroundColor Red
                                         break
                                     }
                                 }
@@ -1170,7 +1306,11 @@ function Get-ThreatIntelligence {
             Write-Host "`nThreat Intelligence Feeds:" -ForegroundColor Cyan
             foreach ($stat in $results.Summary.FeedStats) {
                 $ageText = if ($null -ne $stat.CacheAgeHours) { "$($stat.CacheAgeHours)h old" } else { 'not cached' }
-                Write-Host "  - $($stat.Feed): $($stat.EntryCount) entries ($($stat.Source), $ageText)" -ForegroundColor Gray
+                $pageText = ''
+                if ($stat.PSObject.Properties['PagesFetched'] -and $null -ne $stat.PagesFetched -and $stat.PagesFetched -gt 0) {
+                    $pageText = ", $($stat.PagesFetched) page(s)"
+                }
+                Write-Host "  - $($stat.Feed): $($stat.EntryCount) entries ($($stat.Source)$pageText, $ageText)" -ForegroundColor Gray
             }
         }
         

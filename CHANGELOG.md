@@ -7,14 +7,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.5.0] - 2026-10-25
+
 ### Added
 
-- `CHANGELOG.md`, `SECURITY.md`, and a PowerShell Gallery publish workflow (`.github/workflows/publish.yml`).
-- Real module manifest metadata (author, license/project URIs, gallery tags) in `WindowsSecurityAudit.psd1`.
+- `Send-SiemEvent`: live streaming of findings to Splunk HEC, Microsoft Sentinel (HMAC-SHA256 SharedKey signature), or generic webhooks, with batching and exponential-backoff retries; `Export-SecurityReport -StreamTo` integration.
+- `Get-SysmonAnalytics`: Sysmon Operational log detections (process chains, network beaconing, image loads, LSASS access, file creates, registry events, DNS).
+- `Get-FileSystemJournal`: USN journal parsing, MFT summary, and heuristic timestomp detection via fsutil.
+- `Invoke-EnterpriseSecurityScan -UseModuleFunctions`: deploys and runs the real module functions on remote hosts (`-RemoteFunctionSet Quick/Standard/Deep`), parallel connectivity probes, per-host timeouts, `-TargetFile` input.
+- Alert deduplication in `Register-ScheduledSecurityScan`: fingerprint state file, New/Persisting/Resolved classification, `-RealertAfterDays`, `-DisableAlertDedup`.
+- TAXII 2.x pagination and MISP attribute expansion to 12 types in `Get-ThreatIntelligence`.
+- `Resolve-CpeName`: curated table grown to ~120 products, vendor version-scheme translation (Java/.NET/Python).
+
+### Security
+
+- Refuse to send SIEM tokens over cleartext HTTP; TLS 1.2 floor in the generated scheduled-scan script; generated scan script ACL-locked to SYSTEM + Administrators (webhook secret protection); remote temp-path validation before remote copy/cleanup; CSV formula-injection escaping in forensic exports.
+
+## [1.4.0] - 2026-10-25
+
+### Added
+
+- `ConvertTo-SiemEvent` and `Export-SecurityReport -Format NDJSON|CEF` (one event per finding) plus `-NoAutoOpen`.
+- `Get-CredentialAccessEvents`: Kerberoasting, TGT anomalies, 4771 spray, golden-ticket heuristic, optional LSASS access monitoring; `Find-SuspiciousAuthentication` 4624 Type 9 and NTLM indicators.
+- `Find-DefenseEvasion`: AMSI/ETW tamper patterns, Defender exclusion/tamper changes, log-clearing attribution, log-gap analysis.
+- `Get-UserActivityArtifacts`: Recycle Bin $I parsing, LNK resolution, JumpList enumeration, Timeline DB copy; `Get-ArtifactCollection` SHA256-at-acquisition, raw registry hives, acquisition log.
+- `CHANGELOG.md`, `SECURITY.md`, gallery publish workflow, real manifest metadata.
 
 ### Changed
 
-- `Get-CloudComplianceStatus` no longer reports fabricated `Compliant`/`Non-Compliant` results. Controls are returned with `Status = 'NotEvaluated'` until framework-specific Microsoft Graph/API evaluation is implemented, and the compliance score is `$null` when no controls were actually evaluated.
+- `Get-CloudComplianceStatus` no longer fabricates compliance statuses (honest NotEvaluated).
+- ~30 zero-defect audit fixes across all modules (strict-mode scalar counts, ROT13 decoder, DCSync whitelist, event indexes, ShouldProcess coverage, localization-safe account lookups).
 
 ## [1.3.0] - 2026-10-25
 

@@ -234,6 +234,11 @@ Describe 'Threat Intelligence and CVE Integration' {
             $parameterNames = @($help.parameters.parameter | ForEach-Object { $_.Name })
             foreach ($expected in 'UpdateFeeds', 'FeedCachePath', 'FeedMaxAgeHours', 'MaxFeedEntries', 'AbuseIPDBApiKey') {
                 $parameterNames | Should -Contain $expected
+                # Get-Help derives a bare parameter list from the param block even without
+                # comment-based help, so assert the .PARAMETER text itself is present
+                $helpParameter = @($help.parameters.parameter | Where-Object { $_.Name -eq $expected })[0]
+                @($helpParameter.description | Where-Object { $null -ne $_ -and -not [string]::IsNullOrWhiteSpace("$($_.Text)") }).Count |
+                    Should -BeGreaterThan 0 -Because 'the parameter must carry comment-based help text, not just exist in the param block'
             }
         }
 
@@ -242,6 +247,11 @@ Describe 'Threat Intelligence and CVE Integration' {
             $parameterNames = @($help.parameters.parameter | ForEach-Object { $_.Name })
             foreach ($expected in 'CheckCVEs', 'NVDApiKey', 'MaxCVEChecks') {
                 $parameterNames | Should -Contain $expected
+                # Get-Help derives a bare parameter list from the param block even without
+                # comment-based help, so assert the .PARAMETER text itself is present
+                $helpParameter = @($help.parameters.parameter | Where-Object { $_.Name -eq $expected })[0]
+                @($helpParameter.description | Where-Object { $null -ne $_ -and -not [string]::IsNullOrWhiteSpace("$($_.Text)") }).Count |
+                    Should -BeGreaterThan 0 -Because 'the parameter must carry comment-based help text, not just exist in the param block'
             }
         }
     }
@@ -297,6 +307,11 @@ Describe 'v1.3 Features' {
             $parameterNames = @($help.parameters.parameter | ForEach-Object { $_.Name })
             foreach ($expected in 'MISPUrl', 'MISPApiKey', 'TaxiiServerUrl', 'TaxiiCollection', 'StixFilePath') {
                 $parameterNames | Should -Contain $expected
+                # Get-Help derives a bare parameter list from the param block even without
+                # comment-based help, so assert the .PARAMETER text itself is present
+                $helpParameter = @($help.parameters.parameter | Where-Object { $_.Name -eq $expected })[0]
+                @($helpParameter.description | Where-Object { $null -ne $_ -and -not [string]::IsNullOrWhiteSpace("$($_.Text)") }).Count |
+                    Should -BeGreaterThan 0 -Because 'the parameter must carry comment-based help text, not just exist in the param block'
             }
         }
 
@@ -305,6 +320,11 @@ Describe 'v1.3 Features' {
             $parameterNames = @($help.parameters.parameter | ForEach-Object { $_.Name })
             foreach ($expected in 'UseOnlineLookup', 'ApiKey') {
                 $parameterNames | Should -Contain $expected
+                # Get-Help derives a bare parameter list from the param block even without
+                # comment-based help, so assert the .PARAMETER text itself is present
+                $helpParameter = @($help.parameters.parameter | Where-Object { $_.Name -eq $expected })[0]
+                @($helpParameter.description | Where-Object { $null -ne $_ -and -not [string]::IsNullOrWhiteSpace("$($_.Text)") }).Count |
+                    Should -BeGreaterThan 0 -Because 'the parameter must carry comment-based help text, not just exist in the param block'
             }
         }
 
@@ -313,6 +333,11 @@ Describe 'v1.3 Features' {
             $parameterNames = @($help.parameters.parameter | ForEach-Object { $_.Name })
             foreach ($expected in 'MaxSeverity', 'GenerateRollback', 'AssessmentPath', 'InputObject') {
                 $parameterNames | Should -Contain $expected
+                # Get-Help derives a bare parameter list from the param block even without
+                # comment-based help, so assert the .PARAMETER text itself is present
+                $helpParameter = @($help.parameters.parameter | Where-Object { $_.Name -eq $expected })[0]
+                @($helpParameter.description | Where-Object { $null -ne $_ -and -not [string]::IsNullOrWhiteSpace("$($_.Text)") }).Count |
+                    Should -BeGreaterThan 0 -Because 'the parameter must carry comment-based help text, not just exist in the param block'
             }
         }
     }
@@ -418,6 +443,11 @@ Describe 'v1.4 Features' {
             $parameterNames = @($help.parameters.parameter | ForEach-Object { $_.Name })
             foreach ($expected in 'Format', 'HostName') {
                 $parameterNames | Should -Contain $expected
+                # Get-Help derives a bare parameter list from the param block even without
+                # comment-based help, so assert the .PARAMETER text itself is present
+                $helpParameter = @($help.parameters.parameter | Where-Object { $_.Name -eq $expected })[0]
+                @($helpParameter.description | Where-Object { $null -ne $_ -and -not [string]::IsNullOrWhiteSpace("$($_.Text)") }).Count |
+                    Should -BeGreaterThan 0 -Because 'the parameter must carry comment-based help text, not just exist in the param block'
             }
         }
 
@@ -426,6 +456,11 @@ Describe 'v1.4 Features' {
             $parameterNames = @($help.parameters.parameter | ForEach-Object { $_.Name })
             foreach ($expected in 'Hours', 'IncludeLSASSAccess') {
                 $parameterNames | Should -Contain $expected
+                # Get-Help derives a bare parameter list from the param block even without
+                # comment-based help, so assert the .PARAMETER text itself is present
+                $helpParameter = @($help.parameters.parameter | Where-Object { $_.Name -eq $expected })[0]
+                @($helpParameter.description | Where-Object { $null -ne $_ -and -not [string]::IsNullOrWhiteSpace("$($_.Text)") }).Count |
+                    Should -BeGreaterThan 0 -Because 'the parameter must carry comment-based help text, not just exist in the param block'
             }
         }
 
@@ -434,6 +469,11 @@ Describe 'v1.4 Features' {
             $parameterNames = @($help.parameters.parameter | ForEach-Object { $_.Name })
             foreach ($expected in 'Hours', 'IncludeLogGapAnalysis') {
                 $parameterNames | Should -Contain $expected
+                # Get-Help derives a bare parameter list from the param block even without
+                # comment-based help, so assert the .PARAMETER text itself is present
+                $helpParameter = @($help.parameters.parameter | Where-Object { $_.Name -eq $expected })[0]
+                @($helpParameter.description | Where-Object { $null -ne $_ -and -not [string]::IsNullOrWhiteSpace("$($_.Text)") }).Count |
+                    Should -BeGreaterThan 0 -Because 'the parameter must carry comment-based help text, not just exist in the param block'
             }
         }
 
@@ -442,6 +482,11 @@ Describe 'v1.4 Features' {
             $parameterNames = @($help.parameters.parameter | ForEach-Object { $_.Name })
             foreach ($expected in 'UserProfile', 'OutputPath') {
                 $parameterNames | Should -Contain $expected
+                # Get-Help derives a bare parameter list from the param block even without
+                # comment-based help, so assert the .PARAMETER text itself is present
+                $helpParameter = @($help.parameters.parameter | Where-Object { $_.Name -eq $expected })[0]
+                @($helpParameter.description | Where-Object { $null -ne $_ -and -not [string]::IsNullOrWhiteSpace("$($_.Text)") }).Count |
+                    Should -BeGreaterThan 0 -Because 'the parameter must carry comment-based help text, not just exist in the param block'
             }
         }
 
@@ -493,6 +538,169 @@ Describe 'v1.4 Features' {
             $Path = Join-Path -Path $script:ModuleRoot -ChildPath 'Forensics/Get-UserActivityArtifacts.ps1'
             $content = Get-Content -Path $Path -Raw
             $content.Contains('Timestamp = Get-Date') | Should -BeFalse -Because 'artifact timestamps must come from the evidence (FILETIME, file metadata), never from the scan time'
+        }
+    }
+}
+
+Describe 'v1.5 Features' {
+    Context 'Comment-based help for new parameters' {
+        It 'Send-SiemEvent help documents the streaming parameters' {
+            $help = Get-Help -Name 'Send-SiemEvent' -Full
+            $parameterNames = @($help.parameters.parameter | ForEach-Object { $_.Name })
+            foreach ($expected in 'Destination', 'Uri', 'BatchSize', 'MaxRetries') {
+                $parameterNames | Should -Contain $expected
+                # Get-Help derives a bare parameter list from the param block even without
+                # comment-based help, so assert the .PARAMETER text itself is present
+                $helpParameter = @($help.parameters.parameter | Where-Object { $_.Name -eq $expected })[0]
+                @($helpParameter.description | Where-Object { $null -ne $_ -and -not [string]::IsNullOrWhiteSpace("$($_.Text)") }).Count |
+                    Should -BeGreaterThan 0 -Because 'the parameter must carry comment-based help text, not just exist in the param block'
+            }
+        }
+
+        It 'Get-SysmonAnalytics help documents Hours, EventTypes and MaxEvents' {
+            $help = Get-Help -Name 'Get-SysmonAnalytics' -Full
+            $parameterNames = @($help.parameters.parameter | ForEach-Object { $_.Name })
+            foreach ($expected in 'Hours', 'EventTypes', 'MaxEvents') {
+                $parameterNames | Should -Contain $expected
+                # Get-Help derives a bare parameter list from the param block even without
+                # comment-based help, so assert the .PARAMETER text itself is present
+                $helpParameter = @($help.parameters.parameter | Where-Object { $_.Name -eq $expected })[0]
+                @($helpParameter.description | Where-Object { $null -ne $_ -and -not [string]::IsNullOrWhiteSpace("$($_.Text)") }).Count |
+                    Should -BeGreaterThan 0 -Because 'the parameter must carry comment-based help text, not just exist in the param block'
+            }
+        }
+
+        It 'Get-FileSystemJournal help documents Mode, DriveLetter and MaxRecords' {
+            $help = Get-Help -Name 'Get-FileSystemJournal' -Full
+            $parameterNames = @($help.parameters.parameter | ForEach-Object { $_.Name })
+            foreach ($expected in 'Mode', 'DriveLetter', 'MaxRecords') {
+                $parameterNames | Should -Contain $expected
+                # Get-Help derives a bare parameter list from the param block even without
+                # comment-based help, so assert the .PARAMETER text itself is present
+                $helpParameter = @($help.parameters.parameter | Where-Object { $_.Name -eq $expected })[0]
+                @($helpParameter.description | Where-Object { $null -ne $_ -and -not [string]::IsNullOrWhiteSpace("$($_.Text)") }).Count |
+                    Should -BeGreaterThan 0 -Because 'the parameter must carry comment-based help text, not just exist in the param block'
+            }
+        }
+
+        It 'Invoke-EnterpriseSecurityScan help documents the remote deployment parameters' {
+            $help = Get-Help -Name 'Invoke-EnterpriseSecurityScan' -Full
+            $parameterNames = @($help.parameters.parameter | ForEach-Object { $_.Name })
+            foreach ($expected in 'UseModuleFunctions', 'RemoteFunctionSet', 'HostTimeoutSec', 'ProbeTimeoutSec', 'TargetFile') {
+                $parameterNames | Should -Contain $expected
+                # Get-Help derives a bare parameter list from the param block even without
+                # comment-based help, so assert the .PARAMETER text itself is present
+                $helpParameter = @($help.parameters.parameter | Where-Object { $_.Name -eq $expected })[0]
+                @($helpParameter.description | Where-Object { $null -ne $_ -and -not [string]::IsNullOrWhiteSpace("$($_.Text)") }).Count |
+                    Should -BeGreaterThan 0 -Because 'the parameter must carry comment-based help text, not just exist in the param block'
+            }
+        }
+
+        It 'Register-ScheduledSecurityScan help documents the alert dedup parameters' {
+            $help = Get-Help -Name 'Register-ScheduledSecurityScan' -Full
+            $parameterNames = @($help.parameters.parameter | ForEach-Object { $_.Name })
+            foreach ($expected in 'RealertAfterDays', 'DisableAlertDedup') {
+                $parameterNames | Should -Contain $expected
+                # Get-Help derives a bare parameter list from the param block even without
+                # comment-based help, so assert the .PARAMETER text itself is present
+                $helpParameter = @($help.parameters.parameter | Where-Object { $_.Name -eq $expected })[0]
+                @($helpParameter.description | Where-Object { $null -ne $_ -and -not [string]::IsNullOrWhiteSpace("$($_.Text)") }).Count |
+                    Should -BeGreaterThan 0 -Because 'the parameter must carry comment-based help text, not just exist in the param block'
+            }
+        }
+
+        It 'Export-SecurityReport help documents the SIEM streaming parameters' {
+            $help = Get-Help -Name 'Export-SecurityReport' -Full
+            $parameterNames = @($help.parameters.parameter | ForEach-Object { $_.Name })
+            foreach ($expected in 'StreamTo', 'StreamUri') {
+                $parameterNames | Should -Contain $expected
+                # Get-Help derives a bare parameter list from the param block even without
+                # comment-based help, so assert the .PARAMETER text itself is present
+                $helpParameter = @($help.parameters.parameter | Where-Object { $_.Name -eq $expected })[0]
+                @($helpParameter.description | Where-Object { $null -ne $_ -and -not [string]::IsNullOrWhiteSpace("$($_.Text)") }).Count |
+                    Should -BeGreaterThan 0 -Because 'the parameter must carry comment-based help text, not just exist in the param block'
+            }
+        }
+    }
+
+    Context 'Static safety checks' {
+        # -ForEach data must exist at discovery time, so relative paths are used
+        # here and resolved against $script:ModuleRoot (set in BeforeAll) at runtime
+        It 'Send-SiemEvent never interpolates the token into Write-Host or Write-Verbose output' {
+            $Path = Join-Path -Path $script:ModuleRoot -ChildPath 'Response/Send-SiemEvent.ps1'
+            $result = Get-ScriptFileAst -Path $Path
+            $loggingCommands = @($result.Ast.FindAll({
+                param($node)
+                $node -is [System.Management.Automation.Language.CommandAst]
+            }, $true) | Where-Object {
+                $commandName = $_.GetCommandName()
+                $commandName -eq 'Write-Host' -or $commandName -eq 'Write-Verbose'
+            })
+
+            # A direct "$Token" interpolation shows up as a VariableExpressionAst
+            # in the string's NestedExpressions. The masked form
+            # "$(ConvertTo-MaskedToken -Secret $Token)" is a SubExpressionAst node
+            # and never emits the token itself
+            $leaks = @()
+            foreach ($command in $loggingCommands) {
+                $strings = @($command.FindAll({
+                    param($node)
+                    $node -is [System.Management.Automation.Language.StringConstantExpressionAst] -and
+                    $node.StringConstantType -eq [System.Management.Automation.Language.StringConstantType]::DoubleQuoted
+                }, $true))
+                foreach ($string in $strings) {
+                    $leaks += @($string.NestedExpressions | Where-Object {
+                        $_ -is [System.Management.Automation.Language.VariableExpressionAst] -and
+                        $_.VariablePath.UserPath -match '(?i)(token|secret|sharedkey)'
+                    })
+                }
+                # A bare variable argument (Write-Host $Token) contains no double-quoted
+                # string at all, so it must be caught at the command-element level
+                $leaks += @($command.CommandElements | Where-Object {
+                    $_ -is [System.Management.Automation.Language.VariableExpressionAst] -and
+                    $_.VariablePath.UserPath -match '(?i)(token|secret|sharedkey)'
+                })
+            }
+            $leaks.Count | Should -Be 0 -Because 'SIEM tokens must be masked before they reach any log output'
+        }
+
+        It '<_> contains no hardcoded keys, secrets, tokens or passwords' -ForEach @(
+            'Response/Send-SiemEvent.ps1'
+            'Detection/Get-SysmonAnalytics.ps1'
+            'Forensics/Get-FileSystemJournal.ps1'
+        ) {
+            $Path = Join-Path -Path $script:ModuleRoot -ChildPath $_
+            $result = Get-ScriptFileAst -Path $Path
+            $assignments = @($result.Ast.FindAll({
+                param($node)
+                $node -is [System.Management.Automation.Language.AssignmentStatementAst]
+            }, $true))
+
+            $hardcoded = @($assignments | Where-Object {
+                $_.Left -is [System.Management.Automation.Language.VariableExpressionAst] -and
+                $_.Left.VariablePath.UserPath -match '(?i)(key|secret|token|password)' -and
+                $_.Right -is [System.Management.Automation.Language.StringConstantExpressionAst] -and
+                -not [string]::IsNullOrWhiteSpace($_.Right.Value)
+            })
+            $hardcoded.Count | Should -Be 0 -Because 'credentials must come from parameters, never from string literals'
+        }
+
+        It 'Get-SysmonAnalytics attaches a Technique property to findings' {
+            $Path = Join-Path -Path $script:ModuleRoot -ChildPath 'Detection/Get-SysmonAnalytics.ps1'
+            $content = Get-Content -Path $Path -Raw
+            $content | Should -Match 'Technique'
+        }
+
+        It 'Get-FileSystemJournal labels timestomp detection as a heuristic' {
+            $Path = Join-Path -Path $script:ModuleRoot -ChildPath 'Forensics/Get-FileSystemJournal.ps1'
+            $content = Get-Content -Path $Path -Raw
+            $content | Should -Match 'euristic'
+        }
+
+        It 'Register-ScheduledSecurityScan embeds the fingerprint state logic in the scan script' {
+            $Path = Join-Path -Path $script:ModuleRoot -ChildPath 'Enterprise/Register-ScheduledSecurityScan.ps1'
+            $content = Get-Content -Path $Path -Raw
+            $content | Should -Match 'last-findings'
         }
     }
 }
