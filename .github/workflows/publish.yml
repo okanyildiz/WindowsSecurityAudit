@@ -40,11 +40,16 @@ jobs:
           Write-Host "Manifest OK: $($manifest.Name) $($manifest.Version)"
 
       - name: Publish to PowerShell Gallery
-        # IMPORTANT: this step requires a repository secret named PSGALLERY_API_KEY
-        # containing a PowerShell Gallery API key scoped to this module. Create it
-        # under Settings > Secrets and variables > Actions in the repository.
-        # Without the secret this step fails; the key is never logged.
+        # Publish only when the PSGALLERY_API_KEY repository secret exists;
+        # without it the run ends green with a notice instead of a red failure.
+        # Create the key under Settings > Secrets and variables > Actions.
         shell: pwsh
+        env:
+          PSGALLERY_API_KEY: ${{ secrets.PSGALLERY_API_KEY }}
         run: |
-          Publish-Module -Path . -NuGetApiKey ${{ secrets.PSGALLERY_API_KEY }} -ErrorAction Stop
+          if ([string]::IsNullOrEmpty($env:PSGALLERY_API_KEY)) {
+            Write-Host "::notice::PSGALLERY_API_KEY secret is not configured - skipping gallery publish. Tests and manifest validation passed."
+            exit 0
+          }
+          Publish-Module -Path . -NuGetApiKey $env:PSGALLERY_API_KEY -ErrorAction Stop
           Write-Host "Published WindowsSecurityAudit to the PowerShell Gallery."
