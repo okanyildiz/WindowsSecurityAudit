@@ -5,11 +5,11 @@
 [![PowerShell](https://img.shields.io/badge/PowerShell-5.1%2B-blue.svg)](https://github.com/PowerShell/PowerShell)
 [![Windows](https://img.shields.io/badge/Windows-10%2F11%2FServer%202016%2B-blue.svg)](https://www.microsoft.com/windows)
 [![License](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
-[![Version](https://img.shields.io/badge/Version-1.1.0-orange.svg)](https://github.com/okanyildiz/WindowsSecurityAudit/releases)
-[![Functions](https://img.shields.io/badge/Functions-62-brightgreen.svg)](https://github.com/okanyildiz/WindowsSecurityAudit)
+[![Version](https://img.shields.io/badge/Version-1.2.0-orange.svg)](https://github.com/okanyildiz/WindowsSecurityAudit/releases)
+[![Functions](https://img.shields.io/badge/Functions-63-brightgreen.svg)](https://github.com/okanyildiz/WindowsSecurityAudit)
 [![Modules](https://img.shields.io/badge/Modules-14-blue.svg)](https://github.com/okanyildiz/WindowsSecurityAudit)
 [![CI](https://github.com/okanyildiz/WindowsSecurityAudit/actions/workflows/ci.yml/badge.svg)](https://github.com/okanyildiz/WindowsSecurityAudit/actions/workflows/ci.yml)
-[![Tests](https://img.shields.io/badge/Tests-318%20Passed-brightgreen.svg)](https://github.com/okanyildiz/WindowsSecurityAudit/blob/main/tests/WindowsSecurityAudit.Tests.ps1)
+[![Tests](https://img.shields.io/badge/Tests-333%20Passed-brightgreen.svg)](https://github.com/okanyildiz/WindowsSecurityAudit/blob/main/tests/WindowsSecurityAudit.Tests.ps1)
 [![Downloads](https://img.shields.io/badge/Downloads-50K%2B-success.svg)](https://github.com/okanyildiz/WindowsSecurityAudit)
 
 [![GitHub stars](https://img.shields.io/github/stars/okanyildiz/WindowsSecurityAudit)](https://github.com/okanyildiz/WindowsSecurityAudit/stargazers)
@@ -20,15 +20,34 @@
 
 **🎯 Zero Dependencies • 🚀 Production Ready • 🌍 Community Driven • 💼 Enterprise Tested**
 
-[What's New](#-whats-new-in-v110) • [Features](#-why-windows-security-audit-module) • [Installation](#-installation) • [Quick Start](#-quick-start) • [Support](#-support--contact)
+[What's New](#-whats-new) • [Features](#-why-windows-security-audit-module) • [Installation](#-installation) • [Quick Start](#-quick-start) • [Support](#-support--contact)
 
 </div>
 
 ---
 
-## ✨ What's New in v1.1.0
+## ✨ What's New
 
-**4 new functions** — bringing the toolkit to **62 functions across 14 modules**:
+### 🆕 v1.2.0 — Live Threat Feeds & Real CVE Integration
+
+**1 new function** — bringing the toolkit to **63 functions across 14 modules**:
+
+| Function | Module | What It Does |
+|----------|--------|--------------|
+| **`Get-NVDCveData`** | Vulnerability | Query the **NVD API 2.0** by keyword or CPE name and get normalized CVE objects (ID, severity, CVSS score, dates, references) — with pagination, rate-limit handling and optional API key for higher limits |
+
+**Wired-up parameters on existing functions:**
+
+- `Get-VulnerabilityAssessment -CheckCVEs -NVDApiKey -MaxCVEChecks` — match installed software against **real NVD CVE data** (keyword-based candidate matching, capped by `-MaxCVEChecks`, default 10); matched CVEs attach as `RealCVEs` on each Software item plus summary counts
+- `Get-ThreatIntelligence -UpdateFeeds -FeedCachePath -FeedMaxAgeHours -MaxFeedEntries -AbuseIPDBApiKey` — merge **live abuse.ch feeds** (URLhaus payload URLs, Feodo Tracker C2 IPs) plus the optional **AbuseIPDB** blacklist (with API key) into the IOC database, with freshness-aware caching, offline fallback and per-feed `Summary.FeedStats`
+
+**Quality infrastructure:**
+
+- 🧪 **333 Pester tests** (`tests/WindowsSecurityAudit.Tests.ps1`) covering the public API surface, API-key hygiene, and offline feed behavior
+
+### v1.1.0 — Baseline Drift, Scheduled Scans, ATT&CK Navigator & Consolidated Reports
+
+**4 new functions** added to the toolkit:
 
 | Function | Module | What It Does |
 |----------|--------|--------------|
@@ -47,7 +66,7 @@
 
 **Quality infrastructure:**
 
-- 🧪 **318 Pester tests** (`tests/WindowsSecurityAudit.Tests.ps1`) covering the public API surface
+- 🧪 **Pester test suite** (`tests/WindowsSecurityAudit.Tests.ps1`) covering the public API surface (now 333 tests)
 - ⚙️ **GitHub Actions CI** (`.github/workflows/ci.yml`) on windows-latest: PSScriptAnalyzer Error gate, module import verified under both **PowerShell 7 (pwsh)** and **Windows PowerShell 5.1**, plus the full Pester suite
 
 ### 📦 Already in the Toolbox (v1.0.0)
@@ -88,7 +107,7 @@ If you find this tool valuable for your security operations, consider supporting
 
 In today's rapidly evolving threat landscape, organizations face unprecedented challenges in maintaining robust security postures across their Windows infrastructure. Traditional security tools often fall short, requiring multiple expensive licenses, complex integrations, and specialized expertise. The **Windows Security Audit Module** emerges as a game-changing solution, offering enterprise-grade security capabilities through a unified, open-source PowerShell framework.
 
-This comprehensive toolkit represents over 3 years of development, incorporating real-world insights from securing Fortune 500 environments, government agencies, and critical infrastructure. With 62 meticulously crafted functions organized into 14 specialized modules, it delivers capabilities typically found only in solutions costing $50,000+ annually - completely free and open source.
+This comprehensive toolkit represents over 3 years of development, incorporating real-world insights from securing Fortune 500 environments, government agencies, and critical infrastructure. With 63 meticulously crafted functions organized into 14 specialized modules, it delivers capabilities typically found only in solutions costing $50,000+ annually - completely free and open source.
 
 ### 🎯 The Vision
 
@@ -138,7 +157,7 @@ A single, cohesive PowerShell module that consolidates essential security functi
 </tr>
 <tr>
 <td><strong>Functions</strong></td>
-<td>✅ 62 Comprehensive</td>
+<td>✅ 63 Comprehensive</td>
 <td>⚠️ 20-30 Limited</td>
 <td>⚠️ 5-15 Basic</td>
 </tr>
@@ -259,7 +278,7 @@ WindowsSecurityAudit/
 │   ├── Invoke-ForensicCollection.ps1
 │   └── Invoke-IncidentResponse.ps1
 │
-├── 📁 tests/                           # Pester tests (318 tests)
+├── 📁 tests/                           # Pester tests (333 tests)
 │   └── WindowsSecurityAudit.Tests.ps1
 │
 ├── 📁 ThreatHunting/                   # Threat Hunting (7 functions)
@@ -271,9 +290,10 @@ WindowsSecurityAudit/
 │   ├── Get-MITREAttackMapping.ps1
 │   └── Get-ThreatIntelligence.ps1
 │
-├── 📁 Vulnerability/                   # Vulnerability Management (6 functions)
+├── 📁 Vulnerability/                   # Vulnerability Management (7 functions)
 │   ├── Find-EOLSoftware.ps1
 │   ├── Get-ExposedServices.ps1
+│   ├── Get-NVDCveData.ps1
 │   ├── Get-SecurityMisconfigurations.ps1
 │   ├── Get-VulnerabilityAssessment.ps1
 │   ├── Test-CertificateHealth.ps1
@@ -320,7 +340,7 @@ Install-Module -Name WindowsSecurityAudit -Scope CurrentUser -Force
 # Import the module
 Import-Module WindowsSecurityAudit
 
-# Verify installation - should return 62
+# Verify installation - should return 63
 (Get-Command -Module WindowsSecurityAudit).Count
 ```
 
@@ -421,6 +441,17 @@ $report | Export-SecurityReport -Format HTML -Path "C:\SecurityReports"
 
 # Open report
 Start-Process "C:\SecurityReports\SecurityReport.html"
+```
+
+### Real CVEs & Live Threat Feeds (New in v1.2.0)
+```powershell
+# Match installed software against real NVD CVE data
+# (keyword-based candidate matching; add -NVDApiKey for higher rate limits)
+Get-VulnerabilityAssessment -CheckCVEs -NVDApiKey $key
+
+# Pull live abuse.ch feeds (URLhaus + Feodo Tracker) and check network
+# connections against them; add -AbuseIPDBApiKey to include AbuseIPDB
+Get-ThreatIntelligence -CheckNetwork -UpdateFeeds
 ```
 
 ### One Report to Rule Them All (New in v1.1.0)
@@ -547,7 +578,7 @@ The Threat Hunting module provides proactive threat detection capabilities using
 | **`Find-LateralMovement`** | Tracks attacker movement between systems | • RDP session analysis<br>• SMB connection monitoring<br>• WMI activity tracking<br>• PSRemoting detection<br>• Service creation<br>• Scheduled task deployment | Network propagation<br>Privilege escalation<br>Domain compromise |
 | **`Find-LivingOffLand`** | Detects abuse of legitimate tools | • PowerShell exploitation<br>• WMI weaponization<br>• LOLBins detection<br>• Script host abuse<br>• Certutil misuse<br>• Mshta execution | Fileless attacks<br>Evasion techniques<br>Stealth persistence |
 | **`Get-MITREAttackMapping`** | Maps findings to ATT&CK framework | • Technique classification<br>• Tactic identification<br>• Kill chain mapping<br>• Detection gap analysis<br>• Priority scoring<br>• Coverage reporting | Framework alignment<br>Gap identification<br>Defense planning |
-| **`Get-ThreatIntelligence`** | Analyzes threat intelligence indicators | • IOC matching<br>• Threat feed integration<br>• Reputation checking<br>• Hash validation<br>• Domain analysis<br>• IP geolocation | Known threats<br>Emerging campaigns<br>Zero-day indicators |
+| **`Get-ThreatIntelligence`** | Analyzes threat intelligence indicators | • IOC matching<br>• Live threat feeds (URLhaus, Feodo Tracker, AbuseIPDB)<br>• Feed caching with freshness fallback<br>• Reputation checking<br>• Hash validation<br>• Domain analysis<br>• IP geolocation | Known threats<br>Emerging campaigns<br>Zero-day indicators |
 | **`Export-AttackNavigatorLayer`** | Exports findings as a MITRE ATT&CK Navigator layer | • Navigator layer JSON v4.x<br>• Severity-based scoring and colors<br>• Detection count aggregation<br>• Evidence embedded in comments<br>• Pipeline input from hunting functions<br>• Output validation | ATT&CK Navigator<br>visualization |
 
 ---
@@ -581,13 +612,14 @@ The Active Directory module provides specialized security assessment for AD envi
 
 ---
 
-### 1️⃣1️⃣ Vulnerability Module (6 Functions)
+### 1️⃣1️⃣ Vulnerability Module (7 Functions)
 
 The Vulnerability module identifies, assesses, and prioritizes security weaknesses across the environment, providing actionable remediation guidance based on exploitability and business impact.
 
 | Function | Purpose | Assessment Areas | Priority Scoring |
 |----------|---------|------------------|------------------|
-| **`Get-VulnerabilityAssessment`** | Comprehensive vulnerability scanning | • CVE identification<br>• CVSS scoring (v3.1)<br>• Exploit availability (EPSS)<br>• Patch availability<br>• Workaround options<br>• Asset criticality | Critical: CVSS 9.0+<br>High: CVSS 7.0-8.9<br>Medium: CVSS 4.0-6.9<br>Low: CVSS 0-3.9 |
+| **`Get-VulnerabilityAssessment`** | Comprehensive vulnerability scanning | • CVE identification<br>• Real NVD CVE matching (`-CheckCVEs`)<br>• CVSS scoring (v3.1)<br>• Exploit availability (EPSS)<br>• Patch availability<br>• Workaround options<br>• Asset criticality | Critical: CVSS 9.0+<br>High: CVSS 7.0-8.9<br>Medium: CVSS 4.0-6.9<br>Low: CVSS 0-3.9 |
+| **`Get-NVDCveData`** | Queries the NVD API 2.0 for real CVE data | • Keyword or CPE 2.3 name search<br>• Normalized CVE objects (ID, description, references)<br>• CVSS v3.1/v3.0/v2 severity and score<br>• Automatic pagination<br>• NVD rate-limit handling<br>• Optional API key for higher limits | CVSS base severity<br>(Critical/High/Medium/Low) |
 | **`Get-SecurityMisconfigurations`** | Identifies configuration weaknesses | • Weak file permissions<br>• Default credentials<br>• Open network shares<br>• Service account issues<br>• Registry permissions<br>• Group Policy gaps | Exploitability rating<br>Impact assessment<br>Fix complexity |
 | **`Find-EOLSoftware`** | Detects unsupported software | • End-of-life products<br>• Unsupported versions<br>• Legacy applications<br>• Missing security updates<br>• Vendor bulletins<br>• Migration paths | Support status<br>Risk exposure<br>Upgrade options |
 | **`Get-ExposedServices`** | Maps attack surface | • Internet-facing services<br>• Weak protocols (SMBv1, TLS 1.0)<br>• Default configurations<br>• Unnecessary services<br>• Port exposure<br>• Authentication methods | External exposure<br>Protocol weaknesses<br>Access controls |
@@ -687,7 +719,7 @@ The Reporting module transforms raw security data into actionable intelligence t
 
 ### Community Edition - Forever FREE
 - ✅ **Price**: 100% FREE - No hidden costs
-- ✅ **Functions**: All 62 functions included
+- ✅ **Functions**: All 63 functions included
 - ✅ **Source Code**: Full access on GitHub
 - ✅ **Updates**: Regular security updates
 - ✅ **License**: MIT (commercial use allowed)

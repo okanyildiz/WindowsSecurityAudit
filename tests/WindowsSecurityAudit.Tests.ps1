@@ -155,3 +155,131 @@ Describe 'Static safety checks' {
         $badCommands.Count | Should -Be 0
     }
 }
+
+Describe 'Threat Intelligence and CVE Integration' {
+    # Get-NVDCveData export and its .SYNOPSIS/.EXAMPLE help are already covered
+    # dynamically by the data-driven Describes above (they iterate every .ps1
+    # file on disk), so only the gaps are tested here.
+    # -ForEach data must exist at discovery time, so relative paths are used
+    # here and resolved against $script:ModuleRoot (set in BeforeAll) at runtime
+    Context 'API key handling' {
+        It '<_> never interpolates an API key value into Write-Host or Write-Verbose output' -ForEach @(
+            'Vulnerability/Get-NVDCveData.ps1'
+            'ThreatHunting/Get-ThreatIntelligence.ps1'
+        ) {
+            $Path = Join-Path -Path $script:ModuleRoot -ChildPath $_
+            $result = Get-ScriptFileAst -Path $Path
+            $loggingCommands = @($result.Ast.FindAll({
+                param($node)
+                $node -is [System.Management.Automation.Language.CommandAst]
+            }, $true) | Where-Object {
+                $commandName = $_.GetCommandName()
+                $commandName -eq 'Write-Host' -or $commandName -eq 'Write-Verbose'
+            })
+
+            # A direct "$variable" interpolation shows up as a VariableExpressionAst
+            # in the string's NestedExpressions. Values referenced only inside a
+            # $(...) subexpression (e.g. "$(if($ApiKey){'Provided'}else{...})")
+            # are SubExpressionAst nodes and never emit the key itself
+            $leaks = @()
+            foreach ($command in $loggingCommands) {
+                $strings = @($command.FindAll({
+                    param($node)
+                    $node -is [System.Management.Automation.Language.StringConstantExpressionAst] -and
+                    $node.StringConstantType -eq [System.Management.Automation.Language.StringConstantType]::DoubleQuoted
+                }, $true))
+                foreach ($string in $strings) {
+                    $leaks += @($string.NestedExpressions | Where-Object {
+                        $_ -is [System.Management.Automation.Language.VariableExpressionAst] -and
+                        $_.VariablePath.UserPath -match '(?i)(apikey|secret|token|^key$|api_key)'
+                    })
+                }
+            }
+            $leaks.Count | Should -Be 0 -Because 'API keys must only travel in request headers, never in log output'
+        }
+
+        It '<_> enforces TLS 1.2 before making network calls' -ForEach @(
+            'Vulnerability/Get-NVDCveData.ps1'
+            'ThreatHunting/Get-ThreatIntelligence.ps1'
+        ) {
+            $Path = Join-Path -Path $script:ModuleRoot -ChildPath $_
+            $content = Get-Content -Path $Path -Raw
+            $content | Should -Match 'Tls12'
+        }
+
+        It '<_> contains no hardcoded API keys or secrets' -ForEach @(
+            'Vulnerability/Get-NVDCveData.ps1'
+            'ThreatHunting/Get-ThreatIntelligence.ps1'
+        ) {
+            $Path = Join-Path -Path $script:ModuleRoot -ChildPath $_
+            $result = Get-ScriptFileAst -Path $Path
+            $assignments = @($result.Ast.FindAll({
+                param($node)
+                $node -is [System.Management.Automation.Language.AssignmentStatementAst]
+            }, $true))
+
+            $hardcoded = @($assignments | Where-Object {
+                $_.Left -is [System.Management.Automation.Language.VariableExpressionAst] -and
+                $_.Left.VariablePath.UserPath -match '(?i)(apikey|secret|token|password|api_key)' -and
+                $_.Right -is [System.Management.Automation.Language.StringConstantExpressionAst] -and
+                -not [string]::IsNullOrWhiteSpace($_.Right.Value)
+            })
+            $hardcoded.Count | Should -Be 0 -Because 'credentials must come from parameters, never from string literals'
+        }
+    }
+
+    Context 'Comment-based help for new parameters' {
+        It 'Get-ThreatIntelligence help documents the live feed parameters' {
+            $help = Get-Help -Name 'Get-ThreatIntelligence' -Full
+            $parameterNames = @($help.parameters.parameter | ForEach-Object { $_.Name })
+            foreach ($expected in 'UpdateFeeds', 'FeedCachePath', 'FeedMaxAgeHours', 'MaxFeedEntries', 'AbuseIPDBApiKey') {
+                $parameterNames | Should -Contain $expected
+            }
+        }
+
+        It 'Get-VulnerabilityAssessment help documents the NVD CVE parameters' {
+            $help = Get-Help -Name 'Get-VulnerabilityAssessment' -Full
+            $parameterNames = @($help.parameters.parameter | ForEach-Object { $_.Name })
+            foreach ($expected in 'CheckCVEs', 'NVDApiKey', 'MaxCVEChecks') {
+                $parameterNames | Should -Contain $expected
+            }
+        }
+    }
+
+    Context 'Offline feed behavior' {
+        BeforeAll {
+            $script:ThreatIntelPath = Join-Path -Path $script:ModuleRoot -ChildPath 'ThreatHunting/Get-ThreatIntelligence.ps1'
+            $script:ThreatIntelAst = (Get-ScriptFileAst -Path $script:ThreatIntelPath).Ast
+            $script:FeedGate = @($script:ThreatIntelAst.FindAll({
+                param($node)
+                $node -is [System.Management.Automation.Language.IfStatementAst]
+            }, $true) | Where-Object {
+                $conditionText = $_.Clauses[0].Item1.Extent.Text
+                $conditionText -match '\$UpdateFeeds' -and
+                $conditionText -match 'Test-Path\s+\$FeedCachePath'
+            })
+        }
+
+        It 'gates live feed processing on -UpdateFeeds or an existing -FeedCachePath' {
+            $script:FeedGate.Count | Should -BeGreaterOrEqual 1 -Because 'feed processing must be skipped entirely when -UpdateFeeds is absent and the cache directory does not exist'
+        }
+
+        It 'keeps feed downloads inside that gate (no network calls when offline)' {
+            $script:FeedGate.Count | Should -BeGreaterOrEqual 1
+            $downloads = @($script:ThreatIntelAst.FindAll({
+                param($node)
+                $node -is [System.Management.Automation.Language.CommandAst]
+            }, $true) | Where-Object {
+                $_.GetCommandName() -eq 'Invoke-WebRequest'
+            })
+            $downloads.Count | Should -BeGreaterOrEqual 1 -Because 'the live feed feature is expected to download feed files'
+            foreach ($download in $downloads) {
+                $insideGate = @($script:FeedGate | Where-Object {
+                    $download.Extent.StartOffset -gt $_.Extent.StartOffset -and
+                    $download.Extent.EndOffset -lt $_.Extent.EndOffset
+                })
+                $insideGate.Count | Should -BeGreaterOrEqual 1 -Because 'Invoke-WebRequest must only run when -UpdateFeeds is set or a feed cache exists'
+            }
+        }
+    }
+}

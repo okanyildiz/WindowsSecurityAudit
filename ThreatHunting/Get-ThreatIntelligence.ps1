@@ -15,9 +15,20 @@ function Get-ThreatIntelligence {
         Check registry against IOCs
     .PARAMETER IOCFile
         Path to custom IOC file (JSON format)
+    .PARAMETER UpdateFeeds
+        Download or refresh live threat intelligence feeds (URLhaus, Feodo Tracker, optional AbuseIPDB)
+    .PARAMETER FeedCachePath
+        Directory used to cache downloaded feed data (default: $env:LOCALAPPDATA\WindowsSecurityAudit\ThreatIntel)
+    .PARAMETER FeedMaxAgeHours
+        Maximum age in hours before a cached feed is downloaded again with -UpdateFeeds (default: 24)
+    .PARAMETER MaxFeedEntries
+        Maximum number of feed-derived indicators merged into the IOC database (default: 5000)
+    .PARAMETER AbuseIPDBApiKey
+        Optional AbuseIPDB API key; enables the AbuseIPDB blacklist feed (sent only as a request header)
     .EXAMPLE
         Get-ThreatIntelligence -CheckProcesses -CheckNetwork
         Get-ThreatIntelligence -CheckProcesses -CheckNetwork -CheckFiles -IOCFile "C:\iocs.json"
+        Get-ThreatIntelligence -CheckNetwork -UpdateFeeds -FeedMaxAgeHours 12
     .OUTPUTS
         PSCustomObject with IOC match results
     #>
@@ -37,7 +48,22 @@ function Get-ThreatIntelligence {
         [switch]$CheckRegistry,
         
         [Parameter()]
-        [string]$IOCFile
+        [string]$IOCFile,
+        
+        [Parameter()]
+        [switch]$UpdateFeeds,
+        
+        [Parameter()]
+        [string]$FeedCachePath = "$env:LOCALAPPDATA\WindowsSecurityAudit\ThreatIntel",
+        
+        [Parameter()]
+        [int]$FeedMaxAgeHours = 24,
+        
+        [Parameter()]
+        [int]$MaxFeedEntries = 5000,
+        
+        [Parameter()]
+        [string]$AbuseIPDBApiKey
     )
     
     begin {
@@ -64,6 +90,7 @@ function Get-ThreatIntelligence {
                 CriticalMatches = 0
                 HighMatches = 0
                 MediumMatches = 0
+                FeedStats = @()
             }
             Recommendations = @()
         }
@@ -106,8 +133,165 @@ function Get-ThreatIntelligence {
                     @{ Pattern = 'C:\\Users\\Public\\.*\.exe'; Severity = 'High'; Description = 'Executable in Public folder' }
                     @{ Pattern = 'C:\\ProgramData\\.*\.ps1'; Severity = 'Medium'; Description = 'PowerShell script in ProgramData' }
                 )
+                
+                NetworkIndicators = @()
             }
         }
+        
+        # Live threat intelligence feeds
+        $feedStats = @()
+        
+        if ($UpdateFeeds -or (Test-Path $FeedCachePath)) {
+            Write-Host "`nProcessing live threat intelligence feeds..." -ForegroundColor Cyan
+            
+            try {
+                [Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12
+            }
+            catch {
+                Write-Verbose "Could not enforce TLS 1.2: $_"
+            }
+            
+            $feedDefinitions = @(
+                @{ Name = 'Feodo Tracker'; Url = 'https://feodotracker.abuse.ch/downloads/ipblocklist.txt'; FileName = 'feodo_ipblocklist.txt'; Format = 'IpList'; Severity = 'Critical'; Description = 'Feodo Tracker C2' }
+                @{ Name = 'URLhaus'; Url = 'https://urlhaus.abuse.ch/downloads/csv_recent.txt'; FileName = 'urlhaus_recent.csv'; Format = 'URLhausCsv'; Severity = 'High'; Description = 'URLhaus payload URL' }
+            )
+            
+            if (-not [string]::IsNullOrWhiteSpace($AbuseIPDBApiKey)) {
+                $feedDefinitions += @{ Name = 'AbuseIPDB'; Url = 'https://api.abuseipdb.com/api/v2/blacklist?plaintext'; FileName = 'abuseipdb_blacklist.txt'; Format = 'IpList'; Severity = 'High'; Description = 'AbuseIPDB blacklist' }
+            }
+            
+            if (-not (Test-Path $FeedCachePath)) {
+                try {
+                    $null = New-Item -ItemType Directory -Path $FeedCachePath -Force -ErrorAction Stop
+                }
+                catch {
+                    Write-Warning "Could not create feed cache directory '$FeedCachePath': $_"
+                }
+            }
+            
+            $feedEntryCount = 0
+            $networkIndicatorKeys = @{}
+            
+            foreach ($feed in $feedDefinitions) {
+                if ($feedEntryCount -ge $MaxFeedEntries) {
+                    Write-Warning "Feed entry cap ($MaxFeedEntries) reached - skipping remaining feeds"
+                    break
+                }
+                
+                $cacheFile = Join-Path $FeedCachePath $feed.FileName
+                $content = $null
+                $source = 'none'
+                $cacheAgeHours = $null
+                $cacheExists = Test-Path $cacheFile
+                
+                if ($cacheExists) {
+                    $cacheItem = Get-Item $cacheFile
+                    $cacheAgeHours = [math]::Round(((Get-Date) - $cacheItem.LastWriteTime).TotalHours, 1)
+                }
+                
+                $shouldDownload = $UpdateFeeds -and (-not $cacheExists -or $cacheAgeHours -ge $FeedMaxAgeHours)
+                
+                if ($shouldDownload) {
+                    try {
+                        Write-Host "  Downloading $($feed.Name) feed..." -ForegroundColor Yellow
+                        $requestParams = @{
+                            Uri = $feed.Url
+                            OutFile = $cacheFile
+                            UseBasicParsing = $true
+                            TimeoutSec = 30
+                            ErrorAction = 'Stop'
+                        }
+                        if ($feed.Name -eq 'AbuseIPDB') {
+                            $requestParams['Headers'] = @{ 'Key' = $AbuseIPDBApiKey; 'Accept' = 'text/plain' }
+                        }
+                        Invoke-WebRequest @requestParams
+                        $content = Get-Content $cacheFile -ErrorAction Stop
+                        $source = 'download'
+                        $cacheItem = Get-Item $cacheFile
+                        $cacheAgeHours = [math]::Round(((Get-Date) - $cacheItem.LastWriteTime).TotalHours, 1)
+                    }
+                    catch {
+                        if ($cacheExists) {
+                            Write-Warning "Failed to download $($feed.Name) feed - falling back to cached copy ($cacheAgeHours hours old): $_"
+                            $content = Get-Content $cacheFile -ErrorAction SilentlyContinue
+                            $source = 'cache'
+                        }
+                        else {
+                            Write-Warning "Failed to download $($feed.Name) feed and no cache available - using built-in IOCs only: $_"
+                        }
+                    }
+                }
+                elseif ($cacheExists) {
+                    $content = Get-Content $cacheFile -ErrorAction SilentlyContinue
+                    $source = 'cache'
+                    if ($cacheAgeHours -ge $FeedMaxAgeHours) {
+                        Write-Host "  $($feed.Name) cache is $cacheAgeHours hours old - run with -UpdateFeeds to refresh" -ForegroundColor Yellow
+                    }
+                }
+                
+                $entriesAdded = 0
+                
+                if ($null -ne $content) {
+                    foreach ($line in $content) {
+                        if ($feedEntryCount -ge $MaxFeedEntries) { break }
+                        if ([string]::IsNullOrWhiteSpace($line) -or $line.StartsWith('#')) { continue }
+                        
+                        if ($feed.Format -eq 'IpList') {
+                            $ip = $line.Trim()
+                            if ($ip -notmatch '^\d{1,3}(\.\d{1,3}){3}$') { continue }
+                            if (-not $iocDatabase.MaliciousIPs.ContainsKey($ip)) {
+                                $iocDatabase.MaliciousIPs[$ip] = @{ Severity = $feed.Severity; Description = $feed.Description }
+                                $feedEntryCount++
+                                $entriesAdded++
+                            }
+                        }
+                        elseif ($feed.Format -eq 'URLhausCsv') {
+                            $fields = $line -split ','
+                            if ($fields.Count -lt 6) { continue }
+                            $url = $fields[2].Trim().Trim('"')
+                            $uri = $null
+                            try { $uri = [System.Uri]$url } catch { continue }
+                            if ($null -eq $uri) { continue }
+                            $hostName = $uri.Host
+                            if ([string]::IsNullOrWhiteSpace($hostName)) { continue }
+                            
+                            if ($hostName -match '^\d{1,3}(\.\d{1,3}){3}$') {
+                                if (-not $iocDatabase.MaliciousIPs.ContainsKey($hostName)) {
+                                    $iocDatabase.MaliciousIPs[$hostName] = @{ Severity = $feed.Severity; Description = "$($feed.Description) host" }
+                                    $feedEntryCount++
+                                    $entriesAdded++
+                                }
+                            }
+                            else {
+                                $pattern = [regex]::Escape($hostName)
+                                if (-not $networkIndicatorKeys.ContainsKey($pattern)) {
+                                    $networkIndicatorKeys[$pattern] = $true
+                                    $iocDatabase.SuspiciousPatterns.NetworkIndicators += @{ Pattern = $pattern; Severity = $feed.Severity; Description = "$($feed.Description) host" }
+                                    $feedEntryCount++
+                                    $entriesAdded++
+                                }
+                            }
+                        }
+                    }
+                }
+                
+                $feedStats += [PSCustomObject]@{
+                    Feed = $feed.Name
+                    EntryCount = $entriesAdded
+                    CacheAgeHours = $cacheAgeHours
+                    Source = $source
+                }
+            }
+            
+            if ($feedEntryCount -gt 0) {
+                Write-Host "  Loaded $feedEntryCount indicators from live feeds" -ForegroundColor Green
+            }
+            else {
+                Write-Host "  No live feed indicators loaded - using built-in IOCs only" -ForegroundColor Yellow
+            }
+        }
+        
+        $results.Summary.FeedStats = $feedStats
         
         # Load custom IOCs if provided
         if ($IOCFile -and (Test-Path $IOCFile)) {
@@ -269,6 +453,39 @@ function Get-ThreatIntelligence {
                             }
                             
                             Write-Host "  [!] MATCH: Malicious IP $($conn.RemoteAddress) via $processName" -ForegroundColor Red
+                        }
+                        
+                        # Check against feed-derived network indicators
+                        foreach ($pattern in $iocDatabase.SuspiciousPatterns.NetworkIndicators) {
+                            if ($remoteAddress -match $pattern.Pattern) {
+                                $process = Get-Process -Id $conn.OwningProcess -ErrorAction SilentlyContinue
+                                $processName = if ($process) { $process.Name } else { "PID $($conn.OwningProcess)" }
+                                
+                                $match = [PSCustomObject]@{
+                                    Type = 'Network'
+                                    IOCType = 'FeedNetworkIndicator'
+                                    Indicator = $pattern.Pattern
+                                    ProcessName = $processName
+                                    ProcessId = $conn.OwningProcess
+                                    LocalAddress = "$($conn.LocalAddress):$($conn.LocalPort)"
+                                    RemoteAddress = "$($conn.RemoteAddress):$($conn.RemotePort)"
+                                    Severity = $pattern.Severity
+                                    Description = $pattern.Description
+                                    Timestamp = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
+                                }
+                                
+                                $results.Matches.NetworkIOCs += $match
+                                $foundCount++
+                                
+                                switch ($pattern.Severity) {
+                                    'Critical' { $results.Summary.CriticalMatches++ }
+                                    'High' { $results.Summary.HighMatches++ }
+                                    'Medium' { $results.Summary.MediumMatches++ }
+                                }
+                                
+                                Write-Host "  [!] MATCH: Feed indicator '$($pattern.Pattern)' via $processName" -ForegroundColor Red
+                                break
+                            }
                         }
                     }
                     
@@ -499,10 +716,20 @@ function Get-ThreatIntelligence {
             }
         }
         
+        if (@($results.Summary.FeedStats).Count -gt 0) {
+            Write-Host "`nThreat Intelligence Feeds:" -ForegroundColor Cyan
+            foreach ($stat in $results.Summary.FeedStats) {
+                $ageText = if ($null -ne $stat.CacheAgeHours) { "$($stat.CacheAgeHours)h old" } else { 'not cached' }
+                Write-Host "  - $($stat.Feed): $($stat.EntryCount) entries ($($stat.Source), $ageText)" -ForegroundColor Gray
+            }
+        }
+        
         Write-Host "`nThreat Intelligence Sources:" -ForegroundColor Cyan
         Write-Host "  - MITRE ATT&CK: https://attack.mitre.org/" -ForegroundColor Gray
         Write-Host "  - AlienVault OTX: https://otx.alienvault.com/" -ForegroundColor Gray
         Write-Host "  - VirusTotal: https://www.virustotal.com/" -ForegroundColor Gray
+        Write-Host "  - abuse.ch URLhaus/Feodo Tracker: https://urlhaus.abuse.ch/ | https://feodotracker.abuse.ch/" -ForegroundColor Gray
+        Write-Host "  - AbuseIPDB: https://www.abuseipdb.com/" -ForegroundColor Gray
         
         return $results
     }
