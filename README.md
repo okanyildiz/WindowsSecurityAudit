@@ -5,11 +5,11 @@
 [![PowerShell](https://img.shields.io/badge/PowerShell-5.1%2B-blue.svg)](https://github.com/PowerShell/PowerShell)
 [![Windows](https://img.shields.io/badge/Windows-10%2F11%2FServer%202016%2B-blue.svg)](https://www.microsoft.com/windows)
 [![License](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
-[![Version](https://img.shields.io/badge/Version-1.2.0-orange.svg)](https://github.com/okanyildiz/WindowsSecurityAudit/releases)
-[![Functions](https://img.shields.io/badge/Functions-63-brightgreen.svg)](https://github.com/okanyildiz/WindowsSecurityAudit)
+[![Version](https://img.shields.io/badge/Version-1.3.0-orange.svg)](https://github.com/okanyildiz/WindowsSecurityAudit/releases)
+[![Functions](https://img.shields.io/badge/Functions-65-brightgreen.svg)](https://github.com/okanyildiz/WindowsSecurityAudit)
 [![Modules](https://img.shields.io/badge/Modules-14-blue.svg)](https://github.com/okanyildiz/WindowsSecurityAudit)
 [![CI](https://github.com/okanyildiz/WindowsSecurityAudit/actions/workflows/ci.yml/badge.svg)](https://github.com/okanyildiz/WindowsSecurityAudit/actions/workflows/ci.yml)
-[![Tests](https://img.shields.io/badge/Tests-333%20Passed-brightgreen.svg)](https://github.com/okanyildiz/WindowsSecurityAudit/blob/main/tests/WindowsSecurityAudit.Tests.ps1)
+[![Tests](https://img.shields.io/badge/Tests-353%20Passed-brightgreen.svg)](https://github.com/okanyildiz/WindowsSecurityAudit/blob/main/tests/WindowsSecurityAudit.Tests.ps1)
 [![Downloads](https://img.shields.io/badge/Downloads-50K%2B-success.svg)](https://github.com/okanyildiz/WindowsSecurityAudit)
 
 [![GitHub stars](https://img.shields.io/github/stars/okanyildiz/WindowsSecurityAudit)](https://github.com/okanyildiz/WindowsSecurityAudit/stargazers)
@@ -28,7 +28,27 @@
 
 ## ✨ What's New
 
-### 🆕 v1.2.0 — Live Threat Feeds & Real CVE Integration
+### 🆕 v1.3.0 — Version-Exact CVEs, MISP/TAXII & Auto-Remediation
+
+**2 new functions** — bringing the toolkit to **65 functions across 14 modules**:
+
+| Function | Module | What It Does |
+|----------|--------|--------------|
+| **`Resolve-CpeName`** | Vulnerability | Resolve an installed product to a **CPE 2.3 name** via a curated offline mapping table (~35 common products), an optional **NVD CPE API** lookup (`-UseOnlineLookup -ApiKey`), or a heuristic guess (always **Low** confidence) — returns `CpeName`, `MatchedBy`, `Confidence` and `Version` |
+| **`Invoke-SecurityRemediation`** | Hardening | Close the finding→fix loop: consume an `Invoke-SecurityAssessment` JSON (or piped findings), apply a **curated map of 7 safe remediations** (firewall profiles, UAC, Defender RTP, SMBv1, Guest account, PS script block logging, RDP NLA) **WhatIf-first** with `SupportsShouldProcess`/`ConfirmImpact=High`, optional `-GenerateRollback` script capturing pre-change state — unmatched findings go to `ManualReview`, never improvised |
+
+**Wired-up parameters on existing functions:**
+
+- `Get-VulnerabilityAssessment -ExactCVEMatch` — resolve each installed product to a CPE name and query NVD for **version-exact CVE matches** (implies `-CheckCVEs`, reuses `-NVDApiKey`/`-MaxCVEChecks`); High/Medium-confidence CPE matches query via `Get-NVDCveData -CpeName`, results attach as `ExactCVEs` per application with `MatchStatus` (`CpeMatched`/`NoCpeMapping`) plus `TotalExactCVEs` and per-severity counts in the summary
+- `Get-ThreatIntelligence -MISPUrl -MISPApiKey` — pull indicators from a **MISP** instance via `attributes/restSearch` (key sent only as a request header)
+- `Get-ThreatIntelligence -TaxiiServerUrl -TaxiiCollection [-TaxiiUsername -TaxiiPassword]` — pull STIX indicators from a **TAXII 2.x** server (discovery → collections → objects; password is a `SecureString`, sent only as a Basic auth header)
+- `Get-ThreatIntelligence -StixFilePath` — import a local **STIX 2.x bundle** fully offline; regex extraction of ipv4-addr/domain-name/url/file-hash patterns — all sources share the existing cache, entry-cap and provenance machinery
+
+**Quality infrastructure:**
+
+- 🧪 **353 Pester tests** (`tests/WindowsSecurityAudit.Tests.ps1`) — new coverage for v1.3 parameter help, secret-handling AST checks (no API keys in log output, `SecureString` TAXII password), and remediation safety (ShouldProcess gating, ManualReview routing)
+
+### v1.2.0 — Live Threat Feeds & Real CVE Integration
 
 **1 new function** — bringing the toolkit to **63 functions across 14 modules**:
 
@@ -107,7 +127,7 @@ If you find this tool valuable for your security operations, consider supporting
 
 In today's rapidly evolving threat landscape, organizations face unprecedented challenges in maintaining robust security postures across their Windows infrastructure. Traditional security tools often fall short, requiring multiple expensive licenses, complex integrations, and specialized expertise. The **Windows Security Audit Module** emerges as a game-changing solution, offering enterprise-grade security capabilities through a unified, open-source PowerShell framework.
 
-This comprehensive toolkit represents over 3 years of development, incorporating real-world insights from securing Fortune 500 environments, government agencies, and critical infrastructure. With 63 meticulously crafted functions organized into 14 specialized modules, it delivers capabilities typically found only in solutions costing $50,000+ annually - completely free and open source.
+This comprehensive toolkit represents over 3 years of development, incorporating real-world insights from securing Fortune 500 environments, government agencies, and critical infrastructure. With 65 meticulously crafted functions organized into 14 specialized modules, it delivers capabilities typically found only in solutions costing $50,000+ annually - completely free and open source.
 
 ### 🎯 The Vision
 
@@ -157,7 +177,7 @@ A single, cohesive PowerShell module that consolidates essential security functi
 </tr>
 <tr>
 <td><strong>Functions</strong></td>
-<td>✅ 63 Comprehensive</td>
+<td>✅ 65 Comprehensive</td>
 <td>⚠️ 20-30 Limited</td>
 <td>⚠️ 5-15 Basic</td>
 </tr>
@@ -260,9 +280,10 @@ WindowsSecurityAudit/
 │   ├── Get-USBHistory.ps1
 │   └── New-ForensicTimeline.ps1
 │
-├── 📁 Hardening/                       # Security Hardening (3 functions)
+├── 📁 Hardening/                       # Security Hardening (4 functions)
 │   ├── Enable-AuditPolicies.ps1
 │   ├── Enable-PowerShellSecurity.ps1
+│   ├── Invoke-SecurityRemediation.ps1
 │   └── Set-SecurityBaseline.ps1
 │
 ├── 📁 Private/                         # Internal functions (hidden)
@@ -278,7 +299,7 @@ WindowsSecurityAudit/
 │   ├── Invoke-ForensicCollection.ps1
 │   └── Invoke-IncidentResponse.ps1
 │
-├── 📁 tests/                           # Pester tests (333 tests)
+├── 📁 tests/                           # Pester tests (353 tests)
 │   └── WindowsSecurityAudit.Tests.ps1
 │
 ├── 📁 ThreatHunting/                   # Threat Hunting (7 functions)
@@ -290,12 +311,13 @@ WindowsSecurityAudit/
 │   ├── Get-MITREAttackMapping.ps1
 │   └── Get-ThreatIntelligence.ps1
 │
-├── 📁 Vulnerability/                   # Vulnerability Management (7 functions)
+├── 📁 Vulnerability/                   # Vulnerability Management (8 functions)
 │   ├── Find-EOLSoftware.ps1
 │   ├── Get-ExposedServices.ps1
 │   ├── Get-NVDCveData.ps1
 │   ├── Get-SecurityMisconfigurations.ps1
 │   ├── Get-VulnerabilityAssessment.ps1
+│   ├── Resolve-CpeName.ps1
 │   ├── Test-CertificateHealth.ps1
 │   └── Test-PatchCompliance.ps1
 │
@@ -340,7 +362,7 @@ Install-Module -Name WindowsSecurityAudit -Scope CurrentUser -Force
 # Import the module
 Import-Module WindowsSecurityAudit
 
-# Verify installation - should return 63
+# Verify installation - should return 65
 (Get-Command -Module WindowsSecurityAudit).Count
 ```
 
@@ -454,6 +476,19 @@ Get-VulnerabilityAssessment -CheckCVEs -NVDApiKey $key
 Get-ThreatIntelligence -CheckNetwork -UpdateFeeds
 ```
 
+### Version-Exact CVEs & Automated Remediation (New in v1.3.0)
+```powershell
+# Version-exact CVE matching: resolve installed products to CPE names first
+Get-VulnerabilityAssessment -ExactCVEMatch -NVDApiKey $key
+
+# Import a STIX 2.x bundle fully offline, or pull from MISP/TAXII
+Get-ThreatIntelligence -CheckNetwork -StixFilePath "C:\intel\bundle.json"
+
+# Assess, then preview automated fixes with a rollback script (no changes yet)
+Invoke-SecurityAssessment -OutputPath "C:\Assessments"
+Invoke-SecurityRemediation -AssessmentPath "C:\Assessments\SecurityAssessment.json" -GenerateRollback -WhatIf
+```
+
 ### One Report to Rule Them All (New in v1.1.0)
 ```powershell
 # Collect results from ALL modules into a single interactive Chart.js HTML report
@@ -543,7 +578,7 @@ The Enterprise module enables security operations at scale, providing centralize
 
 ---
 
-### 6️⃣ Hardening Module (3 Functions)
+### 6️⃣ Hardening Module (4 Functions)
 
 The Hardening module implements security best practices and configurations to reduce attack surface and improve system resilience. These functions apply industry-standard security baselines and monitoring configurations.
 
@@ -552,6 +587,7 @@ The Hardening module implements security best practices and configurations to re
 | **`Set-SecurityBaseline`** | Applies comprehensive security configurations | • 50+ security settings<br>• CIS Level 1/2 benchmarks<br>• Microsoft Security Baseline<br>• DISA STIG implementation<br>• Custom baseline support<br>• Rollback capability | CIS: 95%+<br>NIST: High<br>PCI: Compliant |
 | **`Enable-PowerShellSecurity`** | Hardens PowerShell environment | • Constrained Language Mode<br>• Script Block Logging<br>• Module Logging<br>• Transcription<br>• AMSI integration<br>• JEA configuration | Blocks 90% of PS attacks<br>Full audit trail<br>Malware prevention |
 | **`Enable-AuditPolicies`** | Configures advanced security auditing | • Process creation with command line<br>• Logon/Logoff tracking<br>• Object access monitoring<br>• Privilege use auditing<br>• System integrity monitoring<br>• Account management tracking | Complete visibility<br>Forensic capability<br>Compliance ready |
+| **`Invoke-SecurityRemediation`** | Applies automated fixes for assessment findings | • Consumes Invoke-SecurityAssessment JSON or piped findings<br>• Curated map of 7 safe remediations (firewall, UAC, Defender RTP, SMBv1, Guest, PS logging, RDP NLA)<br>• Severity filter (`-MaxSeverity`)<br>• WhatIf/Confirm first (ConfirmImpact High)<br>• `-GenerateRollback` captures pre-change state<br>• Unmatched findings routed to ManualReview | Finding-to-fix loop<br>Verified changes<br>Rollback script |
 
 ---
 
@@ -612,7 +648,7 @@ The Active Directory module provides specialized security assessment for AD envi
 
 ---
 
-### 1️⃣1️⃣ Vulnerability Module (7 Functions)
+### 1️⃣1️⃣ Vulnerability Module (8 Functions)
 
 The Vulnerability module identifies, assesses, and prioritizes security weaknesses across the environment, providing actionable remediation guidance based on exploitability and business impact.
 
@@ -620,6 +656,7 @@ The Vulnerability module identifies, assesses, and prioritizes security weakness
 |----------|---------|------------------|------------------|
 | **`Get-VulnerabilityAssessment`** | Comprehensive vulnerability scanning | • CVE identification<br>• Real NVD CVE matching (`-CheckCVEs`)<br>• CVSS scoring (v3.1)<br>• Exploit availability (EPSS)<br>• Patch availability<br>• Workaround options<br>• Asset criticality | Critical: CVSS 9.0+<br>High: CVSS 7.0-8.9<br>Medium: CVSS 4.0-6.9<br>Low: CVSS 0-3.9 |
 | **`Get-NVDCveData`** | Queries the NVD API 2.0 for real CVE data | • Keyword or CPE 2.3 name search<br>• Normalized CVE objects (ID, description, references)<br>• CVSS v3.1/v3.0/v2 severity and score<br>• Automatic pagination<br>• NVD rate-limit handling<br>• Optional API key for higher limits | CVSS base severity<br>(Critical/High/Medium/Low) |
+| **`Resolve-CpeName`** | Resolves installed products to CPE 2.3 names | • Curated offline table (~35 products)<br>• Optional NVD CPE API lookup (`-UseOnlineLookup -ApiKey`)<br>• Heuristic fallback (Low confidence)<br>• Version string normalization<br>• Confidence + MatchedBy provenance<br>• API key never logged | High: curated + version<br>Medium: curated/online<br>Low: heuristic |
 | **`Get-SecurityMisconfigurations`** | Identifies configuration weaknesses | • Weak file permissions<br>• Default credentials<br>• Open network shares<br>• Service account issues<br>• Registry permissions<br>• Group Policy gaps | Exploitability rating<br>Impact assessment<br>Fix complexity |
 | **`Find-EOLSoftware`** | Detects unsupported software | • End-of-life products<br>• Unsupported versions<br>• Legacy applications<br>• Missing security updates<br>• Vendor bulletins<br>• Migration paths | Support status<br>Risk exposure<br>Upgrade options |
 | **`Get-ExposedServices`** | Maps attack surface | • Internet-facing services<br>• Weak protocols (SMBv1, TLS 1.0)<br>• Default configurations<br>• Unnecessary services<br>• Port exposure<br>• Authentication methods | External exposure<br>Protocol weaknesses<br>Access controls |
@@ -719,7 +756,7 @@ The Reporting module transforms raw security data into actionable intelligence t
 
 ### Community Edition - Forever FREE
 - ✅ **Price**: 100% FREE - No hidden costs
-- ✅ **Functions**: All 63 functions included
+- ✅ **Functions**: All 65 functions included
 - ✅ **Source Code**: Full access on GitHub
 - ✅ **Updates**: Regular security updates
 - ✅ **License**: MIT (commercial use allowed)
@@ -819,10 +856,10 @@ We work with Fortune 500 companies, government agencies, and organizations of al
 
 ## 🚀 Roadmap
 
-### Version 1.3 (Next)
-- [ ] **Version-exact CVE matching (CPE-based)** — honest note: the v1.2.0 NVD integration performs *keyword-based candidate matching* (vendor + product name). It surfaces likely-relevant CVEs, not definitive "your exact version is vulnerable" verdicts. Precise matching requires mapping installed software to CPE identifiers (vendor/product/version tuples), which the registry inventory does not provide today — v1.3 aims to build that CPE dictionary layer
-- [ ] Additional threat feeds (MISP, STIX/TAXII sources)
-- [ ] Automated remediation workflows
+### Version 1.4 (Next)
+- [ ] **TAXII pagination** — pull large collections beyond the first objects page
+- [ ] **Broader CPE coverage** — grow the curated CPE table and add vendor-scheme translation for heuristic matches
+- [ ] **MISP attribute-type expansion** — support more attribute types beyond ip-dst/domain/url/md5/sha256
 
 ### Version 2.0 (Future)
 - [ ] Web-based GUI dashboard

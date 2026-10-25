@@ -283,3 +283,130 @@ Describe 'Threat Intelligence and CVE Integration' {
         }
     }
 }
+
+Describe 'v1.3 Features' {
+    Context 'Comment-based help for new parameters' {
+        It 'Get-VulnerabilityAssessment help documents ExactCVEMatch' {
+            $help = Get-Help -Name 'Get-VulnerabilityAssessment' -Full
+            $parameterNames = @($help.parameters.parameter | ForEach-Object { $_.Name })
+            $parameterNames | Should -Contain 'ExactCVEMatch'
+        }
+
+        It 'Get-ThreatIntelligence help documents the MISP/TAXII/STIX parameters' {
+            $help = Get-Help -Name 'Get-ThreatIntelligence' -Full
+            $parameterNames = @($help.parameters.parameter | ForEach-Object { $_.Name })
+            foreach ($expected in 'MISPUrl', 'MISPApiKey', 'TaxiiServerUrl', 'TaxiiCollection', 'StixFilePath') {
+                $parameterNames | Should -Contain $expected
+            }
+        }
+
+        It 'Resolve-CpeName help documents UseOnlineLookup and ApiKey' {
+            $help = Get-Help -Name 'Resolve-CpeName' -Full
+            $parameterNames = @($help.parameters.parameter | ForEach-Object { $_.Name })
+            foreach ($expected in 'UseOnlineLookup', 'ApiKey') {
+                $parameterNames | Should -Contain $expected
+            }
+        }
+
+        It 'Invoke-SecurityRemediation help documents the remediation parameters' {
+            $help = Get-Help -Name 'Invoke-SecurityRemediation' -Full
+            $parameterNames = @($help.parameters.parameter | ForEach-Object { $_.Name })
+            foreach ($expected in 'MaxSeverity', 'GenerateRollback', 'AssessmentPath', 'InputObject') {
+                $parameterNames | Should -Contain $expected
+            }
+        }
+    }
+
+    Context 'Secret handling' {
+        It '<_> never interpolates an API key value into Write-Host or Write-Verbose output' -ForEach @(
+            'Vulnerability/Resolve-CpeName.ps1'
+            'ThreatHunting/Get-ThreatIntelligence.ps1'
+        ) {
+            $Path = Join-Path -Path $script:ModuleRoot -ChildPath $_
+            $result = Get-ScriptFileAst -Path $Path
+            $loggingCommands = @($result.Ast.FindAll({
+                param($node)
+                $node -is [System.Management.Automation.Language.CommandAst]
+            }, $true) | Where-Object {
+                $commandName = $_.GetCommandName()
+                $commandName -eq 'Write-Host' -or $commandName -eq 'Write-Verbose'
+            })
+
+            # A direct "$variable" interpolation shows up as a VariableExpressionAst
+            # in the string's NestedExpressions. Values referenced only inside a
+            # $(...) subexpression (e.g. "$(if($ApiKey){'Provided'}else{...})")
+            # are SubExpressionAst nodes and never emit the key itself
+            $leaks = @()
+            foreach ($command in $loggingCommands) {
+                $strings = @($command.FindAll({
+                    param($node)
+                    $node -is [System.Management.Automation.Language.StringConstantExpressionAst] -and
+                    $node.StringConstantType -eq [System.Management.Automation.Language.StringConstantType]::DoubleQuoted
+                }, $true))
+                foreach ($string in $strings) {
+                    $leaks += @($string.NestedExpressions | Where-Object {
+                        $_ -is [System.Management.Automation.Language.VariableExpressionAst] -and
+                        $_.VariablePath.UserPath -match '(?i)(apikey|secret|token|^key$|api_key)'
+                    })
+                }
+            }
+            $leaks.Count | Should -Be 0 -Because 'API keys must only travel in request headers, never in log output'
+        }
+
+        It 'Get-ThreatIntelligence types -TaxiiPassword as [SecureString]' {
+            $Path = Join-Path -Path $script:ModuleRoot -ChildPath 'ThreatHunting/Get-ThreatIntelligence.ps1'
+            $result = Get-ScriptFileAst -Path $Path
+            $functionAst = $result.Ast.Find({
+                param($node)
+                $node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and
+                $node.Name -eq 'Get-ThreatIntelligence'
+            }, $true)
+            $parameterAst = @($functionAst.Body.ParamBlock.Parameters | Where-Object {
+                $_.Name.VariablePath.UserPath -eq 'TaxiiPassword'
+            })
+            $parameterAst.Count | Should -Be 1
+            $parameterAst[0].StaticType.Name | Should -Be 'SecureString' -Because 'passwords must never be accepted as plain strings'
+        }
+    }
+
+    Context 'Invoke-SecurityRemediation safety' {
+        BeforeAll {
+            $script:RemediationPath = Join-Path -Path $script:ModuleRoot -ChildPath 'Hardening/Invoke-SecurityRemediation.ps1'
+            $script:RemediationContent = Get-Content -Path $script:RemediationPath -Raw
+            $script:RemediationAst = (Get-ScriptFileAst -Path $script:RemediationPath).Ast
+        }
+
+        It 'declares SupportsShouldProcess with ConfirmImpact High in its CmdletBinding' {
+            $functionAst = $script:RemediationAst.Find({
+                param($node)
+                $node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and
+                $node.Name -eq 'Invoke-SecurityRemediation'
+            }, $true)
+            $cmdletBinding = @($functionAst.Body.ParamBlock.Attributes | Where-Object {
+                $_.TypeName.Name -eq 'CmdletBinding'
+            })
+            $cmdletBinding.Count | Should -Be 1
+
+            $namedArguments = $cmdletBinding[0].NamedArguments
+
+            $shouldProcess = @($namedArguments | Where-Object { $_.ArgumentName -eq 'SupportsShouldProcess' })
+            $shouldProcess.Count | Should -Be 1
+            # A bare 'SupportsShouldProcess' has ExpressionOmitted = $true (defaults to $true)
+            $shouldProcessEnabled = $shouldProcess[0].ExpressionOmitted -or $shouldProcess[0].Argument.SafeGetValue() -eq $true
+            $shouldProcessEnabled | Should -BeTrue -Because 'remediation must support -WhatIf and -Confirm'
+
+            $confirmImpact = @($namedArguments | Where-Object { $_.ArgumentName -eq 'ConfirmImpact' })
+            $confirmImpact.Count | Should -Be 1
+            $confirmImpact[0].Argument.SafeGetValue() | Should -Be 'High'
+        }
+
+        It 'routes state-changing calls through ShouldProcess' {
+            $occurrences = [regex]::Matches($script:RemediationContent, [regex]::Escape('$PSCmdlet.ShouldProcess('))
+            $occurrences.Count | Should -BeGreaterOrEqual 2 -Because 'both remediation actions and rollback script writes must be gated behind ShouldProcess'
+        }
+
+        It 'routes unmatched findings to ManualReview' {
+            $script:RemediationContent | Should -Match 'ManualReview'
+        }
+    }
+}

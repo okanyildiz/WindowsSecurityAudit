@@ -25,10 +25,27 @@ function Get-ThreatIntelligence {
         Maximum number of feed-derived indicators merged into the IOC database (default: 5000)
     .PARAMETER AbuseIPDBApiKey
         Optional AbuseIPDB API key; enables the AbuseIPDB blacklist feed (sent only as a request header)
+    .PARAMETER MISPUrl
+        Base URL of a MISP instance (requires -MISPApiKey); attributes are pulled via attributes/restSearch
+    .PARAMETER MISPApiKey
+        MISP API auth key (requires -MISPUrl); sent only as the Authorization request header and never logged
+    .PARAMETER TaxiiServerUrl
+        Base URL of a TAXII 2.x server (requires -TaxiiCollection); indicator objects are pulled from the collection
+    .PARAMETER TaxiiCollection
+        TAXII collection ID or title to pull STIX indicators from (requires -TaxiiServerUrl)
+    .PARAMETER TaxiiUsername
+        Optional TAXII username; sent only as a Basic auth request header together with -TaxiiPassword
+    .PARAMETER TaxiiPassword
+        Optional TAXII password (SecureString); sent only as a Basic auth request header together with -TaxiiUsername
+    .PARAMETER StixFilePath
+        Path to a local STIX 2.x JSON bundle file; indicators are imported fully offline
     .EXAMPLE
         Get-ThreatIntelligence -CheckProcesses -CheckNetwork
         Get-ThreatIntelligence -CheckProcesses -CheckNetwork -CheckFiles -IOCFile "C:\iocs.json"
         Get-ThreatIntelligence -CheckNetwork -UpdateFeeds -FeedMaxAgeHours 12
+        Get-ThreatIntelligence -CheckNetwork -UpdateFeeds -MISPUrl "https://misp.example.com" -MISPApiKey "your-api-key"
+        Get-ThreatIntelligence -CheckNetwork -UpdateFeeds -TaxiiServerUrl "https://taxii.example.com" -TaxiiCollection "12345678-1234-1234-1234-123456789012"
+        Get-ThreatIntelligence -CheckNetwork -StixFilePath "C:\intel\bundle.json"
     .OUTPUTS
         PSCustomObject with IOC match results
     #>
@@ -63,7 +80,28 @@ function Get-ThreatIntelligence {
         [int]$MaxFeedEntries = 5000,
         
         [Parameter()]
-        [string]$AbuseIPDBApiKey
+        [string]$AbuseIPDBApiKey,
+        
+        [Parameter()]
+        [string]$MISPUrl,
+        
+        [Parameter()]
+        [string]$MISPApiKey,
+        
+        [Parameter()]
+        [string]$TaxiiServerUrl,
+        
+        [Parameter()]
+        [string]$TaxiiCollection,
+        
+        [Parameter()]
+        [string]$TaxiiUsername,
+        
+        [Parameter()]
+        [SecureString]$TaxiiPassword,
+        
+        [Parameter()]
+        [string]$StixFilePath
     )
     
     begin {
@@ -140,6 +178,132 @@ function Get-ThreatIntelligence {
         
         # Live threat intelligence feeds
         $feedStats = @()
+        $feedEntryCount = 0
+        $networkIndicatorKeys = @{}
+        
+        $mispEnabled = $false
+        if (-not [string]::IsNullOrWhiteSpace($MISPUrl) -or -not [string]::IsNullOrWhiteSpace($MISPApiKey)) {
+            if ([string]::IsNullOrWhiteSpace($MISPUrl) -or [string]::IsNullOrWhiteSpace($MISPApiKey)) {
+                Write-Warning "-MISPUrl and -MISPApiKey must be provided together - skipping MISP feed"
+            }
+            else {
+                $mispEnabled = $true
+            }
+        }
+        
+        $taxiiEnabled = $false
+        if (-not [string]::IsNullOrWhiteSpace($TaxiiServerUrl) -or -not [string]::IsNullOrWhiteSpace($TaxiiCollection)) {
+            if ([string]::IsNullOrWhiteSpace($TaxiiServerUrl) -or [string]::IsNullOrWhiteSpace($TaxiiCollection)) {
+                Write-Warning "-TaxiiServerUrl and -TaxiiCollection must be provided together - skipping TAXII feed"
+            }
+            else {
+                $taxiiEnabled = $true
+                $hasTaxiiPassword = ($null -ne $TaxiiPassword -and $TaxiiPassword.Length -gt 0)
+                if ([string]::IsNullOrWhiteSpace($TaxiiUsername) -ne (-not $hasTaxiiPassword)) {
+                    Write-Warning "-TaxiiUsername and -TaxiiPassword must be provided together - continuing without TAXII authentication"
+                    $TaxiiUsername = $null
+                    $TaxiiPassword = $null
+                }
+            }
+        }
+        
+        $addFeedIndicator = {
+            param(
+                [string]$Kind,
+                [string]$Value,
+                [string]$Severity,
+                [string]$Description
+            )
+            if ($feedEntryCount -ge $MaxFeedEntries) { return 0 }
+            if ([string]::IsNullOrWhiteSpace($Value)) { return 0 }
+            
+            if ($Kind -eq 'ip') {
+                if ($Value -notmatch '^\d{1,3}(\.\d{1,3}){3}$') { return 0 }
+                if (-not $iocDatabase.MaliciousIPs.ContainsKey($Value)) {
+                    $iocDatabase.MaliciousIPs[$Value] = @{ Severity = $Severity; Description = $Description }
+                    $feedEntryCount++
+                    return 1
+                }
+            }
+            elseif ($Kind -eq 'domain') {
+                $escapedHost = [regex]::Escape($Value)
+                if (-not $networkIndicatorKeys.ContainsKey($escapedHost)) {
+                    $networkIndicatorKeys[$escapedHost] = $true
+                    $iocDatabase.SuspiciousPatterns.NetworkIndicators += @{ Pattern = $escapedHost; Severity = $Severity; Description = $Description }
+                    $feedEntryCount++
+                    return 1
+                }
+            }
+            elseif ($Kind -eq 'url') {
+                $indicatorUri = $null
+                try { $indicatorUri = [System.Uri]$Value } catch { return 0 }
+                if ($null -eq $indicatorUri) { return 0 }
+                $indicatorHost = $indicatorUri.Host
+                if ([string]::IsNullOrWhiteSpace($indicatorHost)) { return 0 }
+                if ($indicatorHost -match '^\d{1,3}(\.\d{1,3}){3}$') {
+                    if (-not $iocDatabase.MaliciousIPs.ContainsKey($indicatorHost)) {
+                        $iocDatabase.MaliciousIPs[$indicatorHost] = @{ Severity = $Severity; Description = "$Description host" }
+                        $feedEntryCount++
+                        return 1
+                    }
+                }
+                else {
+                    $escapedHost = [regex]::Escape($indicatorHost)
+                    if (-not $networkIndicatorKeys.ContainsKey($escapedHost)) {
+                        $networkIndicatorKeys[$escapedHost] = $true
+                        $iocDatabase.SuspiciousPatterns.NetworkIndicators += @{ Pattern = $escapedHost; Severity = $Severity; Description = "$Description host" }
+                        $feedEntryCount++
+                        return 1
+                    }
+                }
+            }
+            elseif ($Kind -eq 'md5' -or $Kind -eq 'sha256') {
+                $hashValue = $Value.ToLower()
+                if ($hashValue -notmatch '^[0-9a-f]+$') { return 0 }
+                if (-not $iocDatabase.MaliciousHashes.ContainsKey($hashValue)) {
+                    $iocDatabase.MaliciousHashes[$hashValue] = @{ Severity = $Severity; Description = $Description }
+                    $feedEntryCount++
+                    return 1
+                }
+            }
+            return 0
+        }
+        
+        $extractStixIndicators = {
+            param(
+                [string]$Pattern,
+                [string]$SourceName
+            )
+            $extracted = @()
+            if ([string]::IsNullOrWhiteSpace($Pattern)) { return $extracted }
+            $matchedAny = $false
+            
+            foreach ($regexMatch in [regex]::Matches($Pattern, "\[ipv4-addr:value\s*=\s*'([^']+)'\]")) {
+                $matchedAny = $true
+                $extracted += @{ Kind = 'ip'; Value = $regexMatch.Groups[1].Value; Label = 'ipv4-addr' }
+            }
+            foreach ($regexMatch in [regex]::Matches($Pattern, "\[domain-name:value\s*=\s*'([^']+)'\]")) {
+                $matchedAny = $true
+                $extracted += @{ Kind = 'domain'; Value = $regexMatch.Groups[1].Value; Label = 'domain-name' }
+            }
+            foreach ($regexMatch in [regex]::Matches($Pattern, "\[url:value\s*=\s*'([^']+)'\]")) {
+                $matchedAny = $true
+                $extracted += @{ Kind = 'url'; Value = $regexMatch.Groups[1].Value; Label = 'url' }
+            }
+            foreach ($regexMatch in [regex]::Matches($Pattern, "\[file:hashes\.'SHA-256'\s*=\s*'([^']+)'\]")) {
+                $matchedAny = $true
+                $extracted += @{ Kind = 'sha256'; Value = $regexMatch.Groups[1].Value; Label = 'SHA-256' }
+            }
+            foreach ($regexMatch in [regex]::Matches($Pattern, "\[file:hashes\.MD5\s*=\s*'([^']+)'\]")) {
+                $matchedAny = $true
+                $extracted += @{ Kind = 'md5'; Value = $regexMatch.Groups[1].Value; Label = 'MD5' }
+            }
+            
+            if (-not $matchedAny) {
+                Write-Verbose "Unrecognized STIX pattern from ${SourceName}: $Pattern"
+            }
+            return $extracted
+        }
         
         if ($UpdateFeeds -or (Test-Path $FeedCachePath)) {
             Write-Host "`nProcessing live threat intelligence feeds..." -ForegroundColor Cyan
@@ -168,9 +332,6 @@ function Get-ThreatIntelligence {
                     Write-Warning "Could not create feed cache directory '$FeedCachePath': $_"
                 }
             }
-            
-            $feedEntryCount = 0
-            $networkIndicatorKeys = @{}
             
             foreach ($feed in $feedDefinitions) {
                 if ($feedEntryCount -ge $MaxFeedEntries) {
@@ -283,11 +444,287 @@ function Get-ThreatIntelligence {
                 }
             }
             
+            if ($mispEnabled) {
+                if ($feedEntryCount -ge $MaxFeedEntries) {
+                    Write-Warning "Feed entry cap ($MaxFeedEntries) reached - skipping MISP feed"
+                }
+                else {
+                    $mispCacheFile = Join-Path $FeedCachePath 'misp_attributes.json'
+                    $mispResponse = $null
+                    $mispSource = 'none'
+                    $mispCacheAgeHours = $null
+                    $mispCacheExists = Test-Path $mispCacheFile
+                    
+                    if ($mispCacheExists) {
+                        $mispCacheItem = Get-Item $mispCacheFile
+                        $mispCacheAgeHours = [math]::Round(((Get-Date) - $mispCacheItem.LastWriteTime).TotalHours, 1)
+                    }
+                    
+                    $mispShouldDownload = $UpdateFeeds -and (-not $mispCacheExists -or $mispCacheAgeHours -ge $FeedMaxAgeHours)
+                    
+                    if ($mispShouldDownload) {
+                        try {
+                            Write-Host "  Querying MISP instance at $MISPUrl..." -ForegroundColor Yellow
+                            $mispBody = @{
+                                returnFormat = 'json'
+                                type = @('ip-dst', 'domain', 'url', 'md5', 'sha256')
+                                to_ids = 'yes'
+                            } | ConvertTo-Json
+                            $mispResponse = Invoke-RestMethod -Method Post -Uri "$($MISPUrl.TrimEnd('/'))/attributes/restSearch" -Headers @{ 'Authorization' = $MISPApiKey; 'Accept' = 'application/json' } -Body $mispBody -ContentType 'application/json' -TimeoutSec 60 -ErrorAction Stop
+                            if ($null -eq $mispResponse) { throw "MISP returned an empty response" }
+                            ($mispResponse | ConvertTo-Json -Depth 10) | Set-Content -Path $mispCacheFile -ErrorAction Stop
+                            $mispSource = 'download'
+                            $mispCacheItem = Get-Item $mispCacheFile
+                            $mispCacheAgeHours = [math]::Round(((Get-Date) - $mispCacheItem.LastWriteTime).TotalHours, 1)
+                        }
+                        catch {
+                            if ($mispCacheExists) {
+                                Write-Warning "Failed to query MISP - falling back to cached copy ($mispCacheAgeHours hours old): $_"
+                                try {
+                                    $mispResponse = Get-Content $mispCacheFile -Raw -ErrorAction Stop | ConvertFrom-Json -ErrorAction Stop
+                                    $mispSource = 'cache'
+                                }
+                                catch {
+                                    Write-Warning "Could not read MISP cache file: $_"
+                                }
+                            }
+                            else {
+                                Write-Warning "Failed to query MISP and no cache available - using built-in IOCs only: $_"
+                            }
+                        }
+                    }
+                    elseif ($mispCacheExists) {
+                        try {
+                            $mispResponse = Get-Content $mispCacheFile -Raw -ErrorAction Stop | ConvertFrom-Json -ErrorAction Stop
+                            $mispSource = 'cache'
+                        }
+                        catch {
+                            Write-Warning "Could not read MISP cache file: $_"
+                        }
+                        if ($null -ne $mispCacheAgeHours -and $mispCacheAgeHours -ge $FeedMaxAgeHours) {
+                            Write-Host "  MISP cache is $mispCacheAgeHours hours old - run with -UpdateFeeds to refresh" -ForegroundColor Yellow
+                        }
+                    }
+                    
+                    $mispEntriesAdded = 0
+                    
+                    if ($null -ne $mispResponse) {
+                        $mispAttributes = @()
+                        if ($mispResponse.PSObject.Properties['response'] -and $null -ne $mispResponse.response -and $mispResponse.response.PSObject.Properties['Attribute']) {
+                            $mispAttributes = @($mispResponse.response.Attribute)
+                        }
+                        
+                        foreach ($attribute in $mispAttributes) {
+                            if ($feedEntryCount -ge $MaxFeedEntries) { break }
+                            if ($null -eq $attribute) { continue }
+                            if (-not $attribute.PSObject.Properties['type'] -or -not $attribute.PSObject.Properties['value']) { continue }
+                            $attributeType = [string]$attribute.type
+                            $attributeValue = [string]$attribute.value
+                            if ([string]::IsNullOrWhiteSpace($attributeValue)) { continue }
+                            
+                            $indicatorKind = $null
+                            switch ($attributeType) {
+                                'ip-dst' { $indicatorKind = 'ip' }
+                                'domain' { $indicatorKind = 'domain' }
+                                'url'    { $indicatorKind = 'url' }
+                                'md5'    { $indicatorKind = 'md5' }
+                                'sha256' { $indicatorKind = 'sha256' }
+                            }
+                            if ($null -eq $indicatorKind) {
+                                Write-Verbose "Skipping unsupported MISP attribute type: $attributeType"
+                                continue
+                            }
+                            
+                            $mispEntriesAdded += (. $addFeedIndicator -Kind $indicatorKind -Value $attributeValue -Severity 'High' -Description "MISP attribute ($attributeType)")
+                        }
+                    }
+                    
+                    $feedStats += [PSCustomObject]@{
+                        Feed = 'MISP'
+                        EntryCount = $mispEntriesAdded
+                        CacheAgeHours = $mispCacheAgeHours
+                        Source = $mispSource
+                    }
+                }
+            }
+            
+            if ($taxiiEnabled) {
+                if ($feedEntryCount -ge $MaxFeedEntries) {
+                    Write-Warning "Feed entry cap ($MaxFeedEntries) reached - skipping TAXII feed"
+                }
+                else {
+                    $taxiiCacheFile = Join-Path $FeedCachePath 'taxii_indicators.json'
+                    $taxiiObjects = $null
+                    $taxiiSource = 'none'
+                    $taxiiCacheAgeHours = $null
+                    $taxiiCacheExists = Test-Path $taxiiCacheFile
+                    
+                    if ($taxiiCacheExists) {
+                        $taxiiCacheItem = Get-Item $taxiiCacheFile
+                        $taxiiCacheAgeHours = [math]::Round(((Get-Date) - $taxiiCacheItem.LastWriteTime).TotalHours, 1)
+                    }
+                    
+                    $taxiiShouldDownload = $UpdateFeeds -and (-not $taxiiCacheExists -or $taxiiCacheAgeHours -ge $FeedMaxAgeHours)
+                    
+                    if ($taxiiShouldDownload) {
+                        try {
+                            Write-Host "  Querying TAXII server at $TaxiiServerUrl (collection '$TaxiiCollection')..." -ForegroundColor Yellow
+                            $taxiiHeaders = @{ 'Accept' = 'application/taxii+json;version=2.1' }
+                            if (-not [string]::IsNullOrWhiteSpace($TaxiiUsername) -and $null -ne $TaxiiPassword) {
+                                $taxiiPasswordPlain = [System.Net.NetworkCredential]::new([string]::Empty, $TaxiiPassword).Password
+                                $credentialPair = "$($TaxiiUsername):$taxiiPasswordPlain"
+                                $taxiiHeaders['Authorization'] = 'Basic ' + [Convert]::ToBase64String([System.Text.Encoding]::ASCII.GetBytes($credentialPair))
+                            }
+                            
+                            $taxiiBase = $TaxiiServerUrl.TrimEnd('/')
+                            $discovery = Invoke-RestMethod -Method Get -Uri "$taxiiBase/taxii2/" -Headers $taxiiHeaders -TimeoutSec 30 -ErrorAction Stop
+                            $apiRoots = @()
+                            if ($null -ne $discovery -and $discovery.PSObject.Properties['api_roots'] -and $null -ne $discovery.api_roots) {
+                                $apiRoots = @($discovery.api_roots)
+                            }
+                            if ($apiRoots.Count -eq 0) { throw "TAXII discovery returned no API roots" }
+                            
+                            $apiRoot = ([string]$apiRoots[0]).TrimEnd('/')
+                            if ($apiRoot -notmatch '^https?://') {
+                                $apiRoot = "$taxiiBase/$($apiRoot.TrimStart('/'))"
+                            }
+                            
+                            $collectionsResponse = Invoke-RestMethod -Method Get -Uri "$apiRoot/collections" -Headers $taxiiHeaders -TimeoutSec 30 -ErrorAction Stop
+                            $collections = @()
+                            if ($null -ne $collectionsResponse -and $collectionsResponse.PSObject.Properties['collections'] -and $null -ne $collectionsResponse.collections) {
+                                $collections = @($collectionsResponse.collections)
+                            }
+                            
+                            $targetCollectionId = $null
+                            foreach ($collection in $collections) {
+                                if ($null -eq $collection) { continue }
+                                $collectionId = if ($collection.PSObject.Properties['id']) { [string]$collection.id } else { $null }
+                                $collectionTitle = if ($collection.PSObject.Properties['title']) { [string]$collection.title } else { $null }
+                                if ($collectionId -eq $TaxiiCollection -or $collectionTitle -eq $TaxiiCollection) {
+                                    $targetCollectionId = $collectionId
+                                    break
+                                }
+                            }
+                            if ($null -eq $targetCollectionId) { throw "TAXII collection '$TaxiiCollection' not found on server" }
+                            
+                            $objectsResponse = Invoke-RestMethod -Method Get -Uri "$apiRoot/collections/$targetCollectionId/objects?types=indicator" -Headers $taxiiHeaders -TimeoutSec 60 -ErrorAction Stop
+                            $taxiiObjects = @()
+                            if ($null -ne $objectsResponse -and $objectsResponse.PSObject.Properties['objects'] -and $null -ne $objectsResponse.objects) {
+                                $taxiiObjects = @($objectsResponse.objects)
+                            }
+                            ($taxiiObjects | ConvertTo-Json -Depth 10) | Set-Content -Path $taxiiCacheFile -ErrorAction Stop
+                            $taxiiSource = 'download'
+                            $taxiiCacheItem = Get-Item $taxiiCacheFile
+                            $taxiiCacheAgeHours = [math]::Round(((Get-Date) - $taxiiCacheItem.LastWriteTime).TotalHours, 1)
+                        }
+                        catch {
+                            if ($taxiiCacheExists) {
+                                Write-Warning "Failed to query TAXII server - falling back to cached copy ($taxiiCacheAgeHours hours old): $_"
+                                try {
+                                    $taxiiObjects = @(Get-Content $taxiiCacheFile -Raw -ErrorAction Stop | ConvertFrom-Json -ErrorAction Stop)
+                                    $taxiiSource = 'cache'
+                                }
+                                catch {
+                                    Write-Warning "Could not read TAXII cache file: $_"
+                                }
+                            }
+                            else {
+                                Write-Warning "Failed to query TAXII server and no cache available - using built-in IOCs only: $_"
+                            }
+                        }
+                    }
+                    elseif ($taxiiCacheExists) {
+                        try {
+                            $taxiiObjects = @(Get-Content $taxiiCacheFile -Raw -ErrorAction Stop | ConvertFrom-Json -ErrorAction Stop)
+                            $taxiiSource = 'cache'
+                        }
+                        catch {
+                            Write-Warning "Could not read TAXII cache file: $_"
+                        }
+                        if ($null -ne $taxiiCacheAgeHours -and $taxiiCacheAgeHours -ge $FeedMaxAgeHours) {
+                            Write-Host "  TAXII cache is $taxiiCacheAgeHours hours old - run with -UpdateFeeds to refresh" -ForegroundColor Yellow
+                        }
+                    }
+                    
+                    $taxiiEntriesAdded = 0
+                    
+                    if ($null -ne $taxiiObjects) {
+                        foreach ($stixObject in $taxiiObjects) {
+                            if ($feedEntryCount -ge $MaxFeedEntries) { break }
+                            if ($null -eq $stixObject) { continue }
+                            $objectType = if ($stixObject.PSObject.Properties['type']) { [string]$stixObject.type } else { $null }
+                            if ($objectType -ne 'indicator') { continue }
+                            if (-not $stixObject.PSObject.Properties['pattern']) { continue }
+                            
+                            $extracted = @(& $extractStixIndicators -Pattern ([string]$stixObject.pattern) -SourceName 'TAXII')
+                            foreach ($indicator in $extracted) {
+                                $taxiiEntriesAdded += (. $addFeedIndicator -Kind $indicator['Kind'] -Value $indicator['Value'] -Severity 'High' -Description "TAXII indicator ($($indicator['Label']))")
+                            }
+                        }
+                    }
+                    
+                    $feedStats += [PSCustomObject]@{
+                        Feed = 'TAXII'
+                        EntryCount = $taxiiEntriesAdded
+                        CacheAgeHours = $taxiiCacheAgeHours
+                        Source = $taxiiSource
+                    }
+                }
+            }
+            
             if ($feedEntryCount -gt 0) {
                 Write-Host "  Loaded $feedEntryCount indicators from live feeds" -ForegroundColor Green
             }
             else {
                 Write-Host "  No live feed indicators loaded - using built-in IOCs only" -ForegroundColor Yellow
+            }
+        }
+        
+        # Import indicators from a local STIX 2.x bundle (works fully offline)
+        if (-not [string]::IsNullOrWhiteSpace($StixFilePath)) {
+            Write-Host "`nImporting STIX bundle from: $StixFilePath" -ForegroundColor Cyan
+            
+            if (Test-Path $StixFilePath) {
+                try {
+                    $stixBundle = Get-Content $StixFilePath -Raw -ErrorAction Stop | ConvertFrom-Json -ErrorAction Stop
+                    $stixObjects = @()
+                    if ($null -ne $stixBundle -and $stixBundle.PSObject.Properties['objects'] -and $null -ne $stixBundle.objects) {
+                        $stixObjects = @($stixBundle.objects)
+                    }
+                    
+                    $stixEntriesAdded = 0
+                    
+                    foreach ($stixObject in $stixObjects) {
+                        if ($feedEntryCount -ge $MaxFeedEntries) {
+                            Write-Warning "Feed entry cap ($MaxFeedEntries) reached - skipping remaining STIX file indicators"
+                            break
+                        }
+                        if ($null -eq $stixObject) { continue }
+                        $objectType = if ($stixObject.PSObject.Properties['type']) { [string]$stixObject.type } else { $null }
+                        if ($objectType -ne 'indicator') { continue }
+                        if (-not $stixObject.PSObject.Properties['pattern']) { continue }
+                        
+                        $extracted = @(& $extractStixIndicators -Pattern ([string]$stixObject.pattern) -SourceName 'STIX file')
+                        foreach ($indicator in $extracted) {
+                            $stixEntriesAdded += (. $addFeedIndicator -Kind $indicator['Kind'] -Value $indicator['Value'] -Severity 'High' -Description "STIX file indicator ($($indicator['Label']))")
+                        }
+                    }
+                    
+                    $feedStats += [PSCustomObject]@{
+                        Feed = 'STIX File'
+                        EntryCount = $stixEntriesAdded
+                        CacheAgeHours = $null
+                        Source = 'file'
+                    }
+                    
+                    Write-Host "  Imported $stixEntriesAdded indicators from STIX file" -ForegroundColor Green
+                }
+                catch {
+                    Write-Warning "Failed to import STIX file '$StixFilePath': $_"
+                }
+            }
+            else {
+                Write-Warning "STIX file not found: $StixFilePath"
             }
         }
         
