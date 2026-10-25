@@ -1,8 +1,8 @@
 ---
 name: Bug report
-about: Create a report to help us improve
+about: Report a problem with the WindowsSecurityAudit module
 title: ''
-labels: ''
+labels: bug
 assignees: ''
 
 ---
@@ -10,29 +10,31 @@ assignees: ''
 **Describe the bug**
 A clear and concise description of what the bug is.
 
-**To Reproduce**
-Steps to reproduce the behavior:
-1. Go to '...'
-2. Click on '....'
-3. Scroll down to '....'
-4. See error
+**Environment**
+- Module version: [output of `Get-Module WindowsSecurityAudit` after importing, e.g. `1.3.0`]
+- PowerShell version: [output of `$PSVersionTable.PSVersion`, e.g. `5.1.22621.2506` or `7.4.2`]
+- Windows build: [output of `[System.Environment]::OSVersion.Version` or `winver`, e.g. `10.0.22631`]
+- Execution context: [e.g. elevated prompt, scheduled task, remote session]
+
+**Command run**
+The exact command you ran, including all parameters:
+
+```powershell
+# e.g. Invoke-SecurityAssessment -IncludeCompliance -ExportPath C:\Reports
+```
 
 **Expected behavior**
-A clear and concise description of what you expected to happen.
+What you expected the command to do.
 
-**Screenshots**
-If applicable, add screenshots to help explain your problem.
+**Actual behavior**
+What actually happened, including the full error text if any:
 
-**Desktop (please complete the following information):**
- - OS: [e.g. iOS]
- - Browser [e.g. chrome, safari]
- - Version [e.g. 22]
+```text
+# paste error record or $Error[0] | Format-List * -Force output here
+```
 
-**Smartphone (please complete the following information):**
- - Device: [e.g. iPhone6]
- - OS: [e.g. iOS8.1]
- - Browser [e.g. stock browser, safari]
- - Version [e.g. 22]
+**Sanitized output**
+If relevant, attach or paste the function's output (objects, exported report snippets). Remove hostnames, usernames, tenant IDs, IP addresses, API keys, and any other sensitive data before posting.
 
 **Additional context**
 Add any other context about the problem here.

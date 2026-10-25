@@ -1,0 +1,50 @@
+name: Publish to PowerShell Gallery
+
+on:
+  workflow_dispatch:
+  release:
+    types: [published]
+
+jobs:
+  publish:
+    name: Test and publish
+    # The module only works on Windows (CIM/WMI, event logs, registry), so the
+    # test gate and the publish step both run on windows-latest.
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Pester
+        shell: pwsh
+        run: |
+          Set-PSRepository -Name PSGallery -InstallationPolicy Trusted
+          Install-Module -Name Pester -MinimumVersion 5.5.0 -Force -Scope CurrentUser -SkipPublisherCheck
+
+      - name: Run Pester tests (publish gate)
+        # The full suite must pass before anything is published; a failing test
+        # exits with code 1 and stops the workflow before Publish-Module runs.
+        shell: pwsh
+        run: |
+          $config = New-PesterConfiguration
+          $config.Run.Path = './tests'
+          $config.Run.Exit = $true
+          $config.Output.Verbosity = 'Detailed'
+          Invoke-Pester -Configuration $config
+
+      - name: Validate module manifest
+        shell: pwsh
+        run: |
+          $manifest = Test-ModuleManifest -Path ./WindowsSecurityAudit.psd1 -ErrorAction Stop
+          Write-Host "Manifest OK: $($manifest.Name) $($manifest.Version)"
+
+      - name: Publish to PowerShell Gallery
+        # IMPORTANT: this step requires a repository secret named PSGALLERY_API_KEY
+        # containing a PowerShell Gallery API key scoped to this module. Create it
+        # under Settings > Secrets and variables > Actions in the repository.
+        # Without the secret this step fails; the key is never logged.
+        shell: pwsh
+        run: |
+          Publish-Module -Path . -NuGetApiKey ${{ secrets.PSGALLERY_API_KEY }} -ErrorAction Stop
+          Write-Host "Published WindowsSecurityAudit to the PowerShell Gallery."

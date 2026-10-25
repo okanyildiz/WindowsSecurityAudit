@@ -410,3 +410,89 @@ Describe 'v1.3 Features' {
         }
     }
 }
+
+Describe 'v1.4 Features' {
+    Context 'Comment-based help for new parameters' {
+        It 'ConvertTo-SiemEvent help documents Format and HostName' {
+            $help = Get-Help -Name 'ConvertTo-SiemEvent' -Full
+            $parameterNames = @($help.parameters.parameter | ForEach-Object { $_.Name })
+            foreach ($expected in 'Format', 'HostName') {
+                $parameterNames | Should -Contain $expected
+            }
+        }
+
+        It 'Get-CredentialAccessEvents help documents Hours and IncludeLSASSAccess' {
+            $help = Get-Help -Name 'Get-CredentialAccessEvents' -Full
+            $parameterNames = @($help.parameters.parameter | ForEach-Object { $_.Name })
+            foreach ($expected in 'Hours', 'IncludeLSASSAccess') {
+                $parameterNames | Should -Contain $expected
+            }
+        }
+
+        It 'Find-DefenseEvasion help documents Hours and IncludeLogGapAnalysis' {
+            $help = Get-Help -Name 'Find-DefenseEvasion' -Full
+            $parameterNames = @($help.parameters.parameter | ForEach-Object { $_.Name })
+            foreach ($expected in 'Hours', 'IncludeLogGapAnalysis') {
+                $parameterNames | Should -Contain $expected
+            }
+        }
+
+        It 'Get-UserActivityArtifacts help documents UserProfile and OutputPath' {
+            $help = Get-Help -Name 'Get-UserActivityArtifacts' -Full
+            $parameterNames = @($help.parameters.parameter | ForEach-Object { $_.Name })
+            foreach ($expected in 'UserProfile', 'OutputPath') {
+                $parameterNames | Should -Contain $expected
+            }
+        }
+
+        It 'Export-SecurityReport help documents NoAutoOpen' {
+            $help = Get-Help -Name 'Export-SecurityReport' -Full
+            $parameterNames = @($help.parameters.parameter | ForEach-Object { $_.Name })
+            $parameterNames | Should -Contain 'NoAutoOpen'
+        }
+    }
+
+    Context 'Static safety checks' {
+        # -ForEach data must exist at discovery time, so relative paths are used
+        # here and resolved against $script:ModuleRoot (set in BeforeAll) at runtime
+        It '<_> contains no hardcoded keys, secrets, tokens or passwords' -ForEach @(
+            'Detection/Get-CredentialAccessEvents.ps1'
+            'Detection/Find-DefenseEvasion.ps1'
+            'Response/ConvertTo-SiemEvent.ps1'
+            'Forensics/Get-UserActivityArtifacts.ps1'
+        ) {
+            $Path = Join-Path -Path $script:ModuleRoot -ChildPath $_
+            $result = Get-ScriptFileAst -Path $Path
+            $assignments = @($result.Ast.FindAll({
+                param($node)
+                $node -is [System.Management.Automation.Language.AssignmentStatementAst]
+            }, $true))
+
+            $hardcoded = @($assignments | Where-Object {
+                $_.Left -is [System.Management.Automation.Language.VariableExpressionAst] -and
+                $_.Left.VariablePath.UserPath -match '(?i)(key|secret|token|password)' -and
+                $_.Right -is [System.Management.Automation.Language.StringConstantExpressionAst] -and
+                -not [string]::IsNullOrWhiteSpace($_.Right.Value)
+            })
+            $hardcoded.Count | Should -Be 0 -Because 'credentials must come from parameters, never from string literals'
+        }
+
+        It 'Find-DefenseEvasion attaches a Technique property to findings' {
+            $Path = Join-Path -Path $script:ModuleRoot -ChildPath 'Detection/Find-DefenseEvasion.ps1'
+            $content = Get-Content -Path $Path -Raw
+            $content | Should -Match 'Technique'
+        }
+
+        It 'Get-CredentialAccessEvents labels the golden-ticket detection as a heuristic' {
+            $Path = Join-Path -Path $script:ModuleRoot -ChildPath 'Detection/Get-CredentialAccessEvents.ps1'
+            $content = Get-Content -Path $Path -Raw
+            $content | Should -Match 'Heuristic'
+        }
+
+        It 'Get-UserActivityArtifacts never fabricates timestamps' {
+            $Path = Join-Path -Path $script:ModuleRoot -ChildPath 'Forensics/Get-UserActivityArtifacts.ps1'
+            $content = Get-Content -Path $Path -Raw
+            $content.Contains('Timestamp = Get-Date') | Should -BeFalse -Because 'artifact timestamps must come from the evidence (FILETIME, file metadata), never from the scan time'
+        }
+    }
+}

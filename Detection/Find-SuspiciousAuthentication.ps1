@@ -4,7 +4,8 @@ function Find-SuspiciousAuthentication {
         Detects suspicious authentication events and patterns
     .DESCRIPTION
         Analyzes Windows Security event logs for suspicious authentication activities including
-        brute force attempts, unusual logon patterns, credential dumping, and privilege escalation
+        brute force attempts, unusual logon patterns, NewCredentials (runas /netonly) logons,
+        NTLM network logon usage, credential dumping, and privilege escalation
     .PARAMETER Hours
         Number of hours to look back in event logs (default: 24)
     .PARAMETER IncludeSuccessful
@@ -41,18 +42,30 @@ function Find-SuspiciousAuthentication {
             PrivilegeEscalations = @()
             UnusualLogons = @()
             ExplicitCredentials = @()
+            NewCredentialLogons = @()
+            NtlmNetworkLogonIndicators = @()
             BruteForceIndicators = @()
             Statistics = @{
                 TotalFailedLogons = 0
                 TotalLockouts = 0
                 TotalPrivilegeUse = 0
                 TotalExplicitCreds = 0
+                TotalNewCredentialLogons = 0
+                NtlmNetworkLogonAccounts = 0
                 UniqueFailedAccounts = 0
                 UniqueSourceIPs = 0
             }
         }
         
         $startTime = (Get-Date).AddHours(-$Hours)
+
+        $getEventValue = {
+            param($EventData, [string]$Name)
+            if ($null -eq $EventData) { return $null }
+            $node = $EventData | Where-Object { $_.Name -eq $Name }
+            if ($null -ne $node) { return $node.InnerText }
+            return $null
+        }
     }
     
     process {
@@ -227,48 +240,87 @@ function Find-SuspiciousAuthentication {
                 }
             }
             
-            # 5. Successful Logons Analysis (if requested)
-            if ($IncludeSuccessful) {
-                Write-Verbose "Analyzing successful logons..."
-                $successfulLogons = Get-WinEvent -FilterHashtable @{
-                    LogName = 'Security'
-                    ID = 4624
-                    StartTime = $startTime
-                } -ErrorAction SilentlyContinue
-                
-                if ($successfulLogons) {
-                    foreach ($event in $successfulLogons) {
-                        $xml = [xml]$event.ToXml()
-                        $eventData = $xml.Event.EventData.Data
-                        
-                        $targetAccount = ($eventData | Where-Object { $_.Name -eq 'TargetUserName' }).'#text'
-                        $logonType = ($eventData | Where-Object { $_.Name -eq 'LogonType' }).'#text'
-                        $sourceIP = ($eventData | Where-Object { $_.Name -eq 'IpAddress' }).'#text'
-                        $workstation = ($eventData | Where-Object { $_.Name -eq 'WorkstationName' }).'#text'
-                        
+            # 5. Successful Logons Analysis (Event ID 4624)
+            Write-Verbose "Analyzing successful logons..."
+            $successfulLogons = Get-WinEvent -FilterHashtable @{
+                LogName = 'Security'
+                ID = 4624
+                StartTime = $startTime
+            } -ErrorAction SilentlyContinue
+
+            if ($successfulLogons) {
+                $ntlmNetworkByAccount = @{}
+
+                foreach ($event in $successfulLogons) {
+                    $xml = [xml]$event.ToXml()
+                    $eventData = $xml.Event.EventData.Data
+
+                    $targetAccount = & $getEventValue $eventData 'TargetUserName'
+                    $targetDomain = & $getEventValue $eventData 'TargetDomainName'
+                    $logonType = & $getEventValue $eventData 'LogonType'
+                    $sourceIP = & $getEventValue $eventData 'IpAddress'
+                    $workstation = & $getEventValue $eventData 'WorkstationName'
+                    $authPackage = & $getEventValue $eventData 'AuthenticationPackageName'
+                    $processName = & $getEventValue $eventData 'ProcessName'
+
+                    # LogonType 9 = NewCredentials (runas /netonly) - pass-the-hash / explicit credential reuse indicator
+                    if ($logonType -eq '9' -and $targetAccount -and $targetAccount -notmatch '\$$') {
+                        $results.NewCredentialLogons += [PSCustomObject]@{
+                            TimeCreated = $event.TimeCreated
+                            Account = "$targetDomain\$targetAccount"
+                            Workstation = $workstation
+                            SourceIP = $sourceIP
+                            Process = $processName
+                            Severity = 'Medium'
+                            Indicator = 'NewCredentials logon (runas /netonly style) - possible pass-the-hash or explicit credential reuse'
+                        }
+                    }
+
+                    # NTLM network logons where Kerberos is normally expected - aggregated per account to keep noise down
+                    if ($logonType -eq '3' -and $authPackage -eq 'NTLM' -and $targetAccount -and
+                        $targetAccount -notmatch '\$$' -and $targetAccount -ne 'ANONYMOUS LOGON') {
+                        $accountKey = "$targetDomain\$targetAccount"
+                        if (-not $ntlmNetworkByAccount.ContainsKey($accountKey)) {
+                            $ntlmNetworkByAccount[$accountKey] = [PSCustomObject]@{
+                                Account = $accountKey
+                                Count = 0
+                                SourceIPs = @()
+                                LastSeen = $event.TimeCreated
+                            }
+                        }
+                        $ntlmNetworkByAccount[$accountKey].Count++
+                        if ($sourceIP -and $sourceIP -ne '-' -and $ntlmNetworkByAccount[$accountKey].SourceIPs -notcontains $sourceIP) {
+                            $ntlmNetworkByAccount[$accountKey].SourceIPs += $sourceIP
+                        }
+                        if ($null -ne $event.TimeCreated -and $event.TimeCreated -gt $ntlmNetworkByAccount[$accountKey].LastSeen) {
+                            $ntlmNetworkByAccount[$accountKey].LastSeen = $event.TimeCreated
+                        }
+                    }
+
+                    if ($IncludeSuccessful) {
                         # Flag unusual logon types or times
                         $hour = $event.TimeCreated.Hour
                         $isUnusual = $false
                         $reason = ""
-                        
+
                         # Check for after-hours logon (outside 7 AM - 7 PM)
                         if ($hour -lt 7 -or $hour -gt 19) {
                             $isUnusual = $true
                             $reason = "After-hours logon"
                         }
-                        
+
                         # Type 10 = RemoteInteractive (RDP)
                         if ($logonType -eq '10' -and $sourceIP -ne '127.0.0.1' -and $sourceIP -ne '-') {
                             $isUnusual = $true
                             $reason += "; Remote desktop logon from $sourceIP"
                         }
-                        
+
                         # Type 3 = Network logon to admin shares
                         if ($logonType -eq '3' -and $targetAccount -match 'admin') {
                             $isUnusual = $true
                             $reason += "; Network logon with admin account"
                         }
-                        
+
                         if ($isUnusual) {
                             $results.UnusualLogons += [PSCustomObject]@{
                                 TimeCreated = $event.TimeCreated
@@ -281,6 +333,21 @@ function Find-SuspiciousAuthentication {
                         }
                     }
                 }
+
+                $results.Statistics.TotalNewCredentialLogons = @($results.NewCredentialLogons).Count
+
+                foreach ($accountKey in $ntlmNetworkByAccount.Keys) {
+                    $ntlmInfo = $ntlmNetworkByAccount[$accountKey]
+                    $results.NtlmNetworkLogonIndicators += [PSCustomObject]@{
+                        Account = $ntlmInfo.Account
+                        LogonCount = $ntlmInfo.Count
+                        SourceIPs = ($ntlmInfo.SourceIPs -join ', ')
+                        LastSeen = $ntlmInfo.LastSeen
+                        Severity = 'Low'
+                        Indicator = 'NTLM network logon where Kerberos is normally expected (informational)'
+                    }
+                }
+                $results.Statistics.NtlmNetworkLogonAccounts = @($results.NtlmNetworkLogonIndicators).Count
             }
             
         }
@@ -298,6 +365,8 @@ function Find-SuspiciousAuthentication {
         Write-Host "Account lockouts: $($results.Statistics.TotalLockouts)" -ForegroundColor $(if ($results.Statistics.TotalLockouts -gt 0) { 'Red' } else { 'Green' })
         Write-Host "Privilege escalations: $($results.PrivilegeEscalations.Count)" -ForegroundColor Yellow
         Write-Host "Explicit credential usage: $($results.Statistics.TotalExplicitCreds)" -ForegroundColor Yellow
+        Write-Host "NewCredentials (type 9) logons: $($results.Statistics.TotalNewCredentialLogons)" -ForegroundColor $(if ($results.Statistics.TotalNewCredentialLogons -gt 0) { 'Red' } else { 'Green' })
+        Write-Host "Accounts with NTLM network logons: $($results.Statistics.NtlmNetworkLogonAccounts)" -ForegroundColor Yellow
         Write-Host "Brute force indicators: $($results.BruteForceIndicators.Count)" -ForegroundColor $(if ($results.BruteForceIndicators.Count -gt 0) { 'Red' } else { 'Green' })
         
         if ($IncludeSuccessful) {

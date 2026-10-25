@@ -3,19 +3,24 @@ function Export-SecurityReport {
     .SYNOPSIS
         Generates comprehensive security assessment reports
     .DESCRIPTION
-        Creates detailed security reports in multiple formats (HTML, PDF, CSV, JSON)
-        with findings, recommendations, and executive summaries
+        Creates detailed security reports in multiple formats (HTML, JSON, CSV, NDJSON, CEF)
+        with findings, recommendations, and executive summaries. NDJSON and CEF formats
+        produce SIEM-ready finding exports via ConvertTo-SiemEvent (.ndjson / .cef files).
     .PARAMETER ReportType
         Type of report: Executive, Technical, or Compliance
     .PARAMETER Format
-        Output format: HTML, JSON, CSV, or All
+        Output format: HTML, JSON, CSV, NDJSON, CEF, or All
     .PARAMETER OutputPath
         Path to save the report
     .PARAMETER IncludeCharts
         Include visual charts and graphs in HTML reports
+    .PARAMETER NoAutoOpen
+        Do not automatically open the HTML report after generation.
+        Use for headless or SYSTEM-context runs where no interactive session exists.
     .EXAMPLE
         Export-SecurityReport -ReportType Technical -Format HTML -OutputPath "C:\Reports"
         Export-SecurityReport -ReportType Executive -Format All -IncludeCharts
+        Export-SecurityReport -ReportType Technical -Format NDJSON -NoAutoOpen
     .OUTPUTS
         String path to generated report
     #>
@@ -27,14 +32,17 @@ function Export-SecurityReport {
         [string]$ReportType,
         
         [Parameter()]
-        [ValidateSet('HTML', 'JSON', 'CSV', 'All')]
+        [ValidateSet('HTML', 'JSON', 'CSV', 'NDJSON', 'CEF', 'All')]
         [string]$Format = 'HTML',
         
         [Parameter()]
         [string]$OutputPath = "C:\SecurityReports",
         
         [Parameter()]
-        [switch]$IncludeCharts
+        [switch]$IncludeCharts,
+        
+        [Parameter()]
+        [switch]$NoAutoOpen
     )
     
     begin {
@@ -204,6 +212,32 @@ if ($highSeverityProcs.Count -gt 0) {
                 $generatedFiles += $csvPath
             }
             
+            if ($Format -in @('NDJSON', 'All')) {
+                Write-Host "Generating NDJSON SIEM export..." -ForegroundColor Yellow
+                try {
+                    $ndjsonPath = Join-Path $OutputPath "${reportBaseName}_findings.ndjson"
+                    $ndjsonLines = @($reportData.Findings | ConvertTo-SiemEvent -Format NDJSON)
+                    $ndjsonLines | Out-File $ndjsonPath -Encoding UTF8
+                    $generatedFiles += $ndjsonPath
+                }
+                catch {
+                    Write-Warning "Could not generate NDJSON export: $_"
+                }
+            }
+            
+            if ($Format -in @('CEF', 'All')) {
+                Write-Host "Generating CEF SIEM export..." -ForegroundColor Yellow
+                try {
+                    $cefPath = Join-Path $OutputPath "${reportBaseName}_findings.cef"
+                    $cefLines = @($reportData.Findings | ConvertTo-SiemEvent -Format CEF)
+                    $cefLines | Out-File $cefPath -Encoding UTF8
+                    $generatedFiles += $cefPath
+                }
+                catch {
+                    Write-Warning "Could not generate CEF export: $_"
+                }
+            }
+            
             if ($Format -in @('HTML', 'All')) {
                 Write-Host "Generating HTML report..." -ForegroundColor Yellow
                 
@@ -365,9 +399,14 @@ if ($highSeverityProcs.Count -gt 0) {
         }
         
         # Open HTML report if generated
-        if ($generatedFiles -match '\.html$') {
-            $htmlFile = $generatedFiles | Where-Object { $_ -match '\.html$' } | Select-Object -First 1
-            Start-Process $htmlFile
+        if (-not $NoAutoOpen -and @($generatedFiles | Where-Object { $_ -match '\.html$' }).Count -gt 0) {
+            $htmlFile = @($generatedFiles | Where-Object { $_ -match '\.html$' }) | Select-Object -First 1
+            try {
+                Start-Process $htmlFile
+            }
+            catch {
+                Write-Warning "Could not auto-open HTML report: $_"
+            }
         }
         
         return $generatedFiles

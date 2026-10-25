@@ -77,7 +77,14 @@ function Get-ArtifactCollection {
         if (-not $isAdmin) {
             Write-Warning "Administrator privileges recommended for complete collection!"
         }
-        
+
+        $acquisitionStartUtc = [DateTime]::UtcNow
+
+        $moduleVersion = 'Unknown'
+        if ($null -ne $MyInvocation.MyCommand.Module -and $null -ne $MyInvocation.MyCommand.Module.Version) {
+            $moduleVersion = $MyInvocation.MyCommand.Module.Version.ToString()
+        }
+
         # Set collection flags based on profile
         switch ($CollectionProfile) {
             'Quick' {
@@ -215,42 +222,39 @@ function Get-ArtifactCollection {
             # 3. COLLECT REGISTRY ARTIFACTS
             if ($IncludeRegistry) {
                 Write-Host "`n[3/8] Collecting Registry Artifacts..." -ForegroundColor Cyan
-                
+
                 try {
-                    # Export key registry hives
-                    $registryKeys = @(
-                        @{Path='HKLM:\SOFTWARE'; Name='SOFTWARE'},
-                        @{Path='HKLM:\SYSTEM'; Name='SYSTEM'},
-                        @{Path='HKLM:\SAM'; Name='SAM'},
-                        @{Path='HKLM:\SECURITY'; Name='SECURITY'},
-                        @{Path='HKCU:\'; Name='NTUSER'}
+                    # Save raw registry hives (reg save preserves the binary hive
+                    # format, unlike reg export which produces lossy text).
+                    # reg save requires elevation (SeBackupPrivilege).
+                    $registryHives = @(
+                        @{RegPath='HKLM\SOFTWARE'; Name='HKLM_SOFTWARE.hiv'},
+                        @{RegPath='HKLM\SYSTEM'; Name='HKLM_SYSTEM.hiv'},
+                        @{RegPath='HKLM\SAM'; Name='HKLM_SAM.hiv'},
+                        @{RegPath='HKLM\SECURITY'; Name='HKLM_SECURITY.hiv'},
+                        @{RegPath='HKCU'; Name='HKCU_NTUSER.hiv'}
                     )
-                    
-                    foreach ($key in $registryKeys) {
+
+                    foreach ($hive in $registryHives) {
                         try {
-                            Write-Host "  Exporting: $($key.Name)..." -ForegroundColor Gray
-                            
-                            $exportPath = Join-Path $paths.Registry "$($key.Name).reg"
-                            
-                            # Export using reg.exe
-                            if ($key.Path -like 'HKLM*') {
-                                $regPath = $key.Path -replace 'HKLM:\\', 'HKLM\'
-                                reg export $regPath $exportPath /y 2>&1 | Out-Null
+                            Write-Host "  Saving hive: $($hive.RegPath)..." -ForegroundColor Gray
+
+                            $savePath = Join-Path $paths.Registry $hive.Name
+
+                            $regOutput = reg save $hive.RegPath $savePath /y 2>&1
+
+                            if (Test-Path $savePath) {
+                                Write-Host "    Saved successfully" -ForegroundColor Green
                             }
-                            elseif ($key.Path -like 'HKCU*') {
-                                $regPath = $key.Path -replace 'HKCU:\\', 'HKCU\'
-                                reg export $regPath $exportPath /y 2>&1 | Out-Null
-                            }
-                            
-                            if (Test-Path $exportPath) {
-                                Write-Host "    Exported successfully" -ForegroundColor Green
+                            else {
+                                Write-Warning "Could not save registry hive $($hive.RegPath) (elevation required) - $regOutput"
                             }
                         }
                         catch {
-                            Write-Warning "Could not export registry key: $($key.Name)"
+                            Write-Warning "Could not save registry hive: $($hive.RegPath) - $_"
                         }
                     }
-                    
+
                     $results.ArtifactsCollected += "Registry Hives"
                 }
                 catch {
@@ -432,10 +436,32 @@ function Get-ArtifactCollection {
             
             # CALCULATE COLLECTION SIZE
             Write-Host "`n[*] Calculating collection statistics..." -ForegroundColor Cyan
-            
+
             $collectedFiles = @(Get-ChildItem -Path $collectionRoot -Recurse -File -ErrorAction SilentlyContinue)
             $results.Summary.TotalFiles = $collectedFiles.Count
             $results.Summary.TotalSize = ($collectedFiles | Measure-Object -Property Length -Sum).Sum
+
+            # EVIDENCE INTEGRITY: SHA256 hash for every collected file
+            Write-Host "`n[*] Hashing collected files (SHA256)..." -ForegroundColor Cyan
+
+            $fileManifest = @()
+            foreach ($collectedFile in $collectedFiles) {
+                $sha256Hash = $null
+                try {
+                    $sha256Hash = (Get-FileHash -Path $collectedFile.FullName -Algorithm SHA256 -ErrorAction Stop).Hash
+                }
+                catch {
+                    Write-Verbose "Could not hash file: $($collectedFile.FullName) - $_"
+                }
+
+                $fileManifest += [PSCustomObject]@{
+                    Path = $collectedFile.FullName.Substring($collectionRoot.Length).TrimStart('\', '/')
+                    SizeBytes = $collectedFile.Length
+                    SHA256 = $sha256Hash
+                }
+            }
+
+            Write-Host "  Hashed $(@($fileManifest | Where-Object { $null -ne $_.SHA256 }).Count) of $($collectedFiles.Count) files" -ForegroundColor Green
             
             $totalSizeMB = [Math]::Round($results.Summary.TotalSize / 1MB, 2)
             Write-Host "  Total Files: $($results.Summary.TotalFiles)" -ForegroundColor Green
@@ -451,6 +477,15 @@ function Get-ArtifactCollection {
                 TotalFiles = $results.Summary.TotalFiles
                 TotalSizeMB = $totalSizeMB
                 Errors = $results.Summary.Errors
+                AcquisitionLog = @{
+                    Tool = 'WindowsSecurityAudit'
+                    ToolVersion = $moduleVersion
+                    Operator = $env:USERNAME
+                    Hostname = $env:COMPUTERNAME
+                    StartTimeUtc = $acquisitionStartUtc.ToString('o')
+                    EndTimeUtc = ([DateTime]::UtcNow).ToString('o')
+                }
+                Files = $fileManifest
             }
             
             $manifest | ConvertTo-Json -Depth 5 | Out-File (Join-Path $collectionRoot "MANIFEST.json")
@@ -521,7 +556,7 @@ function Get-ArtifactCollection {
         Write-Host "  1. Review MANIFEST.json for collection details" -ForegroundColor Gray
         Write-Host "  2. Analyze collected artifacts with forensic tools" -ForegroundColor Gray
         Write-Host "  3. Store evidence securely with chain of custody" -ForegroundColor Gray
-        Write-Host "  4. Calculate file hash for integrity verification" -ForegroundColor Gray
+        Write-Host "  4. Verify evidence integrity with the SHA256 hashes in MANIFEST.json" -ForegroundColor Gray
         
         return $results
     }

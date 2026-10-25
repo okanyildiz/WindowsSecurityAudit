@@ -5,11 +5,11 @@
 [![PowerShell](https://img.shields.io/badge/PowerShell-5.1%2B-blue.svg)](https://github.com/PowerShell/PowerShell)
 [![Windows](https://img.shields.io/badge/Windows-10%2F11%2FServer%202016%2B-blue.svg)](https://www.microsoft.com/windows)
 [![License](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
-[![Version](https://img.shields.io/badge/Version-1.3.0-orange.svg)](https://github.com/okanyildiz/WindowsSecurityAudit/releases)
-[![Functions](https://img.shields.io/badge/Functions-65-brightgreen.svg)](https://github.com/okanyildiz/WindowsSecurityAudit)
+[![Version](https://img.shields.io/badge/Version-1.4.0-orange.svg)](https://github.com/okanyildiz/WindowsSecurityAudit/releases)
+[![Functions](https://img.shields.io/badge/Functions-69-brightgreen.svg)](https://github.com/okanyildiz/WindowsSecurityAudit)
 [![Modules](https://img.shields.io/badge/Modules-14-blue.svg)](https://github.com/okanyildiz/WindowsSecurityAudit)
 [![CI](https://github.com/okanyildiz/WindowsSecurityAudit/actions/workflows/ci.yml/badge.svg)](https://github.com/okanyildiz/WindowsSecurityAudit/actions/workflows/ci.yml)
-[![Tests](https://img.shields.io/badge/Tests-353%20Passed-brightgreen.svg)](https://github.com/okanyildiz/WindowsSecurityAudit/blob/main/tests/WindowsSecurityAudit.Tests.ps1)
+[![Tests](https://img.shields.io/badge/Tests-385%20Passed-brightgreen.svg)](https://github.com/okanyildiz/WindowsSecurityAudit/blob/main/tests/WindowsSecurityAudit.Tests.ps1)
 
 [![GitHub stars](https://img.shields.io/github/stars/okanyildiz/WindowsSecurityAudit)](https://github.com/okanyildiz/WindowsSecurityAudit/stargazers)
 [![GitHub forks](https://img.shields.io/github/forks/okanyildiz/WindowsSecurityAudit)](https://github.com/okanyildiz/WindowsSecurityAudit/network/members)
@@ -27,14 +27,14 @@
 
 ## 🧰 Full Feature Overview
 
-**65 functions across 14 modules** — the complete toolkit at a glance:
+**69 functions across 14 modules** — the complete toolkit at a glance:
 
 | Module | Functions | Scope |
 |--------|:---------:|-------|
 | 🧱 **Core Security** | 5 | Security baseline scoring (0-100), system inventory, SFC/DISM integrity checks, Event ID context, baseline drift diffing |
-| 🕵️ **Detection** | 4 | Persistence mechanisms, suspicious processes, network anomalies, authentication attacks |
+| 🕵️ **Detection** | 6 | Persistence mechanisms, suspicious processes, network anomalies, authentication attacks, credential-access events (Kerberoasting/spray/golden-ticket heuristic), defense-evasion & tamper detection |
 | 🔬 **Analysis** | 4 | Deep-dive analysis of event logs, registry, process memory, and file system |
-| 🚨 **Response** | 3 | Incident response orchestration, forensic evidence collection, HTML/JSON/CSV report export |
+| 🚨 **Response** | 4 | Incident response orchestration, forensic evidence collection, HTML/JSON/CSV/NDJSON/CEF report export, SIEM event conversion |
 | 🏢 **Enterprise** | 4 | Multi-system parallel scanning, full assessment orchestration, scheduled scans with Teams/Slack/email alerts |
 | 🔒 **Hardening** | 4 | Audit policies, PowerShell security, baseline enforcement, curated auto-remediation (WhatIf-first, with rollback) |
 | 🛡️ **Windows Defender** | 3 | Defender health monitoring, custom scans, configuration optimization |
@@ -42,7 +42,7 @@
 | ✅ **Compliance** | 5 | CIS Benchmark, NIST 800-53, PCI-DSS 4.0 validation, compliance reports, audit evidence export |
 | 🌳 **Active Directory** | 6 | AD backdoors & DCSync detection, vulnerability scan, stale objects, password policies, privileged accounts, posture |
 | 🩹 **Vulnerability** | 8 | CVE assessment (real NVD data + version-exact CPE matching), EOL software, exposed services, certificates, patches |
-| 🔍 **Forensics** | 5 | Memory dumps, artifact collection, execution artifacts (prefetch/UserAssist/BAM), USB history, forensic timelines |
+| 🔍 **Forensics** | 6 | Memory dumps, artifact collection with SHA256-at-acquisition, execution artifacts (prefetch/UserAssist/BAM), USB history, user activity artifacts (Recycle Bin/LNK/JumpLists/Timeline), forensic timelines |
 | ☁️ **Cloud Security** | 3 | Azure AD risky sign-ins, M365 security posture, cloud compliance status |
 | 📊 **Reporting** | 4 | Security metrics/KPIs, executive reports, live HTML dashboards, consolidated all-module Chart.js report |
 
@@ -69,7 +69,7 @@ If you find this tool valuable for your security operations, consider supporting
 
 In today's rapidly evolving threat landscape, organizations face unprecedented challenges in maintaining robust security postures across their Windows infrastructure. Traditional security tools often fall short, requiring multiple expensive licenses, complex integrations, and specialized expertise. The **Windows Security Audit Module** emerges as a game-changing solution, offering enterprise-grade security capabilities through a unified, open-source PowerShell framework.
 
-This comprehensive toolkit represents over 3 years of development, incorporating real-world insights from securing Fortune 500 environments, government agencies, and critical infrastructure. With 65 meticulously crafted functions organized into 14 specialized modules, it delivers capabilities typically found only in solutions costing $50,000+ annually - completely free and open source.
+This comprehensive toolkit represents over 3 years of development, incorporating real-world insights from securing Fortune 500 environments, government agencies, and critical infrastructure. With 69 meticulously crafted functions organized into 14 specialized modules, it delivers capabilities typically found only in solutions costing $50,000+ annually - completely free and open source.
 
 ### 🎯 The Vision
 
@@ -119,7 +119,7 @@ A single, cohesive PowerShell module that consolidates essential security functi
 </tr>
 <tr>
 <td><strong>Functions</strong></td>
-<td>✅ 65 Comprehensive</td>
+<td>✅ 69 Comprehensive</td>
 <td>⚠️ 20-30 Limited</td>
 <td>⚠️ 5-15 Basic</td>
 </tr>
@@ -166,9 +166,12 @@ WindowsSecurityAudit/
 ├── 📄 WindowsSecurityAudit.psm1       # Module loader
 ├── 📄 CreateProjectFolderStructure.ps1 # Setup script
 ├── 📄 Test-Module.ps1                  # Testing script
+├── 📄 CHANGELOG.md                     # Version history
+├── 📄 SECURITY.md                      # Security policy & disclosure
 │
-├── 📁 .github/workflows/           # CI: PSScriptAnalyzer + Pester (PS 5.1 & 7)
-│   └── ci.yml
+├── 📁 .github/workflows/           # CI: PSScriptAnalyzer + Pester (PS 5.1 & 7); release: gallery publish
+│   ├── ci.yml
+│   └── publish.yml
 │
 ├── 📁 ActiveDirectory/                 # AD Security (6 functions)
 │   ├── Find-ADBackdoors.ps1
@@ -203,11 +206,13 @@ WindowsSecurityAudit/
 │   ├── Get-SystemInfo.ps1
 │   └── Test-SystemIntegrity.ps1
 │
-├── 📁 Detection/                       # Threat Detection (4 functions)
+├── 📁 Detection/                       # Threat Detection (6 functions)
+│   ├── Find-DefenseEvasion.ps1
 │   ├── Find-NetworkAnomalies.ps1
 │   ├── Find-PersistenceMechanisms.ps1
 │   ├── Find-SuspiciousAuthentication.ps1
-│   └── Find-SuspiciousProcesses.ps1
+│   ├── Find-SuspiciousProcesses.ps1
+│   └── Get-CredentialAccessEvents.ps1
 │
 ├── 📁 Enterprise/                      # Enterprise (4 functions)
 │   ├── Get-MultiSystemAudit.ps1
@@ -215,11 +220,12 @@ WindowsSecurityAudit/
 │   ├── Invoke-SecurityAssessment.ps1
 │   └── Register-ScheduledSecurityScan.ps1
 │
-├── 📁 Forensics/                       # Digital Forensics (5 functions)
+├── 📁 Forensics/                       # Digital Forensics (6 functions)
 │   ├── Export-MemoryDump.ps1
 │   ├── Get-ArtifactCollection.ps1
 │   ├── Get-ExecutionArtifacts.ps1
 │   ├── Get-USBHistory.ps1
+│   ├── Get-UserActivityArtifacts.ps1
 │   └── New-ForensicTimeline.ps1
 │
 ├── 📁 Hardening/                       # Security Hardening (4 functions)
@@ -236,12 +242,13 @@ WindowsSecurityAudit/
 │   ├── New-ExecutiveReport.ps1
 │   └── New-SecurityDashboard.ps1
 │
-├── 📁 Response/                        # Incident Response (3 functions)
+├── 📁 Response/                        # Incident Response (4 functions)
+│   ├── ConvertTo-SiemEvent.ps1
 │   ├── Export-SecurityReport.ps1
 │   ├── Invoke-ForensicCollection.ps1
 │   └── Invoke-IncidentResponse.ps1
 │
-├── 📁 tests/                           # Pester tests (353 tests)
+├── 📁 tests/                           # Pester tests (385 tests)
 │   └── WindowsSecurityAudit.Tests.ps1
 │
 ├── 📁 ThreatHunting/                   # Threat Hunting (7 functions)
@@ -308,7 +315,7 @@ Import-Module ".\WindowsSecurityAudit.psd1" -Force
 # Or run the smoke test
 .\Test-Module.ps1
 
-# Verify installation - should return 65
+# Verify installation - should return 69
 (Get-Command -Module WindowsSecurityAudit).Count
 ```
 
@@ -433,6 +440,21 @@ Invoke-SecurityAssessment -OutputPath "C:\Assessments"
 Invoke-SecurityRemediation -AssessmentPath "C:\Assessments\SecurityAssessment.json" -GenerateRollback -WhatIf
 ```
 
+### SIEM & Evasion Hunting (New in v1.4.0)
+```powershell
+# Detect AMSI/ETW tampering, Defender tampering, and cleared logs;
+# include heuristic log-gap analysis across major logs
+Find-DefenseEvasion -IncludeLogGapAnalysis
+
+# Hunt Kerberoasting, password spray, and golden-ticket heuristics;
+# -IncludeLSASSAccess needs a SACL on lsass.exe (4663) or Sysmon 10
+Get-CredentialAccessEvents -IncludeLSASSAccess
+
+# Export findings as SIEM-ready NDJSON without opening a browser
+$report = Invoke-SecurityAssessment
+$report | Export-SecurityReport -Format NDJSON -NoAutoOpen
+```
+
 ### One Report to Rule Them All (New in v1.1.0)
 ```powershell
 # Collect results from ALL modules into a single interactive Chart.js HTML report
@@ -471,7 +493,7 @@ The Core module serves as the foundation of the entire security assessment frame
 
 ---
 
-### 2️⃣ Detection Module (4 Functions)
+### 2️⃣ Detection Module (6 Functions)
 
 The Detection module provides real-time threat identification capabilities using both signature-based and behavioral analysis techniques. These functions are designed to identify active threats, suspicious behaviors, and potential compromises that traditional antivirus might miss.
 
@@ -480,7 +502,9 @@ The Detection module provides real-time threat identification capabilities using
 | **`Find-PersistenceMechanisms`** | Identifies malware persistence techniques across the system | • 11+ Registry autorun locations (Run, RunOnce, etc.)<br>• Scheduled Tasks (hidden, system, unusual)<br>• Windows Services (unsigned, suspicious paths)<br>• WMI Event Subscriptions<br>• Startup folders (all users, system) | High: Unknown entries<br>Medium: Unsigned binaries<br>Low: Unusual locations |
 | **`Find-SuspiciousProcesses`** | Detects malicious process behaviors and anomalies | • Unsigned or invalid signatures<br>• Execution from temporary directories<br>• Encoded PowerShell commands<br>• Process injection indicators<br>• Unusual parent-child relationships<br>• Network connections to suspicious IPs | Critical: Known malware<br>High: Injection detected<br>Medium: Unsigned from temp |
 | **`Find-NetworkAnomalies`** | Identifies abnormal network communications | • Connections to known C2 servers<br>• Non-standard port usage<br>• DNS tunneling indicators<br>• Large data transfers<br>• Tor/proxy connections<br>• Suspicious protocol usage | Critical: Known C2<br>High: DNS tunneling<br>Medium: Unusual ports |
-| **`Find-SuspiciousAuthentication`** | Detects authentication attacks and anomalies | • Brute force attempts (multiple failures)<br>• Account lockout patterns<br>• After-hours authentication<br>• Explicit-credential logons (runas / net use)<br>• Impossible travel scenarios<br>• Service account anomalies | High: Brute force<br>Medium: After hours<br>Low: Explicit credentials |
+| **`Find-SuspiciousAuthentication`** | Detects authentication attacks and anomalies | • Brute force attempts (multiple failures)<br>• Account lockout patterns<br>• After-hours authentication<br>• Explicit-credential logons (runas / net use, 4624 Type 9 NewCredentials)<br>• Per-account NTLM network logon indicators<br>• Impossible travel scenarios<br>• Service account anomalies | High: Brute force<br>Medium: After hours<br>Low: Explicit credentials |
+| **`Get-CredentialAccessEvents`** | Detects runtime credential-access activity from event logs | • Kerberoasting: RC4 service ticket bursts (4769)<br>• Anomalous TGT request volumes (4768)<br>• Kerberos pre-auth failure spikes / password spray (4771)<br>• Golden-ticket heuristic (Kerberos logon with no matching TGT; labeled Heuristic/Medium)<br>• Optional LSASS access handles (`-IncludeLSASSAccess`; 4663 needs a SACL, or Sysmon 10) | High: Kerberoast bursts, suspicious LSASS access<br>Medium: TGT anomalies, spray spikes, golden-ticket heuristic |
+| **`Find-DefenseEvasion`** | Detects defense-evasion and security-tampering activity | • AMSI bypass & ETW tamper patterns in script-block logs (4104)<br>• Defender exclusions and disabled real-time/behavior monitoring (Get-MpPreference)<br>• Defender tamper events (5001/5007)<br>• Log clearing (1102/104) and audit policy changes (4719) with clearing-account attribution<br>• Optional heuristic log-gap analysis (`-IncludeLogGapAnalysis`) | High: AMSI/ETW tamper, Defender tamper, cleared logs<br>Low: log gaps (heuristic) |
 
 ---
 
@@ -497,7 +521,7 @@ The Analysis module performs deep forensic examination of system components to u
 
 ---
 
-### 4️⃣ Response Module (3 Functions)
+### 4️⃣ Response Module (4 Functions)
 
 The Response module provides automated incident response capabilities, enabling rapid containment of threats and systematic evidence collection. These functions follow industry-standard incident response procedures while maintaining forensic integrity.
 
@@ -505,7 +529,8 @@ The Response module provides automated incident response capabilities, enabling 
 |----------|---------|------------------|----------------|
 | **`Invoke-IncidentResponse`** | Orchestrates automated incident response procedures | • Threat containment (process termination)<br>• System isolation (network disconnection)<br>• Evidence preservation<br>• User notification<br>• Backup initiation<br>• Recovery planning | Response timeline<br>Actions taken<br>System state<br>Threat indicators |
 | **`Invoke-ForensicCollection`** | Systematically collects forensic evidence | • Memory dump acquisition<br>• Network state capture<br>• Registry snapshot<br>• Event log extraction<br>• File artifact collection<br>• Browser history preservation | Memory dumps<br>Network captures<br>System artifacts<br>User data |
-| **`Export-SecurityReport`** | Generates professional security reports | • HTML interactive dashboards<br>• JSON for SIEM integration<br>• CSV for data analysis | Multi-format reports<br>Executive summaries<br>Technical details<br>Recommendations |
+| **`Export-SecurityReport`** | Generates professional security reports | • HTML interactive dashboards<br>• JSON for SIEM integration<br>• CSV for data analysis<br>• NDJSON/CEF SIEM-ready exports (`-Format NDJSON/CEF`; `All` writes .ndjson + .cef too)<br>• `-NoAutoOpen` for headless/SYSTEM-context runs | Multi-format reports<br>Executive summaries<br>Technical details<br>Recommendations |
+| **`ConvertTo-SiemEvent`** | Converts findings into SIEM-ready event strings | • Pipeline conversion of findings to NDJSON (one compact JSON object per line) or CEF (`CEF:0` strings)<br>• Severity-to-number mapping and heuristic CEF `act` field<br>• MITRE technique ID passthrough when present<br>• `-HostName` / `-ProductVersion` stamping<br>• Splunk / Sentinel / QRadar / ArcSight ingestion ready | NDJSON lines<br>CEF strings |
 
 ---
 
@@ -609,14 +634,15 @@ The Vulnerability module identifies, assesses, and prioritizes security weakness
 
 ---
 
-### 1️⃣2️⃣ Forensics Module (5 Functions)
+### 1️⃣2️⃣ Forensics Module (6 Functions)
 
 The Forensics module provides digital forensic capabilities for incident investigation, evidence collection, and timeline reconstruction while maintaining chain of custody and legal admissibility.
 
 | Function | Purpose | Forensic Capabilities | Evidence Types |
 |----------|---------|----------------------|----------------|
 | **`Export-MemoryDump`** | Captures memory for analysis | • Full memory dump<br>• Process-specific dumps<br>• Minidump creation<br>• Crash dump analysis | RAM contents<br>Running processes<br>Network connections<br>Encryption keys |
-| **`Get-ArtifactCollection`** | Collects forensic artifacts | • Browser history (all browsers)<br>• Download history<br>• Temporary files<br>• Thumbnail cache | User activity<br>File access<br>Internet activity<br>Deleted items |
+| **`Get-ArtifactCollection`** | Collects forensic artifacts | • Browser history (all browsers)<br>• Download history<br>• Temporary files<br>• Thumbnail cache<br>• Per-file SHA256 computed at acquisition<br>• Raw registry hive capture via `reg save`<br>• AcquisitionLog manifest block | User activity<br>File access<br>Internet activity<br>Deleted items |
+| **`Get-UserActivityArtifacts`** | Collects per-user activity artifacts for DFIR | • Recycle Bin `$I` parsing (v2 + best-effort v1 headers; path, size, deletion FILETIME)<br>• Recent/Desktop LNK resolution via WScript.Shell COM (unresolved off-Windows)<br>• JumpList enumeration (AutomaticDestinations; embedded targets not parsed)<br>• ActivitiesCache.db raw copy (no SQLite parsing)<br>• Optional CSV export (`-OutputPath`) | Deleted files<br>Opened documents<br>App usage evidence<br>Timeline databases |
 | **`Get-ExecutionArtifacts`** | Traces program execution | • Prefetch analysis<br>• ShimCache examination<br>• UserAssist decoding<br>• RecentDocs<br>• BAM/DAM analysis | Program execution<br>Timestamps<br>Frequency<br>User attribution |
 | **`Get-USBHistory`** | USB device forensics | • Device enumeration<br>• First/Last connection<br>• Serial numbers<br>• Volume names<br>• Drive letters<br>• User correlation | Device usage<br>Data transfer<br>Timeline<br>User activity |
 | **`New-ForensicTimeline`** | Timeline reconstruction | • Multi-source correlation<br>• Event sequencing<br>• File system timeline<br>• Registry timeline<br>• Log correlation<br>• Visual timeline generation | Incident timeline<br>Attack chain<br>User actions<br>System events |
@@ -652,7 +678,35 @@ The Reporting module transforms raw security data into actionable intelligence t
 
 The full feature set is documented in the module tables above — this section only covers what changed per release, newest first:
 
-### 🆕 v1.3.0 — Version-Exact CVEs, MISP/TAXII & Auto-Remediation
+### 🆕 v1.4.0 — SIEM Integration, Credential & Evasion Detection, Forensic Integrity
+
+**4 new functions** — bringing the toolkit to **69 functions across 14 modules**:
+
+| Function | Module | What It Does |
+|----------|--------|--------------|
+| **`ConvertTo-SiemEvent`** | Response | Pipe findings straight into your SIEM: converts finding objects to **NDJSON** (one compact JSON object per line) or **CEF** (`CEF:0` strings) for Splunk, Microsoft Sentinel, QRadar and ArcSight — with `-HostName`/`-ProductVersion` stamping, severity mapping, and MITRE technique ID passthrough when a finding exposes one |
+| **`Get-CredentialAccessEvents`** | Detection | Runtime credential-access detection: **Kerberoasting** (4769 RC4 service-ticket bursts), anomalous **TGT request volumes** (4768), Kerberos pre-auth failure spikes / **password spray** (4771), and a best-effort **golden-ticket heuristic** (Kerberos logons with no matching TGT in the window — explicitly labeled `Heuristic`/`Medium` confidence), plus optional **LSASS access** enumeration (`-IncludeLSASSAccess`; Security 4663 requires Object Access auditing with a SACL on lsass.exe, or Sysmon event 10) |
+| **`Find-DefenseEvasion`** | Detection | Defense-evasion & tamper detection: **AMSI bypass and ETW tamper patterns** in PowerShell script-block logs (4104), **Defender tampering** (exclusions, disabled real-time/behavior monitoring, 5001/5007 events), **log clearing** (1102/104) and audit policy changes (4719) **with clearing-account attribution**, and optional heuristic **log-gap analysis** (`-IncludeLogGapAnalysis`) — every finding carries a MITRE ATT&CK `Technique` property |
+| **`Get-UserActivityArtifacts`** | Forensics | Per-user DFIR artifacts: **Recycle Bin `$I` parsing** (v2 headers fully decoded, v1 best-effort; original path, size, deletion FILETIME), **LNK shortcut resolution** via WScript.Shell COM, **JumpList enumeration** (AutomaticDestinations — enumeration-level only, embedded targets are *not* parsed), and **ActivitiesCache.db raw copies** (metadata only, no SQLite parsing) with optional CSV export |
+
+**Extended parameters on existing functions:**
+
+- `Export-SecurityReport -Format NDJSON/CEF` — export findings in SIEM-ready formats via `ConvertTo-SiemEvent` (`All` now writes `.ndjson` + `.cef` alongside HTML/JSON/CSV); new `-NoAutoOpen` switch skips opening the HTML report for headless/SYSTEM-context runs
+- `Find-SuspiciousAuthentication` — now also flags **4624 Type 9 (NewCredentials)** explicit-credential logons and **per-account NTLM network logon indicators**
+- `Get-ArtifactCollection` — **per-file SHA256 at acquisition time**, raw registry hive capture via `reg save`, and an **AcquisitionLog manifest block** for chain of custody
+- `Get-CloudComplianceStatus` — now honest about coverage: checks that can't be evaluated report **`NotEvaluated`** instead of fabricated statuses, and the compliance score is `$null` when nothing was evaluated
+
+**Distribution & trust:**
+
+- 📜 **CHANGELOG.md** and **SECURITY.md** (vulnerability disclosure policy) added to the repo
+- 🚀 **PowerShell Gallery publish workflow** (`.github/workflows/publish.yml`) — publishes on release once a gallery API key is configured
+- 📦 Real module metadata in `WindowsSecurityAudit.psd1`
+
+**Quality infrastructure:**
+
+- 🧪 **385 Pester tests** (`tests/WindowsSecurityAudit.Tests.ps1`) — new coverage for v1.4 parameter help, hardcoded-secret AST checks on the new files, MITRE `Technique` attachment, heuristic labeling, and timestamp provenance (artifacts never fabricate timestamps)
+
+### v1.3.0 — Version-Exact CVEs, MISP/TAXII & Auto-Remediation
 
 **2 new functions** — bringing the toolkit to **65 functions across 14 modules**:
 
@@ -784,7 +838,7 @@ Everything below shipped with the original release and keeps getting sharper:
 
 ### Community Edition - Forever FREE
 - ✅ **Price**: 100% FREE - No hidden costs
-- ✅ **Functions**: All 65 functions included
+- ✅ **Functions**: All 69 functions included
 - ✅ **Source Code**: Full access on GitHub
 - ✅ **Updates**: Regular security updates
 - ✅ **License**: MIT (commercial use allowed)
@@ -884,10 +938,15 @@ We work with Fortune 500 companies, government agencies, and organizations of al
 
 ## 🚀 Roadmap
 
-### Version 1.4 (Next)
+### Version 1.5 (Next)
 - [ ] **TAXII pagination** — pull large collections beyond the first objects page
 - [ ] **Broader CPE coverage** — grow the curated CPE table and add vendor-scheme translation for heuristic matches
 - [ ] **MISP attribute-type expansion** — support more attribute types beyond ip-dst/domain/url/md5/sha256
+- [ ] **SIEM live streaming** — ship NDJSON/CEF events directly to HTTP Event Collectors (HEC) instead of files
+- [ ] **Remote module execution** — fan out detection/forensics functions for fleet-wide scans
+- [ ] **Alert state dedup** — suppress repeat alerts across scheduled scan runs
+- [ ] **Sysmon-native analytics** — deeper detections from Sysmon process/network events
+- [ ] **$MFT / USN journal parsing** — file-system timeline evidence for the Forensics module
 
 ### Version 2.0 (Future)
 - [ ] Web-based GUI dashboard
