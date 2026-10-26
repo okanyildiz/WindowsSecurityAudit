@@ -535,6 +535,12 @@ Describe 'Private helper contract and degradation' {
                         }
                     )
                 }
+                # On Windows the CIM fallback would find the REAL RID-500 account
+                # (e.g. the CI runner's administrator) when the mocked Get-LocalUser
+                # returns no match — neutralize the fallback inside this test.
+                if (Get-Command Get-CimInstance -ErrorAction SilentlyContinue) {
+                    Mock Get-CimInstance { @() }
+                }
                 Get-LocalUserByRid -Rid 500 | Should -BeNullOrEmpty -Because 'SID ...-1500 must not match RID 500 (suffix match includes the dash)'
                 $hit = Get-LocalUserByRid -Rid 1500
                 $hit.Name | Should -Be 'Rid1500User' -Because 'the mock wiring must actually be exercised (positive control)'
