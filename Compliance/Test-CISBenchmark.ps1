@@ -231,48 +231,71 @@ function Test-CISBenchmark {
                 
                 try {
                     # CIS 17.1.1 - Audit Credential Validation
-                    $auditResult = auditpol /get /subcategory:"Credential Validation" 2>$null
-                    $auditStatus = if ($auditResult -match "Success and Failure") { "Success and Failure" } else { "Not Configured" }
-                    
+                    $auditTable = Get-AuditPolicyTable -Subcategory 'Credential Validation', 'Application Group Management', 'Account Lockout'
+                    $credentialValidationGuid = Get-AuditSubcategoryGuid -Name 'Credential Validation'
+                    $credentialValidation = $null
+                    if ($null -ne $credentialValidationGuid) {
+                        $credentialValidationKey = ($credentialValidationGuid -replace '[{}]', '').ToLowerInvariant()
+                        $credentialValidation = $auditTable[$credentialValidationKey]
+                    }
+
                     $control = [PSCustomObject]@{
                         ControlID = 'CIS-17.1.1'
                         ControlName = 'Audit Credential Validation'
                         Category = 'AuditPolicy'
                         Expected = 'Success and Failure'
-                        Actual = $auditStatus
-                        Status = if ($auditStatus -eq "Success and Failure") { 'Pass' } else { 'Fail' }
+                        Actual = if ($null -eq $credentialValidation -or $null -eq $credentialValidation.Value) { 'Unable to determine' }
+                                 elseif ($credentialValidation.Success -and $credentialValidation.Failure) { 'Success and Failure' }
+                                 elseif ($credentialValidation.Success) { 'Success' }
+                                 elseif ($credentialValidation.Failure) { 'Failure' } else { 'No Auditing' }
+                        Status = if ($null -eq $credentialValidation -or $null -eq $credentialValidation.Value) { 'Manual' }
+                                 elseif ($credentialValidation.Value -eq 3) { 'Pass' } else { 'Fail' }
                         Severity = 'High'
                         Remediation = 'Configure to audit Success and Failure'
                     }
                     $results.Controls += $control
-                    
+
                     # CIS 17.2.1 - Audit Application Group Management
-                    $auditResult = auditpol /get /subcategory:"Application Group Management" 2>$null
-                    $auditStatus = if ($auditResult -match "Success and Failure") { "Success and Failure" } else { "Not Configured" }
-                    
+                    $appGroupGuid = Get-AuditSubcategoryGuid -Name 'Application Group Management'
+                    $appGroupManagement = $null
+                    if ($null -ne $appGroupGuid) {
+                        $appGroupKey = ($appGroupGuid -replace '[{}]', '').ToLowerInvariant()
+                        $appGroupManagement = $auditTable[$appGroupKey]
+                    }
+
                     $control = [PSCustomObject]@{
                         ControlID = 'CIS-17.2.1'
                         ControlName = 'Audit Application Group Management'
                         Category = 'AuditPolicy'
                         Expected = 'Success and Failure'
-                        Actual = $auditStatus
-                        Status = if ($auditStatus -eq "Success and Failure") { 'Pass' } else { 'Fail' }
+                        Actual = if ($null -eq $appGroupManagement -or $null -eq $appGroupManagement.Value) { 'Unable to determine' }
+                                 elseif ($appGroupManagement.Success -and $appGroupManagement.Failure) { 'Success and Failure' }
+                                 elseif ($appGroupManagement.Success) { 'Success' }
+                                 elseif ($appGroupManagement.Failure) { 'Failure' } else { 'No Auditing' }
+                        Status = if ($null -eq $appGroupManagement -or $null -eq $appGroupManagement.Value) { 'Manual' }
+                                 elseif ($appGroupManagement.Value -eq 3) { 'Pass' } else { 'Fail' }
                         Severity = 'Medium'
                         Remediation = 'Configure to audit Success and Failure'
                     }
                     $results.Controls += $control
-                    
+
                     # CIS 17.5.1 - Audit Account Lockout
-                    $auditResult = auditpol /get /subcategory:"Account Lockout" 2>$null
-                    $auditStatus = if ($auditResult -match "Success|Failure") { "Configured" } else { "Not Configured" }
-                    
+                    $accountLockoutGuid = Get-AuditSubcategoryGuid -Name 'Account Lockout'
+                    $accountLockout = $null
+                    if ($null -ne $accountLockoutGuid) {
+                        $accountLockoutKey = ($accountLockoutGuid -replace '[{}]', '').ToLowerInvariant()
+                        $accountLockout = $auditTable[$accountLockoutKey]
+                    }
+
                     $control = [PSCustomObject]@{
                         ControlID = 'CIS-17.5.1'
                         ControlName = 'Audit Account Lockout'
                         Category = 'AuditPolicy'
                         Expected = 'Success'
-                        Actual = $auditStatus
-                        Status = if ($auditStatus -eq "Configured") { 'Pass' } else { 'Fail' }
+                        Actual = if ($null -eq $accountLockout -or $null -eq $accountLockout.Value) { 'Unable to determine' }
+                                 elseif ($accountLockout.Value -ge 1 -and $accountLockout.Value -le 3) { 'Configured' } else { 'Not Configured' }
+                        Status = if ($null -eq $accountLockout -or $null -eq $accountLockout.Value) { 'Manual' }
+                                 elseif ($accountLockout.Value -ge 1 -and $accountLockout.Value -le 3) { 'Pass' } else { 'Fail' }
                         Severity = 'Medium'
                         Remediation = 'Configure to audit Success'
                     }
@@ -289,30 +312,34 @@ function Test-CISBenchmark {
                 
                 try {
                     # CIS 2.3.1.1 - Accounts: Administrator account status
-                    $adminUser = Get-LocalUser -Name "Administrator" -ErrorAction SilentlyContinue
-                    $adminDisabled = if ($adminUser) { $adminUser.Enabled } else { $false }
+                    $adminUser = Get-LocalUserByRid -Rid 500 -ErrorAction SilentlyContinue
+                    $adminKnown = ($null -ne $adminUser) -and ($null -ne $adminUser.Enabled)
                     $control = [PSCustomObject]@{
                         ControlID = 'CIS-2.3.1.1'
                         ControlName = 'Accounts: Administrator account status'
                         Category = 'SecurityOptions'
                         Expected = 'Disabled'
-                        Actual = if ($adminDisabled -eq $false) { 'Disabled' } else { 'Enabled' }
-                        Status = if ($adminDisabled -eq $false) { 'Pass' } else { 'Fail' }
+                        Actual = if (-not $adminKnown) { 'Unable to determine' }
+                                 elseif ($adminUser.Enabled) { 'Enabled' } else { 'Disabled' }
+                        Status = if (-not $adminKnown) { 'Manual' }
+                                 elseif ($adminUser.Enabled) { 'Fail' } else { 'Pass' }
                         Severity = 'High'
                         Remediation = 'Disable the built-in Administrator account'
                     }
                     $results.Controls += $control
-                    
+
                     # CIS 2.3.1.5 - Accounts: Guest account status
-                    $guestUser = Get-LocalUser -Name "Guest" -ErrorAction SilentlyContinue
-                    $guestDisabled = if ($guestUser) { $guestUser.Enabled } else { $false }
+                    $guestUser = Get-LocalUserByRid -Rid 501 -ErrorAction SilentlyContinue
+                    $guestKnown = ($null -ne $guestUser) -and ($null -ne $guestUser.Enabled)
                     $control = [PSCustomObject]@{
                         ControlID = 'CIS-2.3.1.5'
                         ControlName = 'Accounts: Guest account status'
                         Category = 'SecurityOptions'
                         Expected = 'Disabled'
-                        Actual = if ($guestDisabled -eq $false) { 'Disabled' } else { 'Enabled' }
-                        Status = if ($guestDisabled -eq $false) { 'Pass' } else { 'Fail' }
+                        Actual = if (-not $guestKnown) { 'Unable to determine' }
+                                 elseif ($guestUser.Enabled) { 'Enabled' } else { 'Disabled' }
+                        Status = if (-not $guestKnown) { 'Manual' }
+                                 elseif ($guestUser.Enabled) { 'Fail' } else { 'Pass' }
                         Severity = 'High'
                         Remediation = 'Disable the Guest account'
                     }

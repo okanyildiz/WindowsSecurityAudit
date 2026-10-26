@@ -329,15 +329,25 @@ function Invoke-EnterpriseSecurityScan {
                 # Additional checks for Standard/Comprehensive scans
                 if ($ScanType -in @('Standard', 'Comprehensive')) {
                     # Check for admin accounts
-                    $adminCount = @(Get-LocalGroupMember -Group "Administrators" -ErrorAction SilentlyContinue).Count
-                    $result.Details.AdminAccounts = $adminCount
+                    $adminAccounts = @()
+                    $adminLookupSucceeded = $false
+                    if (Get-Command Get-AdminGroupMembers -ErrorAction SilentlyContinue) {
+                        $adminAccounts = @(Get-AdminGroupMembers)
+                        $adminLookupSucceeded = ((Get-Variable -Name AdminGroupLookupSucceeded -Scope Script -ValueOnly -ErrorAction SilentlyContinue) -eq $true)
+                    }
+                    if ($adminLookupSucceeded) {
+                        $adminCount = $adminAccounts.Count
+                        $result.Details.AdminAccounts = $adminCount
 
-                    if ($adminCount -gt 3) {
-                        $result.Findings += [PSCustomObject]@{
-                            Severity = 'Medium'
-                            Category = 'Accounts'
-                            Finding = "$adminCount administrator accounts (excessive)"
+                        if ($adminCount -gt 3) {
+                            $result.Findings += [PSCustomObject]@{
+                                Severity = 'Medium'
+                                Category = 'Accounts'
+                                Finding = "$adminCount administrator accounts (excessive)"
+                            }
                         }
+                    } else {
+                        $result.Details.AdminAccounts = 'Unknown'
                     }
 
                     # Check for suspicious services

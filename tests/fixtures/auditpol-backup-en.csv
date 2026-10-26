@@ -1,0 +1,14 @@
+Machine Name,Policy Target,Subcategory,Subcategory GUID,Inclusion Setting,Exclusion Setting,Setting Value
+WSA-TEST01,System,Security State Change,{0CCE9210-69AE-11D9-BED3-505054503030},Success and Failure,,3
+WSA-TEST01,System,System Integrity,{0CCE9212-69AE-11D9-BED3-505054503030},Success and Failure,,3
+WSA-TEST01,System,Logon,{0CCE9215-69AE-11D9-BED3-505054503030},Success and Failure,,3
+WSA-TEST01,System,Logoff,{0CCE9216-69AE-11D9-BED3-505054503030},Success,,1
+
+WSA-TEST01,System,Special Logon,{0CCE921B-69AE-11D9-BED3-505054503030},Success,,1
+WSA-TEST01,System,File System,{0CCE921D-69AE-11D9-BED3-505054503030},No Auditing,,0
+WSA-TEST01,System,Sensitive Privilege Use,{0CCE9228-69AE-11D9-BED3-505054503030},Failure,,2
+WSA-TEST01,System,Process Creation,{0CCE922B-69AE-11D9-BED3-505054503030},Success,,1
+WSA-TEST01,System,Directory Service Access,{0CCE923B-69AE-11D9-BED3-505054503030},Failure,,2
+WSA-TEST01,System,Credential Validation,{0CCE923F-69AE-11D9-BED3-505054503030},Success and Failure,,3
+WSA-TEST01,System,Option:CrashOnAuditFail,,Success,,0
+WSA-TEST01,S-1-5-21-3623811015-3361044348-30300820-1001,Logon,{0CCE9215-69AE-11D9-BED3-505054503030},Success,,1

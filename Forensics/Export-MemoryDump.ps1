@@ -84,16 +84,17 @@ function Export-MemoryDump {
         # in Register-ScheduledSecurityScan)
         function Protect-DumpFile {
             param([Parameter(Mandatory = $true)][string]$Path)
-            if ($env:OS -ne 'Windows_NT') { return }
+            if ($env:OS -ne 'Windows_NT') { return $true }
+            $requiredSids = @('S-1-5-18', 'S-1-5-32-544')
             try {
                 $fileAcl = Get-Acl -Path $Path -ErrorAction Stop
                 $fileAcl.SetAccessRuleProtection($true, $false)
                 foreach ($existingRule in @($fileAcl.Access)) {
                     $null = $fileAcl.RemoveAccessRule($existingRule)
                 }
-                foreach ($identity in @('NT AUTHORITY\SYSTEM', 'BUILTIN\Administrators')) {
+                foreach ($sidString in $requiredSids) {
                     $accessRule = New-Object System.Security.AccessControl.FileSystemAccessRule(
-                        $identity,
+                        (New-Object System.Security.Principal.SecurityIdentifier($sidString)),
                         [System.Security.AccessControl.FileSystemRights]::FullControl,
                         [System.Security.AccessControl.AccessControlType]::Allow)
                     $fileAcl.AddAccessRule($accessRule)
@@ -102,7 +103,23 @@ function Export-MemoryDump {
             }
             catch {
                 Write-Warning "Could not restrict permissions on '$Path'; the dump may contain credentials and may be readable by other local users: $_"
+                return $false
             }
+
+            $appliedAcl = Get-Acl -Path $Path -ErrorAction SilentlyContinue
+            if ($null -eq $appliedAcl) {
+                Write-Warning "ACL verification FAILED on '$Path': could not re-read the ACL; the dump may contain credentials and may be readable by other local users."
+                return $false
+            }
+            $missingSids = @($requiredSids | Where-Object {
+                $sid = $_
+                -not @($appliedAcl.Access | Where-Object { Test-IdentityReferenceIsSid -IdentityReference $_.IdentityReference -Sid $sid }).Count
+            })
+            if ($missingSids.Count -gt 0) {
+                Write-Warning "ACL verification FAILED on '$Path': missing access rules for SID(s) $($missingSids -join ', '); the dump may contain credentials and may be readable by other local users."
+                return $false
+            }
+            return $true
         }
     }
     
@@ -365,7 +382,7 @@ public class ProcessDump {
             if ($result.Success -and (Test-Path $dumpFilePath)) {
                 $dumpFile = Get-Item $dumpFilePath
                 $result.FileSize = $dumpFile.Length
-                Protect-DumpFile -Path $dumpFilePath
+                $null = Protect-DumpFile -Path $dumpFilePath
 
                 $fileSizeMB = [Math]::Round($dumpFile.Length / 1MB, 2)
                 Write-Host "`n[SUCCESS] Memory dump created!" -ForegroundColor Green
@@ -382,7 +399,7 @@ public class ProcessDump {
                         Compress-Archive -Path $dumpFilePath -DestinationPath $zipPath -CompressionLevel Optimal
                         
                         if (Test-Path $zipPath) {
-                            Protect-DumpFile -Path $zipPath
+                            $null = Protect-DumpFile -Path $zipPath
                             $zipFile = Get-Item $zipPath
                             $zipSizeMB = [Math]::Round($zipFile.Length / 1MB, 2)
                             $compressionRatio = [Math]::Round((1 - ($zipFile.Length / $dumpFile.Length)) * 100, 1)

@@ -95,19 +95,22 @@ function Test-NISTCompliance {
                 
                 try {
                     # AC-2: Account Management
-                    $guestUser = Get-LocalUser -Name "Guest" -ErrorAction SilentlyContinue
-                    $guestDisabled = ($null -eq $guestUser) -or ($guestUser.Enabled -eq $false)
-                    $adminUser = Get-LocalUser -Name "Administrator" -ErrorAction SilentlyContinue
-                    $adminDisabled = ($null -eq $adminUser) -or ($adminUser.Enabled -eq $false)
-                    
+                    $guestUser = Get-LocalUserByRid -Rid 501 -ErrorAction SilentlyContinue
+                    $guestKnown = ($null -ne $guestUser) -and ($null -ne $guestUser.Enabled)
+                    $guestDisabled = $guestKnown -and ($guestUser.Enabled -eq $false)
+                    $adminUser = Get-LocalUserByRid -Rid 500 -ErrorAction SilentlyContinue
+                    $adminKnown = ($null -ne $adminUser) -and ($null -ne $adminUser.Enabled)
+                    $adminDisabled = $adminKnown -and ($adminUser.Enabled -eq $false)
+
                     $control = [PSCustomObject]@{
                         ControlID = 'AC-2'
                         ControlName = 'Account Management'
                         ControlFamily = 'AccessControl'
                         Description = 'Guest and default Administrator accounts should be disabled'
                         Expected = 'Guest and Administrator accounts disabled'
-                        Actual = "Guest: $(if($guestDisabled){'Disabled'}else{'Enabled'}), Admin: $(if($adminDisabled){'Disabled'}else{'Enabled'})"
-                        Status = if ($guestDisabled -and $adminDisabled) { 'Compliant' } 
+                        Actual = "Guest: $(if(-not $guestKnown){'Unknown'}elseif($guestDisabled){'Disabled'}else{'Enabled'}), Admin: $(if(-not $adminKnown){'Unknown'}elseif($adminDisabled){'Disabled'}else{'Enabled'})"
+                        Status = if (-not $guestKnown -or -not $adminKnown) { 'NotApplicable' }
+                                 elseif ($guestDisabled -and $adminDisabled) { 'Compliant' }
                                  elseif ($guestDisabled -or $adminDisabled) { 'PartiallyCompliant' }
                                  else { 'NonCompliant' }
                         Impact = 'High'
@@ -177,17 +180,24 @@ function Test-NISTCompliance {
                 
                 try {
                     # AU-2: Audit Events
-                    $auditLogons = auditpol /get /subcategory:"Logon" 2>$null
-                    $auditConfigured = $auditLogons -match "Success and Failure|Success|Failure"
-                    
+                    $logonGuid = Get-AuditSubcategoryGuid -Name 'Logon'
+                    $logonAuditValue = $null
+                    if ($null -ne $logonGuid) {
+                        $logonTable = Get-AuditPolicyTable -Subcategory 'Logon'
+                        $logonKey = ($logonGuid -replace '[{}]', '').ToLowerInvariant()
+                        if ($logonTable.ContainsKey($logonKey)) { $logonAuditValue = $logonTable[$logonKey].Value }
+                    }
+
                     $control = [PSCustomObject]@{
                         ControlID = 'AU-2'
                         ControlName = 'Audit Events'
                         ControlFamily = 'AuditAccountability'
                         Description = 'System must audit significant security events'
                         Expected = 'Audit policies configured'
-                        Actual = if ($auditConfigured) { "Configured" } else { "Not configured" }
-                        Status = if ($auditConfigured) { 'Compliant' } else { 'NonCompliant' }
+                        Actual = if ($null -eq $logonAuditValue) { 'Unable to determine' }
+                                 elseif ($logonAuditValue -ge 1 -and $logonAuditValue -le 3) { "Configured" } else { "Not configured" }
+                        Status = if ($null -eq $logonAuditValue) { 'NotApplicable' }
+                                 elseif ($logonAuditValue -ge 1 -and $logonAuditValue -le 3) { 'Compliant' } else { 'NonCompliant' }
                         Impact = 'High'
                         Remediation = 'Enable audit policies for security events'
                     }
@@ -216,7 +226,7 @@ function Test-NISTCompliance {
                         $acl = Get-Acl $logPath -ErrorAction SilentlyContinue
                         $protected = @()
                         if ($acl) {
-                            $protected = @($acl.Access | Where-Object { $_.IdentityReference -match "Users" -and $_.FileSystemRights -match "FullControl|Modify|Write" })
+                            $protected = @($acl.Access | Where-Object { (Test-IdentityReferenceIsSid -IdentityReference $_.IdentityReference -Sid 'S-1-5-32-545') -and $_.FileSystemRights -match "FullControl|Modify|Write" })
                         }
                         
                         $control = [PSCustomObject]@{
@@ -234,17 +244,24 @@ function Test-NISTCompliance {
                     }
                     
                     # AU-12: Audit Generation
-                    $auditProcessCreation = auditpol /get /subcategory:"Process Creation" 2>$null
-                    $processAuditConfigured = $auditProcessCreation -match "Success"
-                    
+                    $processCreationGuid = Get-AuditSubcategoryGuid -Name 'Process Creation'
+                    $processAuditEntry = $null
+                    if ($null -ne $processCreationGuid) {
+                        $processTable = Get-AuditPolicyTable -Subcategory 'Process Creation'
+                        $processKey = ($processCreationGuid -replace '[{}]', '').ToLowerInvariant()
+                        if ($processTable.ContainsKey($processKey)) { $processAuditEntry = $processTable[$processKey] }
+                    }
+
                     $control = [PSCustomObject]@{
                         ControlID = 'AU-12'
                         ControlName = 'Audit Generation'
                         ControlFamily = 'AuditAccountability'
                         Description = 'System must generate audit records for defined events'
                         Expected = 'Process creation auditing enabled'
-                        Actual = if ($processAuditConfigured) { "Enabled" } else { "Disabled" }
-                        Status = if ($processAuditConfigured) { 'Compliant' } else { 'NonCompliant' }
+                        Actual = if ($null -eq $processAuditEntry -or $null -eq $processAuditEntry.Value) { 'Unable to determine' }
+                                 elseif ($processAuditEntry.Success) { "Enabled" } else { "Disabled" }
+                        Status = if ($null -eq $processAuditEntry -or $null -eq $processAuditEntry.Value) { 'NotApplicable' }
+                                 elseif ($processAuditEntry.Success) { 'Compliant' } else { 'NonCompliant' }
                         Impact = 'Medium'
                         Remediation = 'Enable process creation auditing'
                     }
@@ -261,48 +278,42 @@ function Test-NISTCompliance {
                 
                 try {
                     # IA-2: Identification and Authentication
-                    $passwordPolicy = net accounts 2>$null
-                    $minPasswordLengthLine = $passwordPolicy | Select-String "Minimum password length" | Select-Object -First 1
+                    $passwordPolicy = Get-LocalPasswordPolicy
+                    $minPasswordLength = $passwordPolicy.MinPasswordLength
 
-                    if ($minPasswordLengthLine) {
-                        $minPasswordLength = $minPasswordLengthLine.ToString().Split(':')[1].Trim()
-
-                        $control = [PSCustomObject]@{
-                            ControlID = 'IA-2'
-                            ControlName = 'Identification and Authentication'
-                            ControlFamily = 'IdentificationAuthentication'
-                            Description = 'System must uniquely identify and authenticate users'
-                            Expected = 'Minimum password length >= 14 characters'
-                            Actual = "$minPasswordLength characters"
-                            Status = if ([int]$minPasswordLength -ge 14) { 'Compliant' } else { 'NonCompliant' }
-                            Impact = 'High'
-                            Remediation = 'Set minimum password length to 14 characters'
-                        }
-                        $results.Controls += $control
+                    $control = [PSCustomObject]@{
+                        ControlID = 'IA-2'
+                        ControlName = 'Identification and Authentication'
+                        ControlFamily = 'IdentificationAuthentication'
+                        Description = 'System must uniquely identify and authenticate users'
+                        Expected = 'Minimum password length >= 14 characters'
+                        Actual = if ($null -eq $minPasswordLength) { 'Unable to determine' }
+                                 else { "$minPasswordLength characters" }
+                        Status = if ($null -eq $minPasswordLength) { 'NotApplicable' }
+                                 elseif ($minPasswordLength -ge 14) { 'Compliant' } else { 'NonCompliant' }
+                        Impact = 'High'
+                        Remediation = 'Set minimum password length to 14 characters'
                     }
+                    $results.Controls += $control
 
                     # IA-5: Authenticator Management
-                    $maxPasswordAgeLine = $passwordPolicy | Select-String "Maximum password age" | Select-Object -First 1
+                    $maxAgeDays = $passwordPolicy.MaxPasswordAgeDays
 
-                    if ($maxPasswordAgeLine) {
-                        $maxPasswordAge = $maxPasswordAgeLine.ToString().Split(':')[1].Trim().Split(' ')[0]
-                        $maxAgeDays = 0
-                        $maxAgeIsNumeric = [int]::TryParse($maxPasswordAge, [ref]$maxAgeDays)
-
-                        $control = [PSCustomObject]@{
-                            ControlID = 'IA-5'
-                            ControlName = 'Authenticator Management'
-                            ControlFamily = 'IdentificationAuthentication'
-                            Description = 'Authenticators must be managed securely'
-                            Expected = 'Maximum password age <= 60 days'
-                            Actual = "$maxPasswordAge days"
-                            Status = if ($maxAgeIsNumeric -and $maxAgeDays -le 60 -and $maxAgeDays -gt 0) { 'Compliant' } else { 'NonCompliant' }
-                            Impact = 'High'
-                            Remediation = 'Set maximum password age to 60 days or less'
-                        }
-                        $results.Controls += $control
+                    $control = [PSCustomObject]@{
+                        ControlID = 'IA-5'
+                        ControlName = 'Authenticator Management'
+                        ControlFamily = 'IdentificationAuthentication'
+                        Description = 'Authenticators must be managed securely'
+                        Expected = 'Maximum password age <= 60 days'
+                        Actual = if ($null -eq $maxAgeDays) { 'Unable to determine' }
+                                 elseif ($maxAgeDays -eq -1) { 'Never expires' } else { "$maxAgeDays days" }
+                        Status = if ($null -eq $maxAgeDays) { 'NotApplicable' }
+                                 elseif ($maxAgeDays -gt 0 -and $maxAgeDays -le 60) { 'Compliant' } else { 'NonCompliant' }
+                        Impact = 'High'
+                        Remediation = 'Set maximum password age to 60 days or less'
                     }
-                    
+                    $results.Controls += $control
+
                     # IA-8: Identification and Authentication (Non-Organizational Users)
                     $regTest = Test-RegistryValue -Path 'HKLM:\SYSTEM\CurrentControlSet\Control\Lsa' `
                         -Name 'LimitBlankPasswordUse' -ExpectedValue 1

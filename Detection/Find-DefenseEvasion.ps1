@@ -410,7 +410,17 @@ function Find-DefenseEvasion {
                     elseif (5007 -eq $eventId) {
                         $sev = 'Medium'
                         $desc = 'Defender configuration changed'
-                        if (-not [string]::IsNullOrEmpty($msg) -and $msg -match '(?i)exclusion') {
+                        $exclusionPath = $null
+                        if ($null -ne $evt.PSObject.Properties['Properties'] -and $null -ne $evt.Properties) {
+                            foreach ($prop in $evt.Properties) {
+                                if ($null -ne $prop -and $null -ne $prop.Value -and
+                                    $prop.Value -is [string] -and $prop.Value -match '(?i)\\Exclusions\\') {
+                                    $exclusionPath = $prop.Value
+                                    break
+                                }
+                            }
+                        }
+                        if ($null -ne $exclusionPath) {
                             $sev = 'High'
                             $desc = 'Defender exclusion changed'
                         }

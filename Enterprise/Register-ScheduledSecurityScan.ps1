@@ -684,7 +684,11 @@ exit 0
                         foreach ($existingRule in @($scriptAcl.Access)) {
                             $null = $scriptAcl.RemoveAccessRule($existingRule)
                         }
-                        foreach ($identity in @('NT AUTHORITY\SYSTEM', 'BUILTIN\Administrators')) {
+                        $aclIdentities = @(
+                            (New-Object System.Security.Principal.SecurityIdentifier('S-1-5-18')),
+                            (New-Object System.Security.Principal.SecurityIdentifier('S-1-5-32-544'))
+                        )
+                        foreach ($identity in $aclIdentities) {
                             $accessRule = New-Object System.Security.AccessControl.FileSystemAccessRule(
                                 $identity,
                                 [System.Security.AccessControl.FileSystemRights]::FullControl,

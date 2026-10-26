@@ -378,12 +378,9 @@ function Invoke-SecurityAssessment {
                 }
             }
             
-            # WiFi security (if applicable; netsh absent on non-Windows or Server Core - guard the lookup)
-            $wifiProfiles = $null
-            if (Get-Command netsh -ErrorAction SilentlyContinue) {
-                $wifiProfiles = netsh wlan show profiles | Select-String "All User Profile"
-            }
-            if ($wifiProfiles) {
+            # WiFi security (if applicable)
+            $wifiProfiles = @(Get-WlanProfileList)
+            if ($wifiProfiles.Count -gt 0) {
                 $networkSecurity.CategoryScore += 10
                 $networkSecurity.Checks += [PSCustomObject]@{
                     Check = 'WiFi Profiles'
@@ -478,17 +475,25 @@ function Invoke-SecurityAssessment {
                 }
             }
             
-            # Password policy (net.exe absent on non-Windows - guard the lookup)
-            $passwordPolicy = $null
-            if (Get-Command net -ErrorAction SilentlyContinue) {
-                $passwordPolicy = net accounts
-            }
-            $accountSecurity.CategoryScore += 20
-            $accountSecurity.Checks += [PSCustomObject]@{
-                Check = 'Password Policy'
-                Status = 'Info'
-                Score = 20
-                Details = 'Configured'
+            # Password policy
+            $passwordPolicy = Get-LocalPasswordPolicy
+            if ($null -ne $passwordPolicy -and $passwordPolicy.Source -ne 'Unavailable') {
+                $minLengthText = if ($null -eq $passwordPolicy.MinPasswordLength) { 'unknown' } else { "$($passwordPolicy.MinPasswordLength)" }
+                $maxAgeText = if ($null -eq $passwordPolicy.MaxPasswordAgeDays) { 'unknown' } elseif ($passwordPolicy.MaxPasswordAgeDays -lt 0) { 'never' } else { "$($passwordPolicy.MaxPasswordAgeDays) days" }
+                $accountSecurity.CategoryScore += 20
+                $accountSecurity.Checks += [PSCustomObject]@{
+                    Check = 'Password Policy'
+                    Status = 'Info'
+                    Score = 20
+                    Details = "Min length: $minLengthText, Max age: $maxAgeText"
+                }
+            } else {
+                $accountSecurity.Checks += [PSCustomObject]@{
+                    Check = 'Password Policy'
+                    Status = 'Warning'
+                    Score = 0
+                    Details = 'Unable to determine password policy'
+                }
             }
             
             # Accounts without passwords
@@ -518,8 +523,15 @@ function Invoke-SecurityAssessment {
             }
             
             # Administrator group members
-            $admins = @(Get-LocalGroupMember -Group "Administrators" -ErrorAction SilentlyContinue)
-            if ($admins.Count -le 2) {
+            $admins = @(Get-AdminGroupMembers)
+            if ($script:AdminGroupLookupSucceeded -ne $true) {
+                $accountSecurity.Checks += [PSCustomObject]@{
+                    Check = 'Administrator Group Size'
+                    Status = 'Warning'
+                    Score = 0
+                    Details = 'Unable to enumerate administrators'
+                }
+            } elseif ($admins.Count -le 2) {
                 $accountSecurity.CategoryScore += 20
                 $accountSecurity.Checks += [PSCustomObject]@{
                     Check = 'Administrator Group Size'
@@ -728,18 +740,25 @@ try {
                 }
             }
             
-            # Audit logging (auditpol absent on non-Windows - guard the lookup)
-            $auditPolicy = $null
-            if (Get-Command auditpol -ErrorAction SilentlyContinue) {
-                $auditPolicy = auditpol /get /category:* 2>&1
-            }
-            if ($auditPolicy -match 'Success') {
+            # Audit logging
+            $auditTable = Get-AuditPolicyTable
+            $auditEntries = if ($null -ne $auditTable) { @($auditTable.Values) } else { @() }
+            $auditedCount = @($auditEntries | Where-Object { $_.Success -or $_.Failure }).Count
+            $knownCount = @($auditEntries | Where-Object { $null -ne $_.Value }).Count
+            if ($auditedCount -gt 0) {
                 $dataProtection.CategoryScore += 15
                 $dataProtection.Checks += [PSCustomObject]@{
                     Check = 'Audit Logging'
                     Status = 'Pass'
                     Score = 15
                     Details = 'Configured'
+                }
+            } elseif ($knownCount -eq 0) {
+                $dataProtection.Checks += [PSCustomObject]@{
+                    Check = 'Audit Logging'
+                    Status = 'Warning'
+                    Score = 0
+                    Details = 'Unable to determine'
                 }
             } else {
                 $dataProtection.Checks += [PSCustomObject]@{

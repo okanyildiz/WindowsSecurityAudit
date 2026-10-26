@@ -269,11 +269,17 @@ function Set-SecurityBaseline {
                 
                 # Configure account lockout policy
                 net accounts /lockoutthreshold:5 /lockoutduration:30 /lockoutwindow:30 | Out-Null
+                if ($LASTEXITCODE -ne 0) {
+                    Write-Warning "  Account lockout policy configuration failed (net accounts exit code $LASTEXITCODE)"
+                }
                 $results.Changes += "Account lockout policy configured (5 attempts, 30 min lockout)"
                 
                 # Password policy
                 if ($BaselineLevel -in @('Recommended', 'Strict')) {
                     net accounts /minpwlen:12 /maxpwage:90 /minpwage:1 /uniquepw:5 | Out-Null
+                    if ($LASTEXITCODE -ne 0) {
+                        Write-Warning "  Password policy configuration failed (net accounts exit code $LASTEXITCODE)"
+                    }
                     $results.Changes += "Password policy: 12 char minimum, 90 day max age"
                 }
                 
@@ -311,6 +317,9 @@ function Set-SecurityBaseline {
                 
                 # Enable DEP (Data Execution Prevention)
                 bcdedit /set nx AlwaysOn | Out-Null
+                if ($LASTEXITCODE -ne 0) {
+                    Write-Warning "  DEP configuration failed (bcdedit exit code $LASTEXITCODE)"
+                }
                 $results.Changes += "DEP enabled"
                 
                 # Disable unnecessary services

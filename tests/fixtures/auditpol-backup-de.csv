@@ -1,0 +1,14 @@
+Computername,Richtlinienziel,Unterkategorie,Unterkategorie-GUID,Einbeziehungseinstellung,Ausschlusseinstellung,Einstellungswert
+WSA-TEST01,System,Änderung des Sicherheitszustands,{0CCE9210-69AE-11D9-BED3-505054503030},Erfolg und Fehler,,3
+WSA-TEST01,System,Systemintegrität,{0CCE9212-69AE-11D9-BED3-505054503030},Erfolg und Fehler,,3
+WSA-TEST01,System,Anmelden,{0CCE9215-69AE-11D9-BED3-505054503030},Erfolg und Fehler,,3
+WSA-TEST01,System,Abmelden,{0CCE9216-69AE-11D9-BED3-505054503030},Erfolg,,1
+
+WSA-TEST01,System,Spezielle Anmeldung,{0CCE921B-69AE-11D9-BED3-505054503030},Erfolg,,1
+WSA-TEST01,System,Dateisystem,{0CCE921D-69AE-11D9-BED3-505054503030},Keine Überwachung,,0
+WSA-TEST01,System,Verwendung sensibler Rechte,{0CCE9228-69AE-11D9-BED3-505054503030},Fehler,,2
+WSA-TEST01,System,Prozesserstellung,{0CCE922B-69AE-11D9-BED3-505054503030},Erfolg,,1
+WSA-TEST01,System,Verzeichnisdienstzugriff,{0CCE923B-69AE-11D9-BED3-505054503030},Fehler,,2
+WSA-TEST01,System,Anmeldeinformationsüberprüfung,{0CCE923F-69AE-11D9-BED3-505054503030},Erfolg und Fehler,,3
+WSA-TEST01,System,Option:CrashOnAuditFail,,Erfolg,,0
+WSA-TEST01,S-1-5-21-3623811015-3361044348-30300820-1001,Anmelden,{0CCE9215-69AE-11D9-BED3-505054503030},Erfolg,,1

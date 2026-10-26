@@ -141,7 +141,7 @@ function Find-APTIndicators {
                         # Skip whitelisted services
                         $isWhitelisted = $false
                         foreach ($legit in $legitimateServices) {
-                            if ($service.Name -like "*$legit*" -or $service.DisplayName -like "*$legit*") {
+                            if ($service.Name -like "*$legit*") {
                                 $isWhitelisted = $true
                                 break
                             }
@@ -156,7 +156,7 @@ function Find-APTIndicators {
                         
                         # Check for actual malicious names
                         foreach ($malName in $knownMaliciousNames) {
-                            if ($service.Name -match $malName -or $service.DisplayName -match $malName) {
+                            if ($service.Name -match $malName) {
                                 $suspiciousScore += 70
                                 $reasons += "CRITICAL: Name matches known malware: $malName"
                             }

@@ -5,7 +5,7 @@
 [![PowerShell](https://img.shields.io/badge/PowerShell-5.1%2B-blue.svg)](https://github.com/PowerShell/PowerShell)
 [![Windows](https://img.shields.io/badge/Windows-10%2F11%2FServer%202016%2B-blue.svg)](https://www.microsoft.com/windows)
 [![License](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
-[![Version](https://img.shields.io/badge/Version-1.5.0-orange.svg)](https://github.com/okanyildiz/WindowsSecurityAudit/releases)
+[![Version](https://img.shields.io/badge/Version-1.6.0-orange.svg)](https://github.com/okanyildiz/WindowsSecurityAudit/releases)
 [![Functions](https://img.shields.io/badge/Functions-72-brightgreen.svg)](https://github.com/okanyildiz/WindowsSecurityAudit)
 [![Modules](https://img.shields.io/badge/Modules-14-blue.svg)](https://github.com/okanyildiz/WindowsSecurityAudit)
 [![CI](https://github.com/okanyildiz/WindowsSecurityAudit/actions/workflows/ci.yml/badge.svg)](https://github.com/okanyildiz/WindowsSecurityAudit/actions/workflows/ci.yml)
@@ -698,7 +698,24 @@ The Reporting module transforms raw security data into actionable intelligence t
 
 The full feature set is documented in the module tables above — this section only covers what changed per release, newest first:
 
-### 🆕 v1.5.0 — Fleet Scans, Sysmon Analytics, SIEM Streaming & Smart Alerts
+### 🆕 v1.6.0 — Full Non-English Windows Support (Locale-Invariant Auditing)
+
+**A correctness overhaul, not just a feature:** every check that parsed localized console output (`auditpol`, `net accounts`, `netsh`, `fsutil`, SFC/DISM) or matched localized identity names (`Administrators`, `Guest`, `Everyone`, `NT AUTHORITY\SYSTEM`) has been rewritten to use **APIs, GUIDs and SIDs** — the module now produces correct results on Turkish, German, French and any other Windows display language, and reports an honest *"unable to determine"* instead of a silent wrong PASS when data is unreachable.
+
+**New internal data sources (`Private/`, 4 helpers):**
+
+| Helper | Replaces | How |
+|--------|----------|-----|
+| **`Get-AuditPolicyTable`** | localized `auditpol /get` text parsing | `AuditQuerySystemPolicy` P/Invoke (GUID-keyed) → elevated `auditpol /backup` fixed-header CSV (numeric Setting Value) → GUID-addressed `/get` with honest unknowns; full **59-subcategory GUID map** (MS-GPAC) |
+| **`Get-LocalPasswordPolicy`** | localized `net accounts` parsing | `NetUserModalsGet` levels 0+3 (non-admin, binary API) with elevated `secedit /export` fallback for `PasswordComplexity` |
+| **`Get-WlanProfileList`** | localized `netsh wlan show profiles` | `wlanapi.dll` P/Invoke; missing WLAN service/feature = "not applicable", not an error |
+| **Identity helpers** | name-based group/user/ACL lookups | SID-first (`S-1-5-32-544`, RID 500/501, `S-1-1-0`…) with ADSI fallback; safe under 32-bit PowerShell and AzureAD unresolvable SIDs |
+
+**27 call sites migrated across 16 files** — compliance frameworks (CIS/NIST/PCI-DSS), enterprise assessment & fleet scans, audit-policy hardening (GUID-based `/set` — `Enable-AuditPolicies` previously only worked on English Windows), registry/ACL analysis, defense-evasion detection, SFC/DISM integrity, memory-dump and scheduled-scan **ACL lockdowns (these silently failed on non-English systems, leaving credential-bearing files world-readable)**.
+
+**Regression armor:** new `tests/Locale.Regression.Tests.ps1` — English/German (ANSI cp1252) auditpol fixture equivalence tests, plus a static **"no text readers" guard** that fails CI if localized-output parsing ever re-enters the codebase.
+
+### v1.5.0 — Fleet Scans, Sysmon Analytics, SIEM Streaming & Smart Alerts
 
 **3 new functions** — bringing the toolkit to **72 functions across 14 modules**:
 
@@ -980,12 +997,14 @@ We work with Fortune 500 companies, government agencies, and organizations of al
 
 ## 🚀 Roadmap
 
-### Version 1.6 (Next)
-- [ ] **Locale-invariant parsing** — make `auditpol` / `net accounts` parsing robust on non-English Windows
-- [ ] **Raw $MFT record parsing** — go beyond fsutil summary output for full file-system timelines
-- [ ] **JEA endpoint support** — run remote scans through Just Enough Administration constrained endpoints
+### Version 1.7 (Next)
+- [ ] **Raw $MFT record parsing** — go beyond fsutil summary output for full file-system timelines (locale-invariant `FSCTL_READ_USN_JOURNAL` P/Invoke replaces fsutil text parsing)
+- [ ] **JEA endpoint support** — run remote scans through Just Enough Administration constrained endpoints (CLM-safe: precompiled helpers, no Add-Type dependency)
 - [ ] **Alert webhook DPAPI protection** — encrypt stored webhook URLs at rest
 - [ ] **SIEM streaming auth profiles** — named credential profiles and OAuth flows for Send-SiemEvent
+
+### Version 1.6 (Released)
+- [x] **Locale-invariant auditing** — all `auditpol` / `net accounts` / `netsh` / `fsutil` / SFC-DISM parsing and name-based identity lookups replaced by APIs, GUIDs and SIDs; correct results on non-English Windows with honest "unable to determine" states
 
 ### Version 2.0 (Future)
 - [ ] Web-based GUI dashboard

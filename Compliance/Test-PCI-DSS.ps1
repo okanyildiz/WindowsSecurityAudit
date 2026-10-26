@@ -208,64 +208,61 @@ function Test-PCI-DSS {
                 
                 try {
                     # Req 7.1: Limit access to system components
-                    $guestUser = Get-LocalUser -Name "Guest" -ErrorAction SilentlyContinue
-                    $guestDisabled = ($null -eq $guestUser) -or ($guestUser.Enabled -eq $false)
-                    
+                    $guestUser = Get-LocalUserByRid -Rid 501 -ErrorAction SilentlyContinue
+                    $guestKnown = ($null -ne $guestUser) -and ($null -ne $guestUser.Enabled)
+                    $guestDisabled = $guestKnown -and ($guestUser.Enabled -eq $false)
+
                     $req = [PSCustomObject]@{
                         RequirementID = '7.1.1'
                         RequirementName = 'Access Limitations'
                         Category = 'AccessControl'
                         Description = 'Unnecessary accounts must be disabled'
                         Expected = 'Guest account disabled'
-                        Actual = if ($guestDisabled) { "Disabled" } else { "Enabled" }
-                        Status = if ($guestDisabled) { 'InPlace' } else { 'NotInPlace' }
+                        Actual = if (-not $guestKnown) { 'Unable to determine (insufficient privileges or unsupported platform)' }
+                                 elseif ($guestDisabled) { "Disabled" } else { "Enabled" }
+                        Status = if (-not $guestKnown) { 'NotApplicable' }
+                                 elseif ($guestDisabled) { 'InPlace' } else { 'NotInPlace' }
                         Priority = 'High'
                         Remediation = 'Disable Guest and other unnecessary accounts'
                     }
                     $results.Requirements += $req
                     
                     # Req 8.2: User identification and authentication
-                    $passwordPolicy = net accounts 2>$null
-                    $minPasswordLengthLine = $passwordPolicy | Select-String "Minimum password length" | Select-Object -First 1
+                    $passwordPolicy = Get-LocalPasswordPolicy
+                    $minPasswordLength = $passwordPolicy.MinPasswordLength
 
-                    if ($minPasswordLengthLine) {
-                        $minPasswordLength = $minPasswordLengthLine.ToString().Split(':')[1].Trim()
-
-                        $req = [PSCustomObject]@{
-                            RequirementID = '8.2.3'
-                            RequirementName = 'Password Complexity'
-                            Category = 'AccessControl'
-                            Description = 'Passwords must meet minimum complexity'
-                            Expected = 'Minimum 12 characters (or 8 if MFA)'
-                            Actual = "$minPasswordLength characters"
-                            Status = if ([int]$minPasswordLength -ge 12) { 'InPlace' } else { 'NotInPlace' }
-                            Priority = 'Critical'
-                            Remediation = 'Set minimum password length to 12 characters'
-                        }
-                        $results.Requirements += $req
+                    $req = [PSCustomObject]@{
+                        RequirementID = '8.2.3'
+                        RequirementName = 'Password Complexity'
+                        Category = 'AccessControl'
+                        Description = 'Passwords must meet minimum complexity'
+                        Expected = 'Minimum 12 characters (or 8 if MFA)'
+                        Actual = if ($null -eq $minPasswordLength) { 'Unable to determine (insufficient privileges or unsupported platform)' }
+                                 else { "$minPasswordLength characters" }
+                        Status = if ($null -eq $minPasswordLength) { 'NotApplicable' }
+                                 elseif ($minPasswordLength -ge 12) { 'InPlace' } else { 'NotInPlace' }
+                        Priority = 'Critical'
+                        Remediation = 'Set minimum password length to 12 characters'
                     }
+                    $results.Requirements += $req
 
                     # Req 8.2.4: Change passwords every 90 days
-                    $maxPasswordAgeLine = $passwordPolicy | Select-String "Maximum password age" | Select-Object -First 1
+                    $maxAgeDays = $passwordPolicy.MaxPasswordAgeDays
 
-                    if ($maxPasswordAgeLine) {
-                        $maxPasswordAge = $maxPasswordAgeLine.ToString().Split(':')[1].Trim().Split(' ')[0]
-                        $maxAgeDays = 0
-                        $maxAgeIsNumeric = [int]::TryParse($maxPasswordAge, [ref]$maxAgeDays)
-
-                        $req = [PSCustomObject]@{
-                            RequirementID = '8.2.4'
-                            RequirementName = 'Password Change Frequency'
-                            Category = 'AccessControl'
-                            Description = 'Passwords must be changed periodically'
-                            Expected = '90 days or less'
-                            Actual = "$maxPasswordAge days"
-                            Status = if ($maxAgeIsNumeric -and $maxAgeDays -le 90 -and $maxAgeDays -gt 0) { 'InPlace' } else { 'NotInPlace' }
-                            Priority = 'High'
-                            Remediation = 'Set maximum password age to 90 days'
-                        }
-                        $results.Requirements += $req
+                    $req = [PSCustomObject]@{
+                        RequirementID = '8.2.4'
+                        RequirementName = 'Password Change Frequency'
+                        Category = 'AccessControl'
+                        Description = 'Passwords must be changed periodically'
+                        Expected = '90 days or less'
+                        Actual = if ($null -eq $maxAgeDays) { 'Unable to determine (insufficient privileges or unsupported platform)' }
+                                 elseif ($maxAgeDays -eq -1) { 'Never expires' } else { "$maxAgeDays days" }
+                        Status = if ($null -eq $maxAgeDays) { 'NotApplicable' }
+                                 elseif ($maxAgeDays -gt 0 -and $maxAgeDays -le 90) { 'InPlace' } else { 'NotInPlace' }
+                        Priority = 'High'
+                        Remediation = 'Set maximum password age to 90 days'
                     }
+                    $results.Requirements += $req
                     
                     # Req 8.3: Multi-factor authentication
                     $req = [PSCustomObject]@{
@@ -292,34 +289,48 @@ function Test-PCI-DSS {
                 
                 try {
                     # Req 10.2: Audit logs for all users
-                    $auditLogons = auditpol /get /subcategory:"Logon" 2>$null
-                    $logonAuditEnabled = $auditLogons -match "Success and Failure"
-                    
+                    $logonGuid = Get-AuditSubcategoryGuid -Name 'Logon'
+                    $logonAuditValue = $null
+                    if ($null -ne $logonGuid) {
+                        $logonTable = Get-AuditPolicyTable -Subcategory 'Logon'
+                        $logonKey = ($logonGuid -replace '[{}]', '').ToLowerInvariant()
+                        if ($logonTable.ContainsKey($logonKey)) { $logonAuditValue = $logonTable[$logonKey].Value }
+                    }
+
                     $req = [PSCustomObject]@{
                         RequirementID = '10.2.1'
                         RequirementName = 'User Access Logging'
                         Category = 'Monitoring'
                         Description = 'All access to system components must be logged'
                         Expected = 'Logon auditing: Success and Failure'
-                        Actual = if ($logonAuditEnabled) { "Enabled" } else { "Not configured" }
-                        Status = if ($logonAuditEnabled) { 'InPlace' } else { 'NotInPlace' }
+                        Actual = if ($null -eq $logonAuditValue) { 'Unable to determine (insufficient privileges or unsupported platform)' }
+                                 elseif ($logonAuditValue -eq 3) { "Enabled" } else { "Not configured" }
+                        Status = if ($null -eq $logonAuditValue) { 'NotApplicable' }
+                                 elseif ($logonAuditValue -eq 3) { 'InPlace' } else { 'NotInPlace' }
                         Priority = 'Critical'
                         Remediation = 'Enable audit policy for Logon events'
                     }
                     $results.Requirements += $req
-                    
+
                     # Req 10.3: Audit trail content
-                    $auditObjectAccess = auditpol /get /subcategory:"File System" 2>$null
-                    $objectAuditEnabled = $auditObjectAccess -match "Success|Failure"
-                    
+                    $fileSystemGuid = Get-AuditSubcategoryGuid -Name 'File System'
+                    $objectAuditValue = $null
+                    if ($null -ne $fileSystemGuid) {
+                        $fileSystemTable = Get-AuditPolicyTable -Subcategory 'File System'
+                        $fileSystemKey = ($fileSystemGuid -replace '[{}]', '').ToLowerInvariant()
+                        if ($fileSystemTable.ContainsKey($fileSystemKey)) { $objectAuditValue = $fileSystemTable[$fileSystemKey].Value }
+                    }
+
                     $req = [PSCustomObject]@{
                         RequirementID = '10.3.1'
                         RequirementName = 'Audit Trail Details'
                         Category = 'Monitoring'
                         Description = 'Logs must contain sufficient detail'
                         Expected = 'File system auditing enabled'
-                        Actual = if ($objectAuditEnabled) { "Enabled" } else { "Not configured" }
-                        Status = if ($objectAuditEnabled) { 'InPlace' } else { 'NotInPlace' }
+                        Actual = if ($null -eq $objectAuditValue) { 'Unable to determine (insufficient privileges or unsupported platform)' }
+                                 elseif ($objectAuditValue -ge 1) { "Enabled" } else { "Not configured" }
+                        Status = if ($null -eq $objectAuditValue) { 'NotApplicable' }
+                                 elseif ($objectAuditValue -ge 1 -and $objectAuditValue -le 3) { 'InPlace' } else { 'NotInPlace' }
                         Priority = 'High'
                         Remediation = 'Enable file system object access auditing'
                     }

@@ -191,8 +191,18 @@ function Get-MultiSystemAudit {
                             }
                             
                             # Admin accounts
-                            $admins = @(Get-LocalGroupMember -Group "Administrators" -ErrorAction SilentlyContinue)
-                            if ($admins.Count -le 2) {
+                            $admins = @()
+                            $adminLookupSucceeded = $false
+                            if (Get-Command Get-AdminGroupMembers -ErrorAction SilentlyContinue) {
+                                $admins = @(Get-AdminGroupMembers)
+                                $adminLookupSucceeded = ((Get-Variable -Name AdminGroupLookupSucceeded -Scope Script -ValueOnly -ErrorAction SilentlyContinue) -eq $true)
+                            }
+                            if (-not $adminLookupSucceeded) {
+                                $findings += [PSCustomObject]@{
+                                    Severity = 'Low'
+                                    Finding = 'Unable to determine administrator count'
+                                }
+                            } elseif ($admins.Count -le 2) {
                                 $score += 15
                             } else {
                                 $findings += [PSCustomObject]@{
@@ -267,8 +277,18 @@ function Get-MultiSystemAudit {
                             }
                             
                             # Admin accounts
-                            $admins = @(Get-LocalGroupMember -Group "Administrators" -ErrorAction SilentlyContinue)
-                            if ($admins.Count -le 2) {
+                            $admins = @()
+                            $adminLookupSucceeded = $false
+                            if (Get-Command Get-AdminGroupMembers -ErrorAction SilentlyContinue) {
+                                $admins = @(Get-AdminGroupMembers)
+                                $adminLookupSucceeded = ((Get-Variable -Name AdminGroupLookupSucceeded -Scope Script -ValueOnly -ErrorAction SilentlyContinue) -eq $true)
+                            }
+                            if (-not $adminLookupSucceeded) {
+                                $findings += [PSCustomObject]@{
+                                    Severity = 'Low'
+                                    Finding = 'Unable to determine administrator count'
+                                }
+                            } elseif ($admins.Count -le 2) {
                                 $score += 15
                             } else {
                                 $findings += [PSCustomObject]@{

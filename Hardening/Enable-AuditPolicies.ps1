@@ -81,12 +81,20 @@ function Enable-AuditPolicies {
             Comprehensive = @{
                 'Account Logon' = @('Credential Validation', 'Kerberos Authentication Service', 'Kerberos Service Ticket Operations')
                 'Account Management' = @('User Account Management', 'Security Group Management', 'Computer Account Management', 'Distribution Group Management', 'Application Group Management')
-                'Detailed Tracking' = @('Process Creation', 'Process Termination', 'DPAPI Activity', 'RPC Events', 'PNP Activity')
+                'Detailed Tracking' = @('Process Creation', 'Process Termination', 'DPAPI Activity', 'RPC Events', 'Plug and Play Events')
                 'Logon/Logoff' = @('Logon', 'Logoff', 'Account Lockout', 'Special Logon', 'Other Logon/Logoff Events', 'Network Policy Server')
                 'Object Access' = @('File System', 'Registry', 'Kernel Object', 'SAM', 'Handle Manipulation', 'File Share', 'Filtering Platform Packet Drop', 'Filtering Platform Connection')
                 'Policy Change' = @('Audit Policy Change', 'Authentication Policy Change', 'Authorization Policy Change', 'MPSSVC Rule-Level Policy Change', 'Filtering Platform Policy Change')
                 'Privilege Use' = @('Sensitive Privilege Use', 'Non Sensitive Privilege Use')
                 'System' = @('Security State Change', 'Security System Extension', 'System Integrity', 'IPsec Driver', 'Other System Events')
+            }
+        }
+
+        foreach ($level in @($auditSettings.Keys)) {
+            foreach ($category in @($auditSettings[$level].Keys)) {
+                $auditSettings[$level][$category] = @($auditSettings[$level][$category] | ForEach-Object {
+                    @{ Name = $_; Guid = Get-AuditSubcategoryGuid -Name $_ }
+                })
             }
         }
     }
@@ -103,23 +111,27 @@ function Enable-AuditPolicies {
                 
                 foreach ($subcategory in $selectedSettings[$category]) {
                     try {
+                        if ($null -eq $subcategory.Guid) {
+                            Write-Warning "  - Skipped: $($subcategory.Name) (no GUID in subcategory map)"
+                            continue
+                        }
                         # Enable both Success and Failure auditing
-                        if ($PSCmdlet.ShouldProcess($subcategory, "Enable audit policy")) {
-                            $result = & auditpol /set /subcategory:"$subcategory" /success:enable /failure:enable 2>&1
+                        if ($PSCmdlet.ShouldProcess($subcategory.Name, "Enable audit policy")) {
+                            $result = & auditpol /set /subcategory:"$($subcategory.Guid)" /success:enable /failure:enable 2>&1
                             
                             if ($LASTEXITCODE -eq 0) {
-                                $results.PoliciesConfigured += $subcategory
-                                Write-Host "  + $subcategory" -ForegroundColor Green
+                                $results.PoliciesConfigured += $subcategory.Name
+                                Write-Host "  + $($subcategory.Name)" -ForegroundColor Green
                             }
                             else {
-                                $results.Errors += "Failed to configure: $subcategory - $result"
-                                Write-Warning "  - Failed: $subcategory"
+                                $results.Errors += "Failed to configure: $($subcategory.Name) - $result"
+                                Write-Warning "  - Failed: $($subcategory.Name)"
                             }
                         }
                     }
                     catch {
-                        $results.Errors += "Error configuring $subcategory : $_"
-                        Write-Warning "  - Error: $subcategory"
+                        $results.Errors += "Error configuring $($subcategory.Name) : $_"
+                        Write-Warning "  - Error: $($subcategory.Name)"
                     }
                 }
                 
@@ -128,7 +140,7 @@ function Enable-AuditPolicies {
                 if ($results.AuditCategories.ContainsKey($categoryKey)) {
                     $results.AuditCategories[$categoryKey] = @{
                         Configured = $true
-                        Subcategories = $selectedSettings[$category]
+                        Subcategories = @($selectedSettings[$category] | ForEach-Object { $_.Name })
                     }
                 }
             }
@@ -221,7 +233,7 @@ function Enable-AuditPolicies {
                                 
                                 # Create audit rule for Everyone - Track both Success and Failure
                                 $auditRule = New-Object System.Security.AccessControl.FileSystemAuditRule(
-                                    "Everyone",
+                                    (New-Object System.Security.Principal.SecurityIdentifier('S-1-1-0')),
                                     "Delete,DeleteSubdirectoriesAndFiles,ChangePermissions,TakeOwnership",
                                     "ContainerInherit,ObjectInherit",
                                     "None",
@@ -264,7 +276,7 @@ function Enable-AuditPolicies {
                                 $acl = Get-Acl $regKey
                                 
                                 $auditRule = New-Object System.Security.AccessControl.RegistryAuditRule(
-                                    "Everyone",
+                                    (New-Object System.Security.Principal.SecurityIdentifier('S-1-1-0')),
                                     "SetValue,CreateSubKey,Delete",
                                     "ContainerInherit",
                                     "None",
@@ -314,8 +326,29 @@ function Enable-AuditPolicies {
         
         # Verify current audit policy
         Write-Host "`nVerifying configuration..." -ForegroundColor Cyan
-        $verifyResult = auditpol /get /category:* | Out-String
-        Write-Verbose $verifyResult
+        $auditTable = Get-AuditPolicyTable -Force
+        $verifiedPolicies = 0
+        $unverifiedPolicies = @()
+        foreach ($category in $selectedSettings.Keys) {
+            foreach ($subcategory in $selectedSettings[$category]) {
+                if ($null -eq $subcategory.Guid) { continue }
+                $guidKey = ($subcategory.Guid -replace '[{}]', '').ToLowerInvariant()
+                if ($auditTable.ContainsKey($guidKey) -and $null -ne $auditTable[$guidKey].Value -and
+                    $auditTable[$guidKey].Value -ge 1 -and $auditTable[$guidKey].Value -le 3) {
+                    $verifiedPolicies++
+                }
+                else {
+                    $unverifiedPolicies += $subcategory.Name
+                }
+            }
+        }
+        Write-Host "  Verified: $verifiedPolicies subcategories with auditing enabled" -ForegroundColor White
+        if ($unverifiedPolicies.Count -gt 0) {
+            Write-Host "  Unverified: $($unverifiedPolicies.Count)" -ForegroundColor Yellow
+            foreach ($name in $unverifiedPolicies) {
+                Write-Host "    - $name" -ForegroundColor Yellow
+            }
+        }
         
         Write-Host "`nRecommendations:" -ForegroundColor Cyan
         Write-Host "  1. Monitor Security event log regularly" -ForegroundColor White

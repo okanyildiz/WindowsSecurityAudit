@@ -7,6 +7,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.6.0] - 2026-10-26
+
+### Added
+
+- Locale-invariant Windows support: new internal helpers in `Private/` replace all localized console-output parsing with APIs, GUIDs and SIDs, so the module produces correct results on non-English Windows (Turkish, German, French, ...):
+  - `Get-AuditPolicyTable`: advanced audit policy via `AuditQuerySystemPolicy` P/Invoke (GUID-keyed, privilege-failure aware), falling back to `auditpol /backup` fixed-header CSV parsing (numeric Setting Value, German-fixture tested) and GUID-addressed `auditpol /get` with honest "unknown" instead of guessing from localized text. Includes the full 59-subcategory GUID map (MS-GPAC).
+  - `Get-LocalPasswordPolicy`: password/lockout policy via `NetUserModalsGet` (levels 0+3, non-admin, locale-invariant) with an elevated `secedit /export` fallback that also covers `PasswordComplexity`/`ClearTextPassword`.
+  - `Get-WlanProfileList`: WLAN profiles via `wlanapi.dll` P/Invoke instead of localized `netsh wlan show profiles` output; missing WLAN service/feature is "not applicable", not an error.
+  - Identity helpers: `Get-AdminGroupMembers` (SID-first with ADSI fallback, 32-bit-PowerShell and unresolvable-SID safe), `Get-LocalUserByRid` (RID 500/501 instead of localized names), `Test-IdentityReferenceIsSid`, `Get-WellKnownSid`.
+- Locale regression test suite (`tests/Locale.Regression.Tests.ps1`): English/German (ANSI cp1252) auditpol fixture equivalence tests and a static "no text readers" guard that fails the build if localized-output parsing (`auditpol /get`, `net accounts`, name-based group/user lookups, string identities in ACL rules) ever re-enters the codebase.
+
+### Fixed
+
+- Silent false PASS on non-English Windows across compliance checks: `Guest`/`Administrator` account checks (PCI 7.1.1, CIS 2.3.1.1/2.3.1.5, NIST AC-2) and `Administrators` group membership checks (Invoke-SecurityAssessment, Get-MultiSystemAudit, Invoke-EnterpriseSecurityScan) failed closed-by-accident (lookup exception swallowed → "0 admins"/"disabled" → pass). All now SID/RID-based and report an honest "unable to determine" state on lookup failure.
+- Audit policy checks (PCI 10.2.1/10.3.1, NIST AU-2/AU-12, CIS 17.1.1/17.2.1/17.5.1) and password policy checks (PCI 8.2.3/8.2.4, NIST IA-2/IA-5) never matched on localized `auditpol`/`net accounts` output.
+- `Enable-AuditPolicies`: `auditpol /set` now uses subcategory GUIDs (worked only on English Windows before); post-change verification no longer parses localized text; file/registry SACLs for "Everyone" use SID `S-1-1-0` (audit rules were silently never applied on non-English systems).
+- ACL lockdowns of the scheduled-scan script (embeds the webhook secret) and of memory dumps (potentially credential-bearing) threw `IdentityNotMappedException` on non-English Windows and left the files world-readable — now SID-based (`S-1-5-18`, `S-1-5-32-544`) with post-`Set-Acl` verification for dump files.
+- `Get-SecurityMisconfigurations` world-writable check and `Get-RegistryAnalysis` permissive-ACL check matched localized identity names ('Everyone'/'Users') and never fired on non-English systems — now SID-based.
+- `Find-DefenseEvasion` Defender 5007 severity keyed off localized event message text — now uses the structured registry-path property.
+- `Get-FileSystemJournal`: elevation/permission detection now uses `$LASTEXITCODE` instead of English error text; localized fsutil output produces an explicit warning instead of silently empty forensic evidence; timestamp parsing is invariant-culture only.
+- `Test-SystemIntegrity`: SFC/DISM verdicts no longer rely on localized English sentences — exit codes plus locale-stable CBS.log `[SR]`/`Cannot repair` markers are primary.
+- `Set-SecurityBaseline`: `net accounts`/`bcdedit` failures are now surfaced via `$LASTEXITCODE` warnings instead of silently passing.
+- `Find-APTIndicators`: service matching uses the non-localized service `Name` only, not the SCM-localized `DisplayName`.
+
 ## [1.5.0] - 2026-10-25
 
 ### Added

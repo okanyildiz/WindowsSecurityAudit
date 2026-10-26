@@ -113,11 +113,17 @@ function Get-FileSystemJournal {
 
                         try {
                             $rawLines = @(Get-FsutilOutput -Arguments @('usn', 'readjournal', "$drive`:"))
+                            $fsutilExitCode = $script:FsutilLastExitCode
 
-                            $denied = @($rawLines | Where-Object { $_ -match '(?i)administrative privileges|access is denied|requires elevation' })
-                            if ($denied.Count -gt 0) {
-                                Write-Warning "fsutil denied access to the USN journal. Rerun from an elevated prompt."
-                                $result.Notes += "USN journal read failed: fsutil requires administrative privileges."
+                            if ($fsutilExitCode -ne 0) {
+                                if ($fsutilExitCode -eq 5) {
+                                    Write-Warning "fsutil denied access to the USN journal (exit code 5). Rerun from an elevated prompt."
+                                    $result.Notes += "USN journal read failed: fsutil requires administrative privileges."
+                                }
+                                else {
+                                    Write-Warning "fsutil usn readjournal failed with exit code $fsutilExitCode."
+                                    $result.Notes += "USN journal read failed: fsutil exited with code $fsutilExitCode."
+                                }
                             }
                             else {
                                 $journalRecords = @(ConvertFrom-UsnJournalOutput -Lines $rawLines -MaxRecords $MaxRecords)
@@ -223,11 +229,17 @@ function Get-FileSystemJournal {
 
                         try {
                             $ntfsLines = @(Get-FsutilOutput -Arguments @('fsinfo', 'ntfsinfo', "$drive`:"))
+                            $fsutilExitCode = $script:FsutilLastExitCode
 
-                            $denied = @($ntfsLines | Where-Object { $_ -match '(?i)administrative privileges|access is denied|requires elevation' })
-                            if ($denied.Count -gt 0) {
-                                Write-Warning "fsutil denied access to volume metadata. Rerun from an elevated prompt."
-                                $result.Notes += "MFT summary collection failed: fsutil requires administrative privileges."
+                            if ($fsutilExitCode -ne 0) {
+                                if ($fsutilExitCode -eq 5) {
+                                    Write-Warning "fsutil denied access to volume metadata (exit code 5). Rerun from an elevated prompt."
+                                    $result.Notes += "MFT summary collection failed: fsutil requires administrative privileges."
+                                }
+                                else {
+                                    Write-Warning "fsutil fsinfo ntfsinfo failed with exit code $fsutilExitCode."
+                                    $result.Notes += "MFT summary collection failed: fsutil exited with code $fsutilExitCode."
+                                }
                             }
                             else {
                                 $volumeInfo = @{}
@@ -242,6 +254,14 @@ function Get-FileSystemJournal {
                                 }
 
                                 $mftValidBytes = $null
+                                if ($volumeInfo.Count -gt 0) {
+                                    $expectedFields = @('Mft Valid Data Length', 'Bytes Per FileRecord Segment', 'Mft Start Lcn', 'Mft2 Start Lcn', 'Mft Zone Start', 'Mft Zone End')
+                                    $matchedFields = @($expectedFields | Where-Object { $volumeInfo.ContainsKey($_) })
+                                    if ($matchedFields.Count -eq 0) {
+                                        Write-Warning "fsutil ntfsinfo returned data but none of the expected volume fields were recognized; localized fsutil output cannot be mapped (English locale required). MFT summary values will be null."
+                                        $result.Notes += "MFT summary values unavailable: localized fsutil ntfsinfo output cannot be parsed; English locale is required."
+                                    }
+                                }
                                 if ($volumeInfo.ContainsKey('Mft Valid Data Length')) {
                                     $mftValidBytes = ConvertFrom-JournalNumericText -Text $volumeInfo['Mft Valid Data Length']
                                 }
@@ -300,10 +320,16 @@ function Get-FileSystemJournal {
                             try {
                                 Write-Host "  Reading USN journal for creation-record comparison..." -ForegroundColor Gray
                                 $rawLines = @(Get-FsutilOutput -Arguments @('usn', 'readjournal', "$drive`:"))
-                                $denied = @($rawLines | Where-Object { $_ -match '(?i)administrative privileges|access is denied|requires elevation' })
-                                if ($denied.Count -gt 0) {
-                                    Write-Warning "fsutil denied access to the USN journal; journal comparison will be skipped."
-                                    $result.Notes += "USN journal comparison skipped: fsutil requires administrative privileges."
+                                $fsutilExitCode = $script:FsutilLastExitCode
+                                if ($fsutilExitCode -ne 0) {
+                                    if ($fsutilExitCode -eq 5) {
+                                        Write-Warning "fsutil denied access to the USN journal (exit code 5); journal comparison will be skipped."
+                                        $result.Notes += "USN journal comparison skipped: fsutil requires administrative privileges."
+                                    }
+                                    else {
+                                        Write-Warning "fsutil usn readjournal failed with exit code $fsutilExitCode; journal comparison will be skipped."
+                                        $result.Notes += "USN journal comparison skipped: fsutil exited with code $fsutilExitCode."
+                                    }
                                 }
                                 else {
                                     $creationRecords = @(ConvertFrom-UsnJournalOutput -Lines $rawLines -MaxRecords $MaxRecords |
@@ -487,6 +513,7 @@ function Get-FsutilOutput {
     )
 
     $output = @(& fsutil @Arguments 2>&1)
+    $script:FsutilLastExitCode = $LASTEXITCODE
     return @($output | ForEach-Object { "$_" })
 }
 
@@ -566,6 +593,13 @@ function ConvertFrom-UsnJournalOutput {
         $records += (New-UsnJournalRecord -Fields $current)
     }
 
+    if ($records.Count -eq 0) {
+        $contentLines = @($Lines | Where-Object { $null -ne $_ -and $_ -notmatch '^\s*$' })
+        if ($contentLines.Count -gt 0) {
+            Write-Warning "fsutil returned USN journal output but no records could be parsed; localized fsutil output is not supported (English locale required for USN journal parsing)."
+        }
+    }
+
     return @($records)
 }
 
@@ -607,11 +641,8 @@ function New-UsnJournalRecord {
         if ([datetime]::TryParse($timeStampText, [System.Globalization.CultureInfo]::InvariantCulture, [System.Globalization.DateTimeStyles]::None, [ref]$parsedDate)) {
             $timeStamp = $parsedDate
         }
-        elseif ([datetime]::TryParse($timeStampText, [ref]$parsedDate)) {
-            $timeStamp = $parsedDate
-        }
         else {
-            Write-Verbose "Could not parse journal time stamp: $timeStampText"
+            Write-Verbose "Could not parse journal time stamp '$timeStampText' with the invariant culture; localized fsutil timestamps require an English locale. TimeStamp is set to null."
         }
     }
 

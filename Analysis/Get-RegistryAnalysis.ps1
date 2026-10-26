@@ -274,8 +274,16 @@ function Get-RegistryAnalysis {
                             $acl = Get-Acl -Path $keyPath -ErrorAction Stop
                             
                             # Check for overly permissive access
+                            $permissiveSids = @('S-1-1-0', 'S-1-5-32-545', 'S-1-5-11')
                             foreach ($access in $acl.Access) {
-                                if ($access.IdentityReference -match '(Everyone|Users|Authenticated Users)' -and
+                                $isPermissiveIdentity = $false
+                                foreach ($sid in $permissiveSids) {
+                                    if (Test-IdentityReferenceIsSid -IdentityReference $access.IdentityReference -Sid $sid) {
+                                        $isPermissiveIdentity = $true
+                                        break
+                                    }
+                                }
+                                if ($isPermissiveIdentity -and
                                     $access.RegistryRights -match '(FullControl|Write|Modify)') {
                                     
                                     $results.PermissionIssues += [PSCustomObject]@{
