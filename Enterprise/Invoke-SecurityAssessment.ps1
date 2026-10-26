@@ -70,8 +70,11 @@ function Invoke-SecurityAssessment {
                 Checks = @()
             }
             
-            # Windows Defender
-            $defender = Get-MpComputerStatus -ErrorAction SilentlyContinue
+            # Windows Defender (cmdlet absent on hosts without the Defender feature - guard the lookup)
+            $defender = $null
+            if (Get-Command Get-MpComputerStatus -ErrorAction SilentlyContinue) {
+                $defender = Get-MpComputerStatus -ErrorAction SilentlyContinue
+            }
             if ($defender) {
                 if ($defender.RealTimeProtectionEnabled) {
                     $systemSecurity.CategoryScore += 20
@@ -134,8 +137,8 @@ function Invoke-SecurityAssessment {
             }
             
             # Firewall
-            $firewallProfiles = Get-NetFirewallProfile
-            $enabledProfiles = @($firewallProfiles | Where-Object { $_.Enabled -eq $true }).Count
+            $firewallProfiles = Get-NetFirewallProfile -ErrorAction SilentlyContinue
+            $enabledProfiles = @($firewallProfiles | Where-Object { $null -ne $_ -and $_.PSObject.Properties['Enabled'] -and $_.Enabled -eq $true }).Count
             if ($enabledProfiles -eq 3) {
                 $systemSecurity.CategoryScore += 20
                 $systemSecurity.Checks += [PSCustomObject]@{
@@ -148,7 +151,7 @@ function Invoke-SecurityAssessment {
                 $systemSecurity.Checks += [PSCustomObject]@{
                     Check = 'Windows Firewall'
                     Status = 'Fail'
-                    Score = ($enabledProfiles * 7)
+                    Score = 0
                     Details = "Only $enabledProfiles profiles enabled"
                 }
                 $assessment.Findings += [PSCustomObject]@{
@@ -162,7 +165,8 @@ function Invoke-SecurityAssessment {
             
             # UAC
             $uacKey = "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System"
-            $uacEnabled = (Get-ItemProperty -Path $uacKey -ErrorAction SilentlyContinue).EnableLUA
+            $uacProps = Get-ItemProperty -Path $uacKey -ErrorAction SilentlyContinue
+            $uacEnabled = if ($null -ne $uacProps -and $uacProps.PSObject.Properties['EnableLUA']) { $uacProps.EnableLUA } else { $null }
             if ($uacEnabled -eq 1) {
                 $systemSecurity.CategoryScore += 15
                 $systemSecurity.Checks += [PSCustomObject]@{
@@ -187,8 +191,11 @@ function Invoke-SecurityAssessment {
                 }
             }
             
-            # BitLocker
-            $bitlocker = Get-BitLockerVolume -MountPoint "C:" -ErrorAction SilentlyContinue
+            # BitLocker (module absent on hosts without the BitLocker feature - guard the lookup)
+            $bitlocker = $null
+            if (Get-Command Get-BitLockerVolume -ErrorAction SilentlyContinue) {
+                $bitlocker = Get-BitLockerVolume -MountPoint "C:" -ErrorAction SilentlyContinue
+            }
             if ($bitlocker -and $bitlocker.ProtectionStatus -eq 'On') {
                 $systemSecurity.CategoryScore += 15
                 $systemSecurity.Checks += [PSCustomObject]@{
@@ -293,7 +300,7 @@ function Invoke-SecurityAssessment {
             # Check for dangerous open ports
             $dangerousPorts = @(23, 135, 139, 445, 1433, 3389, 5985, 5986)
             $listeningPorts = Get-NetTCPConnection -State Listen -ErrorAction SilentlyContinue
-            $exposedPorts = @($listeningPorts | Where-Object { $dangerousPorts -contains $_.LocalPort })
+            $exposedPorts = @($listeningPorts | Where-Object { $null -ne $_ -and $_.PSObject.Properties['LocalPort'] -and $dangerousPorts -contains $_.LocalPort })
             
             if ($exposedPorts.Count -eq 0) {
                 $networkSecurity.CategoryScore += 30
@@ -320,7 +327,10 @@ function Invoke-SecurityAssessment {
             }
             
             # Network shares
-            $shares = @(Get-SmbShare | Where-Object { $_.Name -notmatch '^(ADMIN\$|C\$|IPC\$)$' })
+            $shares = @()
+            if (Get-Command Get-SmbShare -ErrorAction SilentlyContinue) {
+                $shares = @(Get-SmbShare -ErrorAction SilentlyContinue | Where-Object { $null -ne $_ -and $_.PSObject.Properties['Name'] -and $_.Name -notmatch '^(ADMIN\$|C\$|IPC\$)$' })
+            }
             if ($shares.Count -eq 0) {
                 $networkSecurity.CategoryScore += 20
                 $networkSecurity.Checks += [PSCustomObject]@{
@@ -339,9 +349,12 @@ function Invoke-SecurityAssessment {
                 }
             }
             
-            # SMB version
-            $smbConfig = Get-SmbServerConfiguration
-            if ($smbConfig.EnableSMB1Protocol -eq $false) {
+            # SMB version (cmdlet absent without the SmbShare module - guard the lookup)
+            $smbConfig = $null
+            if (Get-Command Get-SmbServerConfiguration -ErrorAction SilentlyContinue) {
+                $smbConfig = Get-SmbServerConfiguration -ErrorAction SilentlyContinue
+            }
+            if ($null -ne $smbConfig -and $smbConfig.EnableSMB1Protocol -eq $false) {
                 $networkSecurity.CategoryScore += 25
                 $networkSecurity.Checks += [PSCustomObject]@{
                     Check = 'SMBv1 Protocol'
@@ -365,8 +378,11 @@ function Invoke-SecurityAssessment {
                 }
             }
             
-            # WiFi security (if applicable)
-            $wifiProfiles = netsh wlan show profiles | Select-String "All User Profile"
+            # WiFi security (if applicable; netsh absent on non-Windows or Server Core - guard the lookup)
+            $wifiProfiles = $null
+            if (Get-Command netsh -ErrorAction SilentlyContinue) {
+                $wifiProfiles = netsh wlan show profiles | Select-String "All User Profile"
+            }
             if ($wifiProfiles) {
                 $networkSecurity.CategoryScore += 10
                 $networkSecurity.Checks += [PSCustomObject]@{
@@ -378,7 +394,8 @@ function Invoke-SecurityAssessment {
             }
             
             # Network Level Authentication for RDP
-            $rdpNLA = (Get-ItemProperty "HKLM:\SYSTEM\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp" -ErrorAction SilentlyContinue).UserAuthentication
+            $rdpNLAProps = Get-ItemProperty "HKLM:\SYSTEM\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp" -ErrorAction SilentlyContinue
+            $rdpNLA = if ($null -ne $rdpNLAProps -and $rdpNLAProps.PSObject.Properties['UserAuthentication']) { $rdpNLAProps.UserAuthentication } else { $null }
             if ($rdpNLA -eq 1) {
                 $networkSecurity.CategoryScore += 15
                 $networkSecurity.Checks += [PSCustomObject]@{
@@ -408,7 +425,7 @@ function Invoke-SecurityAssessment {
             }
             
             # Local accounts
-            $localUsers = @(Get-LocalUser | Where-Object { $_.Enabled -eq $true })
+            $localUsers = @(Get-LocalUser -ErrorAction SilentlyContinue | Where-Object { $null -ne $_ -and $_.PSObject.Properties['Enabled'] -and $_.Enabled -eq $true })
             $accountSecurity.Checks += [PSCustomObject]@{
                 Check = 'Local User Accounts'
                 Status = 'Info'
@@ -417,7 +434,7 @@ function Invoke-SecurityAssessment {
             }
             
             # Administrator account status (well-known SID RID 500 - culture-invariant)
-            $adminAccount = @(Get-LocalUser -ErrorAction SilentlyContinue | Where-Object { $null -ne $_.SID -and $_.SID.Value -match '-500$' }) | Select-Object -First 1
+            $adminAccount = @(Get-LocalUser -ErrorAction SilentlyContinue | Where-Object { $null -ne $_ -and $_.PSObject.Properties['SID'] -and $null -ne $_.SID -and $_.SID.Value -match '-500$' }) | Select-Object -First 1
             if ($adminAccount -and $adminAccount.Enabled -eq $false) {
                 $accountSecurity.CategoryScore += 20
                 $accountSecurity.Checks += [PSCustomObject]@{
@@ -443,7 +460,7 @@ function Invoke-SecurityAssessment {
             }
             
             # Guest account (well-known SID RID 501 - culture-invariant)
-            $guestAccount = @(Get-LocalUser -ErrorAction SilentlyContinue | Where-Object { $null -ne $_.SID -and $_.SID.Value -match '-501$' }) | Select-Object -First 1
+            $guestAccount = @(Get-LocalUser -ErrorAction SilentlyContinue | Where-Object { $null -ne $_ -and $_.PSObject.Properties['SID'] -and $null -ne $_.SID -and $_.SID.Value -match '-501$' }) | Select-Object -First 1
             if ($guestAccount -and $guestAccount.Enabled -eq $false) {
                 $accountSecurity.CategoryScore += 15
                 $accountSecurity.Checks += [PSCustomObject]@{
@@ -461,8 +478,11 @@ function Invoke-SecurityAssessment {
                 }
             }
             
-            # Password policy
-            $passwordPolicy = net accounts
+            # Password policy (net.exe absent on non-Windows - guard the lookup)
+            $passwordPolicy = $null
+            if (Get-Command net -ErrorAction SilentlyContinue) {
+                $passwordPolicy = net accounts
+            }
             $accountSecurity.CategoryScore += 20
             $accountSecurity.Checks += [PSCustomObject]@{
                 Check = 'Password Policy'
@@ -657,8 +677,11 @@ try {
                 }
             }
             
-            # Backup status
-            $backupStatus = Get-WmiObject -Namespace root\Microsoft\Windows\Backup -Class MSFT_WBBackupSet -ErrorAction SilentlyContinue
+            # Backup status (Get-WmiObject exists only in Windows PowerShell 5.1 - guard the lookup)
+            $backupStatus = $null
+            if (Get-Command Get-WmiObject -ErrorAction SilentlyContinue) {
+                $backupStatus = Get-WmiObject -Namespace root\Microsoft\Windows\Backup -Class MSFT_WBBackupSet -ErrorAction SilentlyContinue
+            }
             if ($backupStatus) {
                 $dataProtection.CategoryScore += 30
                 $dataProtection.Checks += [PSCustomObject]@{
@@ -683,8 +706,11 @@ try {
                 }
             }
             
-            # System Restore
-            $systemRestore = Get-ComputerRestorePoint -ErrorAction SilentlyContinue
+            # System Restore (cmdlet absent on Server Core / non-Windows - guard the lookup)
+            $systemRestore = $null
+            if (Get-Command Get-ComputerRestorePoint -ErrorAction SilentlyContinue) {
+                $systemRestore = Get-ComputerRestorePoint -ErrorAction SilentlyContinue
+            }
             if ($systemRestore) {
                 $dataProtection.CategoryScore += 15
                 $dataProtection.Checks += [PSCustomObject]@{
@@ -702,8 +728,11 @@ try {
                 }
             }
             
-            # Audit logging
-            $auditPolicy = auditpol /get /category:* 2>&1
+            # Audit logging (auditpol absent on non-Windows - guard the lookup)
+            $auditPolicy = $null
+            if (Get-Command auditpol -ErrorAction SilentlyContinue) {
+                $auditPolicy = auditpol /get /category:* 2>&1
+            }
             if ($auditPolicy -match 'Success') {
                 $dataProtection.CategoryScore += 15
                 $dataProtection.Checks += [PSCustomObject]@{
@@ -976,7 +1005,7 @@ foreach ($categoryName in $assessment.Categories.Keys) {
         }
         
         # Save results
-        $assessment | ConvertTo-Json -Depth 10 | Out-File (Join-Path $OutputPath "SecurityAssessment.json")
+        $assessment | ConvertTo-Json -Depth 10 | Out-File (Join-Path $OutputPath "SecurityAssessment.json") -Encoding UTF8
         
         # Export findings
         if ($assessment.Findings.Count -gt 0) {

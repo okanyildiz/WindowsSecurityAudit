@@ -129,7 +129,7 @@ function Find-PersistenceMechanisms {
             
             # 3. Scheduled Tasks
             Write-Verbose "Checking Scheduled Tasks..."
-            $tasks = Get-ScheduledTask | Where-Object { $_.State -ne 'Disabled' }
+            $tasks = Get-ScheduledTask -ErrorAction SilentlyContinue | Where-Object { $null -ne $_ -and $_.PSObject.Properties['State'] -and $_.State -ne 'Disabled' }
             
             foreach ($task in $tasks) {
                 try {

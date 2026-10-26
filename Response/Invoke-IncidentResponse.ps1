@@ -214,7 +214,7 @@ function Invoke-IncidentResponse {
                 # Collect system information
                 try {
                     $sysInfo = Get-SystemInfo -IncludeInstalledSoftware -IncludeHotfixes
-                    $sysInfo | ConvertTo-Json -Depth 5 | Out-File (Join-Path $OutputPath "SystemInfo.json")
+                    $sysInfo | ConvertTo-Json -Depth 5 | Out-File (Join-Path $OutputPath "SystemInfo.json") -Encoding UTF8
                     $results.EvidenceCollected += "System information"
                     Write-IRLog "Collected system information" 'SUCCESS'
                 }
@@ -247,7 +247,7 @@ function Invoke-IncidentResponse {
                 # Collect event logs
                 try {
                     $eventAnalysis = Get-EventLogAnalysis -Hours 48
-                    $eventAnalysis | ConvertTo-Json -Depth 5 | Out-File (Join-Path $OutputPath "EventLogAnalysis.json")
+                    $eventAnalysis | ConvertTo-Json -Depth 5 | Out-File (Join-Path $OutputPath "EventLogAnalysis.json") -Encoding UTF8
                     $results.EvidenceCollected += "Event log analysis"
                     Write-IRLog "Collected event logs" 'SUCCESS'
                 }
@@ -258,7 +258,7 @@ function Invoke-IncidentResponse {
                 # Collect registry analysis
                 try {
                     $regAnalysis = Get-RegistryAnalysis -IncludeAutoRun
-                    $regAnalysis | ConvertTo-Json -Depth 5 | Out-File (Join-Path $OutputPath "RegistryAnalysis.json")
+                    $regAnalysis | ConvertTo-Json -Depth 5 | Out-File (Join-Path $OutputPath "RegistryAnalysis.json") -Encoding UTF8
                     $results.EvidenceCollected += "Registry analysis"
                     Write-IRLog "Collected registry analysis" 'SUCCESS'
                 }
@@ -278,7 +278,7 @@ function Invoke-IncidentResponse {
             Write-IRLog "Generating final report" 'INFO'
             
             $results.Status = 'Completed'
-            $results | ConvertTo-Json -Depth 5 | Out-File (Join-Path $OutputPath "IncidentResponse_Report.json")
+            $results | ConvertTo-Json -Depth 5 | Out-File (Join-Path $OutputPath "IncidentResponse_Report.json") -Encoding UTF8
             
             # Create summary report
             $summary = @"

@@ -293,7 +293,8 @@ function Invoke-EnterpriseSecurityScan {
 
                 # UAC check
                 $uacKey = "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System"
-                $uacEnabled = (Get-ItemProperty -Path $uacKey -ErrorAction SilentlyContinue).EnableLUA
+                $uacProps = Get-ItemProperty -Path $uacKey -ErrorAction SilentlyContinue
+                $uacEnabled = if ($null -ne $uacProps -and $uacProps.PSObject.Properties['EnableLUA']) { $uacProps.EnableLUA } else { $null }
                 $result.SecurityScore += if ($uacEnabled -eq 1) { 15 } else { 0 }
                 $result.Details.UACEnabled = ($uacEnabled -eq 1)
 
@@ -891,7 +892,7 @@ function Invoke-EnterpriseSecurityScan {
 
         # Save results
         if ($PSCmdlet.ShouldProcess($OutputPath, 'Save enterprise scan results (JSON/CSV)')) {
-            $results | ConvertTo-Json -Depth 10 | Out-File (Join-Path $OutputPath "EnterpriseScan_Results.json")
+            $results | ConvertTo-Json -Depth 10 | Out-File (Join-Path $OutputPath "EnterpriseScan_Results.json") -Encoding UTF8
 
             # Create CSV summary
             $results.SystemResults | Select-Object ComputerName, Status, SecurityScore, @{N='FindingsCount';E={$_.Findings.Count}} |

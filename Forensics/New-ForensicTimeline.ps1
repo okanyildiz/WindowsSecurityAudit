@@ -1,4 +1,4 @@
-function New-ForensicTimeline {
+﻿function New-ForensicTimeline {
     <#
     .SYNOPSIS
         Creates a forensic timeline from multiple artifact sources

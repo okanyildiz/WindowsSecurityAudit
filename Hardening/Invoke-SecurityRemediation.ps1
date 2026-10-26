@@ -307,7 +307,7 @@ function Invoke-SecurityRemediation {
             if ($PSCmdlet.ParameterSetName -eq 'File') {
                 Write-Host "`n[LOAD] Reading assessment from: $AssessmentPath" -ForegroundColor Cyan
                 try {
-                    $rawInput = @(Get-Content -Path $AssessmentPath -Raw -ErrorAction Stop | ConvertFrom-Json -ErrorAction Stop)
+                    $rawInput = @(Get-Content -Path $AssessmentPath -Raw -Encoding UTF8 -ErrorAction Stop | ConvertFrom-Json -ErrorAction Stop)
                 }
                 catch {
                     Write-Error "Failed to read or parse assessment file '$AssessmentPath': $_"

@@ -264,7 +264,7 @@ function New-ExecutiveReport {
             if ($MetricsFile -is [string] -and -not [string]::IsNullOrWhiteSpace($MetricsFile)) {
                 if (Test-Path $MetricsFile) {
                     try {
-                        $metrics = Get-Content $MetricsFile -Raw | ConvertFrom-Json
+                        $metrics = Get-Content $MetricsFile -Raw -Encoding UTF8 | ConvertFrom-Json
                         Write-Host "  Loaded metrics from: $MetricsFile" -ForegroundColor Green
                     } catch {
                         Write-Error "Failed to load metrics file: $_"

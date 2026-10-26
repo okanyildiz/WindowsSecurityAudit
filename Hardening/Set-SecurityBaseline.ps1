@@ -214,13 +214,15 @@ function Set-SecurityBaseline {
                     $results.Changes += "SMB encryption enabled"
                 }
                 
-                # Disable NetBIOS over TCP/IP
+                # Disable NetBIOS over TCP/IP (Get-WmiObject exists only in Windows PowerShell 5.1 - guard the lookup)
                 if ($BaselineLevel -eq 'Strict') {
-                    $adapters = Get-WmiObject Win32_NetworkAdapterConfiguration | Where-Object { $_.IPEnabled }
-                    foreach ($adapter in $adapters) {
-                        $adapter.SetTcpipNetbios(2) | Out-Null  # 2 = Disable NetBIOS
+                    if (Get-Command Get-WmiObject -ErrorAction SilentlyContinue) {
+                        $adapters = Get-WmiObject Win32_NetworkAdapterConfiguration | Where-Object { $null -ne $_ -and $_.IPEnabled }
+                        foreach ($adapter in $adapters) {
+                            $adapter.SetTcpipNetbios(2) | Out-Null  # 2 = Disable NetBIOS
+                        }
+                        $results.Changes += "NetBIOS over TCP/IP disabled"
                     }
-                    $results.Changes += "NetBIOS over TCP/IP disabled"
                 }
                 
                 # Disable LLMNR

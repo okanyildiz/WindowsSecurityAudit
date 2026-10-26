@@ -1,4 +1,4 @@
-function Get-ExecutionArtifacts {
+﻿function Get-ExecutionArtifacts {
     <#
     .SYNOPSIS
         Extracts program execution artifacts from Windows forensic sources

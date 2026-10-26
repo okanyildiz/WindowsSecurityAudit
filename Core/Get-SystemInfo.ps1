@@ -42,46 +42,50 @@ function Get-SystemInfo {
     process {
         try {
             # Computer System Information
-            $cs = Get-CimInstance -ClassName Win32_ComputerSystem
-            $info.ComputerSystem = [PSCustomObject]@{
-                Name = $cs.Name
-                Domain = $cs.Domain
-                Manufacturer = $cs.Manufacturer
-                Model = $cs.Model
-                SystemType = $cs.SystemType
-                TotalPhysicalMemory = [math]::Round($cs.TotalPhysicalMemory / 1GB, 2)
-                NumberOfProcessors = $cs.NumberOfProcessors
-                NumberOfLogicalProcessors = $cs.NumberOfLogicalProcessors
-                PrimaryOwnerName = $cs.PrimaryOwnerName
-                BootupState = $cs.BootupState
+            $cs = Get-CimInstance -ClassName Win32_ComputerSystem -ErrorAction SilentlyContinue
+            if ($null -ne $cs) {
+                $info.ComputerSystem = [PSCustomObject]@{
+                    Name = $cs.Name
+                    Domain = $cs.Domain
+                    Manufacturer = $cs.Manufacturer
+                    Model = $cs.Model
+                    SystemType = $cs.SystemType
+                    TotalPhysicalMemory = [math]::Round($cs.TotalPhysicalMemory / 1GB, 2)
+                    NumberOfProcessors = $cs.NumberOfProcessors
+                    NumberOfLogicalProcessors = $cs.NumberOfLogicalProcessors
+                    PrimaryOwnerName = $cs.PrimaryOwnerName
+                    BootupState = $cs.BootupState
+                }
             }
             
             # Operating System Information
-            $os = Get-CimInstance -ClassName Win32_OperatingSystem
-            $info.OperatingSystem = [PSCustomObject]@{
-                Caption = $os.Caption
-                Version = $os.Version
-                BuildNumber = $os.BuildNumber
-                Architecture = $os.OSArchitecture
-                InstallDate = $os.InstallDate
-                LastBootUpTime = $os.LastBootUpTime
-                LocalDateTime = $os.LocalDateTime
-                NumberOfUsers = $os.NumberOfUsers
-                NumberOfProcesses = $os.NumberOfProcesses
-                ServicePackMajorVersion = $os.ServicePackMajorVersion
-                RegisteredUser = $os.RegisteredUser
-                Organization = $os.Organization
-                WindowsDirectory = $os.WindowsDirectory
-                SystemDirectory = $os.SystemDirectory
+            $os = Get-CimInstance -ClassName Win32_OperatingSystem -ErrorAction SilentlyContinue
+            if ($null -ne $os) {
+                $info.OperatingSystem = [PSCustomObject]@{
+                    Caption = $os.Caption
+                    Version = $os.Version
+                    BuildNumber = $os.BuildNumber
+                    Architecture = $os.OSArchitecture
+                    InstallDate = $os.InstallDate
+                    LastBootUpTime = $os.LastBootUpTime
+                    LocalDateTime = $os.LocalDateTime
+                    NumberOfUsers = $os.NumberOfUsers
+                    NumberOfProcesses = $os.NumberOfProcesses
+                    ServicePackMajorVersion = $os.ServicePackMajorVersion
+                    RegisteredUser = $os.RegisteredUser
+                    Organization = $os.Organization
+                    WindowsDirectory = $os.WindowsDirectory
+                    SystemDirectory = $os.SystemDirectory
+                }
             }
             
             # Hardware Information
-            $cpu = Get-CimInstance -ClassName Win32_Processor
-            $disk = Get-CimInstance -ClassName Win32_LogicalDisk -Filter "DriveType=3"
+            $cpu = Get-CimInstance -ClassName Win32_Processor -ErrorAction SilentlyContinue
+            $disk = Get-CimInstance -ClassName Win32_LogicalDisk -Filter "DriveType=3" -ErrorAction SilentlyContinue
             
             $info.Hardware = [PSCustomObject]@{
-                CPU = $cpu | Select-Object Name, MaxClockSpeed, NumberOfCores, NumberOfLogicalProcessors
-                Disks = $disk | ForEach-Object {
+                CPU = @($cpu | Where-Object { $null -ne $_ } | Select-Object Name, MaxClockSpeed, NumberOfCores, NumberOfLogicalProcessors)
+                Disks = @($disk | Where-Object { $null -ne $_ } | ForEach-Object {
                     [PSCustomObject]@{
                         DeviceID = $_.DeviceID
                         VolumeName = $_.VolumeName
@@ -90,30 +94,31 @@ function Get-SystemInfo {
                         FreeSpace = [math]::Round($_.FreeSpace / 1GB, 2)
                         PercentFree = if ($_.Size) { [math]::Round(($_.FreeSpace / $_.Size) * 100, 2) } else { $null }
                     }
-                }
+                })
             }
             
             # Network Configuration
-            $netAdapters = Get-NetAdapter | Where-Object { $_.Status -eq 'Up' }
-            $netIP = Get-NetIPAddress | Where-Object { $_.AddressFamily -eq 'IPv4' -and $_.PrefixOrigin -ne 'WellKnown' }
+            $netAdapters = Get-NetAdapter -ErrorAction SilentlyContinue | Where-Object { $null -ne $_ -and $_.Status -eq 'Up' }
+            $netIP = Get-NetIPAddress -ErrorAction SilentlyContinue | Where-Object { $null -ne $_ -and $_.AddressFamily -eq 'IPv4' -and $_.PrefixOrigin -ne 'WellKnown' }
             $defaultRoute = Get-NetRoute -DestinationPrefix "0.0.0.0/0" -ErrorAction SilentlyContinue | Select-Object -First 1
             
             $info.Network = [PSCustomObject]@{
-                Adapters = $netAdapters | Select-Object Name, InterfaceDescription, MacAddress, LinkSpeed, Status
-                IPAddresses = $netIP | Select-Object InterfaceAlias, IPAddress, PrefixLength
-                DNSServers = Get-DnsClientServerAddress | Where-Object { $_.AddressFamily -eq 2 } | 
-                    Select-Object InterfaceAlias, ServerAddresses
+                Adapters = @($netAdapters | Select-Object Name, InterfaceDescription, MacAddress, LinkSpeed, Status)
+                IPAddresses = @($netIP | Select-Object InterfaceAlias, IPAddress, PrefixLength)
+                DNSServers = @(Get-DnsClientServerAddress -ErrorAction SilentlyContinue | Where-Object { $null -ne $_ -and $_.AddressFamily -eq 2 } | 
+                    Select-Object InterfaceAlias, ServerAddresses)
                 DefaultGateway = if ($defaultRoute) { $defaultRoute.NextHop } else { $null }
             }
             
             # Security Settings
 # Security Settings
+$localUsers = @(Get-LocalUser -ErrorAction SilentlyContinue | Where-Object { $null -ne $_ })
 $info.Security = [PSCustomObject]@{
-    LocalUsers = (@(Get-LocalUser)).Count
-    LocalAdministrators = (@(Get-LocalGroupMember -SID 'S-1-5-32-544' -ErrorAction SilentlyContinue)).Count
-    PasswordPolicy = Get-LocalUser | Where-Object { $_.PasswordRequired -eq $false } | 
-        Select-Object Name, Enabled
-    FirewallProfiles = Get-NetFirewallProfile | Select-Object Name, Enabled
+    LocalUsers = $localUsers.Count
+    LocalAdministrators = (@(Get-LocalGroupMember -SID 'S-1-5-32-544' -ErrorAction SilentlyContinue | Where-Object { $null -ne $_ })).Count
+    PasswordPolicy = @($localUsers | Where-Object { $_.PSObject.Properties['PasswordRequired'] -and $_.PasswordRequired -eq $false } | 
+        Select-Object Name, Enabled)
+    FirewallProfiles = @(Get-NetFirewallProfile -ErrorAction SilentlyContinue | Where-Object { $null -ne $_ } | Select-Object Name, Enabled)
     AntivirusProduct = "Not detected"
 }
 
@@ -150,8 +155,8 @@ if ($IncludeInstalledSoftware) {
             # Installed Hotfixes
             if ($IncludeHotfixes) {
                 Write-Verbose "Gathering installed hotfixes..."
-                $info.Hotfixes = Get-HotFix | Select-Object HotFixID, Description, InstalledOn, InstalledBy |
-                    Sort-Object InstalledOn -Descending
+                $info.Hotfixes = @(Get-HotFix -ErrorAction SilentlyContinue | Where-Object { $null -ne $_ } | Select-Object HotFixID, Description, InstalledOn, InstalledBy |
+                    Sort-Object InstalledOn -Descending)
             }
             
         }

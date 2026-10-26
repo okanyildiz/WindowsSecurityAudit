@@ -62,6 +62,7 @@ function Get-MultiSystemAudit {
                 CriticalFindings = 0
                 HighFindings = 0
                 MediumFindings = 0
+                LowFindings = 0
                 SystemsAudited = 0
                 SystemsFailed = 0
             }
@@ -307,6 +308,7 @@ function Get-MultiSystemAudit {
                             'Critical' { $auditResults.Summary.CriticalFindings++ }
                             'High' { $auditResults.Summary.HighFindings++ }
                             'Medium' { $auditResults.Summary.MediumFindings++ }
+                            'Low' { $auditResults.Summary.LowFindings++ }
                         }
                     }
                     
@@ -384,6 +386,7 @@ function Get-MultiSystemAudit {
         Write-Host "  Critical: $($auditResults.Summary.CriticalFindings)" -ForegroundColor Red
         Write-Host "  High: $($auditResults.Summary.HighFindings)" -ForegroundColor Yellow
         Write-Host "  Medium: $($auditResults.Summary.MediumFindings)" -ForegroundColor Yellow
+        Write-Host "  Low: $($auditResults.Summary.LowFindings)" -ForegroundColor White
         
         if ($auditResults.ComparativeAnalysis.CommonFindings.Count -gt 0) {
             Write-Host "`nCommon Issues (affecting 50%+ of systems):" -ForegroundColor Yellow
@@ -393,7 +396,7 @@ function Get-MultiSystemAudit {
         }
         
         # Save results
-        $auditResults | ConvertTo-Json -Depth 10 | Out-File (Join-Path $OutputPath "MultiSystemAudit.json")
+        $auditResults | ConvertTo-Json -Depth 10 | Out-File (Join-Path $OutputPath "MultiSystemAudit.json") -Encoding UTF8
         
         # Export system summary
         $auditResults.SystemAudits | Select-Object ComputerName, Status, SecurityScore, SecurityLevel, @{N='FindingsCount';E={$_.Findings.Count}} |

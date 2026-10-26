@@ -47,7 +47,10 @@ function Get-DefenderStatus {
             # Get main Defender status
             Write-Host "Collecting Defender status..." -ForegroundColor Yellow
             
-            $mpStatus = Get-MpComputerStatus
+            $mpStatus = Get-MpComputerStatus -ErrorAction SilentlyContinue
+            if ($null -eq $mpStatus) {
+                throw "Get-MpComputerStatus returned no data - Windows Defender is unavailable on this system"
+            }
             
             # Protection Status
             $status.ProtectionStatus = [PSCustomObject]@{
@@ -83,7 +86,10 @@ function Get-DefenderStatus {
             }
             
             # Get Defender preferences/configuration
-            $mpPreferences = Get-MpPreference
+            $mpPreferences = Get-MpPreference -ErrorAction SilentlyContinue
+            if ($null -eq $mpPreferences) {
+                throw "Get-MpPreference returned no data - Windows Defender preferences are unavailable on this system"
+            }
             
             $status.Configuration = [PSCustomObject]@{
                 DisableAutoExclusions = $mpPreferences.DisableAutoExclusions

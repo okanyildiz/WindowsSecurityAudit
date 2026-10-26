@@ -132,7 +132,10 @@ function Compare-SecurityBaseline {
             # Load the saved baseline
             Write-Host "Loading baseline from: $BaselinePath" -ForegroundColor Yellow
             try {
-                $baselineJson = Get-Content -Path $BaselinePath -Raw -ErrorAction Stop
+                $baselineJson = Get-Content -Path $BaselinePath -Raw -Encoding UTF8 -ErrorAction Stop
+                if ([string]::IsNullOrWhiteSpace($baselineJson)) {
+                    throw "Baseline file '$BaselinePath' is empty or contains only whitespace - not valid JSON"
+                }
                 $baseline = $baselineJson | ConvertFrom-Json -ErrorAction Stop
             }
             catch {
@@ -147,7 +150,10 @@ function Compare-SecurityBaseline {
                 $currentSource = $CurrentPath
                 Write-Host "Loading current state from: $CurrentPath" -ForegroundColor Yellow
                 try {
-                    $currentJson = Get-Content -Path $CurrentPath -Raw -ErrorAction Stop
+                    $currentJson = Get-Content -Path $CurrentPath -Raw -Encoding UTF8 -ErrorAction Stop
+                    if ([string]::IsNullOrWhiteSpace($currentJson)) {
+                        throw "Current state file '$CurrentPath' is empty or contains only whitespace - not valid JSON"
+                    }
                     $current = $currentJson | ConvertFrom-Json -ErrorAction Stop
                 }
                 catch {

@@ -157,31 +157,31 @@ function Get-ArtifactCollection {
             try {
                 # Computer info
                 $computerInfo = Get-ComputerInfo -ErrorAction SilentlyContinue
-                $computerInfo | ConvertTo-Json -Depth 5 | Out-File (Join-Path $paths.SystemInfo "ComputerInfo.json")
+                $computerInfo | ConvertTo-Json -Depth 5 | Out-File (Join-Path $paths.SystemInfo "ComputerInfo.json") -Encoding UTF8
                 
                 # OS Info
                 Get-CimInstance Win32_OperatingSystem | 
                     Select-Object Caption, Version, BuildNumber, OSArchitecture, InstallDate, LastBootUpTime |
-                    ConvertTo-Json | Out-File (Join-Path $paths.SystemInfo "OSInfo.json")
+                    ConvertTo-Json | Out-File (Join-Path $paths.SystemInfo "OSInfo.json") -Encoding UTF8
                 
                 # Hardware Info
                 Get-CimInstance Win32_ComputerSystem |
                     Select-Object Manufacturer, Model, TotalPhysicalMemory, NumberOfProcessors |
-                    ConvertTo-Json | Out-File (Join-Path $paths.SystemInfo "Hardware.json")
+                    ConvertTo-Json | Out-File (Join-Path $paths.SystemInfo "Hardware.json") -Encoding UTF8
                 
                 # Disk Info
                 Get-PSDrive -PSProvider FileSystem |
                     Select-Object Name, Used, Free, @{N='TotalGB';E={[Math]::Round($_.Used/1GB + $_.Free/1GB,2)}} |
-                    ConvertTo-Json | Out-File (Join-Path $paths.SystemInfo "Disks.json")
+                    ConvertTo-Json | Out-File (Join-Path $paths.SystemInfo "Disks.json") -Encoding UTF8
                 
                 # Installed Software
                 Get-ItemProperty HKLM:\Software\Microsoft\Windows\CurrentVersion\Uninstall\* -ErrorAction SilentlyContinue |
                     Select-Object DisplayName, DisplayVersion, Publisher, InstallDate |
                     Where-Object { $_.DisplayName } |
-                    ConvertTo-Json | Out-File (Join-Path $paths.SystemInfo "InstalledSoftware.json")
+                    ConvertTo-Json | Out-File (Join-Path $paths.SystemInfo "InstalledSoftware.json") -Encoding UTF8
                 
                 # Environment Variables
-                Get-ChildItem Env: | ConvertTo-Json | Out-File (Join-Path $paths.SystemInfo "Environment.json")
+                Get-ChildItem Env: | ConvertTo-Json | Out-File (Join-Path $paths.SystemInfo "Environment.json") -Encoding UTF8
                 
                 Write-Host "  System information collected" -ForegroundColor Green
                 $results.ArtifactsCollected += "System Information"
@@ -344,7 +344,7 @@ function Get-ArtifactCollection {
                 
                 try {
                     # Network adapters
-                    Get-NetAdapter | ConvertTo-Json | Out-File (Join-Path $paths.Network "Adapters.json")
+                    Get-NetAdapter | ConvertTo-Json | Out-File (Join-Path $paths.Network "Adapters.json") -Encoding UTF8
                     
                     # IP configuration
                     ipconfig /all | Out-File (Join-Path $paths.Network "ipconfig.txt")
@@ -359,7 +359,7 @@ function Get-ArtifactCollection {
                     ipconfig /displaydns | Out-File (Join-Path $paths.Network "dns_cache.txt")
                     
                     # Active connections
-                    Get-NetTCPConnection | ConvertTo-Json | Out-File (Join-Path $paths.Network "tcp_connections.json")
+                    Get-NetTCPConnection | ConvertTo-Json | Out-File (Join-Path $paths.Network "tcp_connections.json") -Encoding UTF8
                     
                     # Listening ports
                     netstat -ano | Out-File (Join-Path $paths.Network "netstat.txt")
@@ -383,20 +383,20 @@ function Get-ArtifactCollection {
                 try {
                     # Running processes
                     Get-Process | Select-Object Name, Id, Path, StartTime, @{N='WorkingSetMB';E={[Math]::Round($_.WorkingSet64/1MB,2)}} |
-                        ConvertTo-Json | Out-File (Join-Path $paths.Execution "Processes.json")
+                        ConvertTo-Json | Out-File (Join-Path $paths.Execution "Processes.json") -Encoding UTF8
                     
                     # Services
                     Get-Service | Select-Object Name, DisplayName, Status, StartType |
-                        ConvertTo-Json | Out-File (Join-Path $paths.Execution "Services.json")
+                        ConvertTo-Json | Out-File (Join-Path $paths.Execution "Services.json") -Encoding UTF8
                     
                     # Scheduled tasks
                     Get-ScheduledTask | Select-Object TaskName, TaskPath, State, @{N='LastRunTime';E={($_ | Get-ScheduledTaskInfo).LastRunTime}} |
-                        ConvertTo-Json | Out-File (Join-Path $paths.Execution "ScheduledTasks.json")
+                        ConvertTo-Json | Out-File (Join-Path $paths.Execution "ScheduledTasks.json") -Encoding UTF8
                     
                     # Startup programs
                     Get-CimInstance Win32_StartupCommand |
                         Select-Object Name, Command, Location, User |
-                        ConvertTo-Json | Out-File (Join-Path $paths.Execution "StartupPrograms.json")
+                        ConvertTo-Json | Out-File (Join-Path $paths.Execution "StartupPrograms.json") -Encoding UTF8
                     
                     Write-Host "  Execution artifacts collected" -ForegroundColor Green
                     $results.ArtifactsCollected += "Execution Artifacts"
@@ -413,10 +413,10 @@ function Get-ArtifactCollection {
             try {
                 # Local users
                 Get-LocalUser | Select-Object Name, Enabled, LastLogon, PasswordLastSet |
-                    ConvertTo-Json | Out-File (Join-Path $paths.Users "LocalUsers.json")
+                    ConvertTo-Json | Out-File (Join-Path $paths.Users "LocalUsers.json") -Encoding UTF8
                 
                 # Local groups
-                Get-LocalGroup | ConvertTo-Json | Out-File (Join-Path $paths.Users "LocalGroups.json")
+                Get-LocalGroup | ConvertTo-Json | Out-File (Join-Path $paths.Users "LocalGroups.json") -Encoding UTF8
                 
                 # Logged on users
                 quser 2>&1 | Out-File (Join-Path $paths.Users "LoggedOnUsers.txt")
@@ -424,7 +424,7 @@ function Get-ArtifactCollection {
                 # User profiles
                 Get-ChildItem "C:\Users" -Directory -ErrorAction SilentlyContinue |
                     Select-Object Name, CreationTime, LastWriteTime |
-                    ConvertTo-Json | Out-File (Join-Path $paths.Users "UserProfiles.json")
+                    ConvertTo-Json | Out-File (Join-Path $paths.Users "UserProfiles.json") -Encoding UTF8
                 
                 Write-Host "  User information collected" -ForegroundColor Green
                 $results.ArtifactsCollected += "User Information"
@@ -488,7 +488,7 @@ function Get-ArtifactCollection {
                 Files = $fileManifest
             }
             
-            $manifest | ConvertTo-Json -Depth 5 | Out-File (Join-Path $collectionRoot "MANIFEST.json")
+            $manifest | ConvertTo-Json -Depth 5 | Out-File (Join-Path $collectionRoot "MANIFEST.json") -Encoding UTF8
             Write-Host "`nCollection manifest created" -ForegroundColor Green
             
             # COMPRESS OUTPUT

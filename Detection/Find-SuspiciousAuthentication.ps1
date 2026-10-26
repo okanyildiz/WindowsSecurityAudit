@@ -90,8 +90,15 @@ function Find-SuspiciousAuthentication {
                 $results.Statistics.TotalFailedLogons = $failedLogons.Count
 
                 foreach ($event in $failedLogons) {
-                    $xml = [xml]$event.ToXml()
-                    $eventData = $xml.Event.EventData.Data
+                    if ($null -eq $event) { continue }
+                    try {
+                        $xml = [xml]$event.ToXml()
+                        $eventData = $xml.Event.EventData.Data
+                    }
+                    catch {
+                        Write-Verbose "Skipping unreadable event: $_"
+                        continue
+                    }
 
                     $targetAccount = & $getEventValue $eventData 'TargetUserName'
                     $targetDomain = & $getEventValue $eventData 'TargetDomainName'
@@ -165,8 +172,15 @@ function Find-SuspiciousAuthentication {
                 $results.Statistics.TotalLockouts = $lockouts.Count
 
                 foreach ($event in $lockouts) {
-                    $xml = [xml]$event.ToXml()
-                    $eventData = $xml.Event.EventData.Data
+                    if ($null -eq $event) { continue }
+                    try {
+                        $xml = [xml]$event.ToXml()
+                        $eventData = $xml.Event.EventData.Data
+                    }
+                    catch {
+                        Write-Verbose "Skipping unreadable event: $_"
+                        continue
+                    }
 
                     $targetAccount = & $getEventValue $eventData 'TargetUserName'
                     $callerComputer = & $getEventValue $eventData 'TargetDomainName'
@@ -192,8 +206,15 @@ function Find-SuspiciousAuthentication {
 
                 # Look for unusual privilege assignments
                 foreach ($event in $privEvents) {
-                    $xml = [xml]$event.ToXml()
-                    $eventData = $xml.Event.EventData.Data
+                    if ($null -eq $event) { continue }
+                    try {
+                        $xml = [xml]$event.ToXml()
+                        $eventData = $xml.Event.EventData.Data
+                    }
+                    catch {
+                        Write-Verbose "Skipping unreadable event: $_"
+                        continue
+                    }
 
                     $subjectAccount = & $getEventValue $eventData 'SubjectUserName'
                     $subjectDomain = & $getEventValue $eventData 'SubjectDomainName'
@@ -222,8 +243,15 @@ function Find-SuspiciousAuthentication {
                 $results.Statistics.TotalExplicitCreds = $explicitCreds.Count
 
                 foreach ($event in $explicitCreds) {
-                    $xml = [xml]$event.ToXml()
-                    $eventData = $xml.Event.EventData.Data
+                    if ($null -eq $event) { continue }
+                    try {
+                        $xml = [xml]$event.ToXml()
+                        $eventData = $xml.Event.EventData.Data
+                    }
+                    catch {
+                        Write-Verbose "Skipping unreadable event: $_"
+                        continue
+                    }
 
                     $subjectAccount = & $getEventValue $eventData 'SubjectUserName'
                     $targetAccount = & $getEventValue $eventData 'TargetUserName'
@@ -252,8 +280,15 @@ function Find-SuspiciousAuthentication {
                 $ntlmNetworkByAccount = @{}
 
                 foreach ($event in $successfulLogons) {
-                    $xml = [xml]$event.ToXml()
-                    $eventData = $xml.Event.EventData.Data
+                    if ($null -eq $event) { continue }
+                    try {
+                        $xml = [xml]$event.ToXml()
+                        $eventData = $xml.Event.EventData.Data
+                    }
+                    catch {
+                        Write-Verbose "Skipping unreadable event: $_"
+                        continue
+                    }
 
                     $targetAccount = & $getEventValue $eventData 'TargetUserName'
                     $targetDomain = & $getEventValue $eventData 'TargetDomainName'

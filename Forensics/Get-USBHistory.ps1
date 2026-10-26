@@ -1,4 +1,4 @@
-function Get-USBHistory {
+﻿function Get-USBHistory {
     <#
     .SYNOPSIS
         Retrieves USB device connection history from Windows artifacts

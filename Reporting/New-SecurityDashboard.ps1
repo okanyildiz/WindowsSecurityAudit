@@ -400,20 +400,22 @@ function New-SecurityDashboard {
                     Write-Warning "  Find-NetworkAnomalies failed: $_" 
                 }
                 
-                # Calculate total threats
-                $persistenceCount = if ($script:dashboardData.Detection.PersistenceMechanisms.PSObject.Properties['SuspiciousCount']) { $script:dashboardData.Detection.PersistenceMechanisms.SuspiciousCount } else { @($script:dashboardData.Detection.PersistenceMechanisms).Count }
-                $processCount = @($script:dashboardData.Detection.SuspiciousProcesses).Count
-                $authCount = if ($script:dashboardData.Detection.SuspiciousAuthentications.PSObject.Properties['Statistics'] -and $script:dashboardData.Detection.SuspiciousAuthentications.Statistics) {
-                    $script:dashboardData.Detection.SuspiciousAuthentications.Statistics.TotalFailedLogons +
-                    $script:dashboardData.Detection.SuspiciousAuthentications.Statistics.TotalLockouts +
-                    $script:dashboardData.Detection.SuspiciousAuthentications.Statistics.TotalPrivilegeUse +
-                    $script:dashboardData.Detection.SuspiciousAuthentications.Statistics.TotalExplicitCreds
-                } else { @($script:dashboardData.Detection.SuspiciousAuthentications).Count }
-                $lateralCount = if ($script:dashboardData.Detection.LateralMovement.PSObject.Properties['Summary'] -and $script:dashboardData.Detection.LateralMovement.Summary) { $script:dashboardData.Detection.LateralMovement.Summary.TotalIndicators } else { @($script:dashboardData.Detection.LateralMovement).Count }
-                $aptCount = if ($script:dashboardData.Detection.APTIndicators.PSObject.Properties['Summary'] -and $script:dashboardData.Detection.APTIndicators.Summary) { $script:dashboardData.Detection.APTIndicators.Summary.TotalIndicators } else { @($script:dashboardData.Detection.APTIndicators).Count }
-                $lolbinsCount = if ($script:dashboardData.Detection.LivingOffLand.PSObject.Properties['Summary'] -and $script:dashboardData.Detection.LivingOffLand.Summary) { $script:dashboardData.Detection.LivingOffLand.Summary.TotalDetections } else { @($script:dashboardData.Detection.LivingOffLand).Count }
-                $exfilCount = if ($script:dashboardData.Detection.DataExfiltration.PSObject.Properties['Summary'] -and $script:dashboardData.Detection.DataExfiltration.Summary) { $script:dashboardData.Detection.DataExfiltration.Summary.TotalIndicators } else { @($script:dashboardData.Detection.DataExfiltration).Count }
-                $networkCount = if ($script:dashboardData.Detection.NetworkAnomalies.PSObject.Properties['TotalAnomalies']) { $script:dashboardData.Detection.NetworkAnomalies.TotalAnomalies } else { @($script:dashboardData.Detection.NetworkAnomalies).Count }
+                # Calculate total threats (null-first guards: a collector that returns
+                # $null without throwing must not crash the .PSObject.Properties checks)
+                $detData = $script:dashboardData.Detection
+                $persistenceCount = if ($null -ne $detData.PersistenceMechanisms -and $detData.PersistenceMechanisms.PSObject.Properties['SuspiciousCount']) { $detData.PersistenceMechanisms.SuspiciousCount } else { @($detData.PersistenceMechanisms).Count }
+                $processCount = @($detData.SuspiciousProcesses).Count
+                $authCount = if ($null -ne $detData.SuspiciousAuthentications -and $detData.SuspiciousAuthentications.PSObject.Properties['Statistics'] -and $detData.SuspiciousAuthentications.Statistics) {
+                    $detData.SuspiciousAuthentications.Statistics.TotalFailedLogons +
+                    $detData.SuspiciousAuthentications.Statistics.TotalLockouts +
+                    $detData.SuspiciousAuthentications.Statistics.TotalPrivilegeUse +
+                    $detData.SuspiciousAuthentications.Statistics.TotalExplicitCreds
+                } else { @($detData.SuspiciousAuthentications).Count }
+                $lateralCount = if ($null -ne $detData.LateralMovement -and $detData.LateralMovement.PSObject.Properties['Summary'] -and $detData.LateralMovement.Summary) { $detData.LateralMovement.Summary.TotalIndicators } else { @($detData.LateralMovement).Count }
+                $aptCount = if ($null -ne $detData.APTIndicators -and $detData.APTIndicators.PSObject.Properties['Summary'] -and $detData.APTIndicators.Summary) { $detData.APTIndicators.Summary.TotalIndicators } else { @($detData.APTIndicators).Count }
+                $lolbinsCount = if ($null -ne $detData.LivingOffLand -and $detData.LivingOffLand.PSObject.Properties['Summary'] -and $detData.LivingOffLand.Summary) { $detData.LivingOffLand.Summary.TotalDetections } else { @($detData.LivingOffLand).Count }
+                $exfilCount = if ($null -ne $detData.DataExfiltration -and $detData.DataExfiltration.PSObject.Properties['Summary'] -and $detData.DataExfiltration.Summary) { $detData.DataExfiltration.Summary.TotalIndicators } else { @($detData.DataExfiltration).Count }
+                $networkCount = if ($null -ne $detData.NetworkAnomalies -and $detData.NetworkAnomalies.PSObject.Properties['TotalAnomalies']) { $detData.NetworkAnomalies.TotalAnomalies } else { @($detData.NetworkAnomalies).Count }
                 
                 $script:dashboardData.Detection.TotalThreats = 
                     $persistenceCount + $processCount + $authCount + $lateralCount +
@@ -1281,10 +1283,10 @@ function Generate-DashboardHTML {
     if ($null -ne $Data.Detection.TotalThreats) {
         [void]$html.AppendLine("    <h2>Threat Detection (Total: $($Data.Detection.TotalThreats))</h2>")
         [void]$html.AppendLine("    <div class='grid'>")
-        [void]$html.AppendLine("      <div class='card'><div class='card-header'>Persistence Mechanisms</div><div class='metric'><span class='metric-label'>Detected</span><span class='metric-value'>$(if ($Data.Detection.PersistenceMechanisms.PSObject.Properties['SuspiciousCount']) { $Data.Detection.PersistenceMechanisms.SuspiciousCount } else { @($Data.Detection.PersistenceMechanisms).Count })</span></div></div>")
+        [void]$html.AppendLine("      <div class='card'><div class='card-header'>Persistence Mechanisms</div><div class='metric'><span class='metric-label'>Detected</span><span class='metric-value'>$(if ($null -ne $Data.Detection.PersistenceMechanisms -and $Data.Detection.PersistenceMechanisms.PSObject.Properties['SuspiciousCount']) { $Data.Detection.PersistenceMechanisms.SuspiciousCount } else { @($Data.Detection.PersistenceMechanisms).Count })</span></div></div>")
         [void]$html.AppendLine("      <div class='card'><div class='card-header'>Suspicious Processes</div><div class='metric'><span class='metric-label'>Detected</span><span class='metric-value'>$(@($Data.Detection.SuspiciousProcesses).Count)</span></div></div>")
-        [void]$html.AppendLine("      <div class='card'><div class='card-header'>Authentication Anomalies</div><div class='metric'><span class='metric-label'>Detected</span><span class='metric-value'>$(if ($Data.Detection.SuspiciousAuthentications.PSObject.Properties['Statistics'] -and $Data.Detection.SuspiciousAuthentications.Statistics) { $Data.Detection.SuspiciousAuthentications.Statistics.TotalFailedLogons + $Data.Detection.SuspiciousAuthentications.Statistics.TotalLockouts + $Data.Detection.SuspiciousAuthentications.Statistics.TotalPrivilegeUse + $Data.Detection.SuspiciousAuthentications.Statistics.TotalExplicitCreds } else { @($Data.Detection.SuspiciousAuthentications).Count })</span></div></div>")
-        [void]$html.AppendLine("      <div class='card'><div class='card-header'>APT Indicators</div><div class='metric'><span class='metric-label'>Detected</span><span class='metric-value'>$(if ($Data.Detection.APTIndicators.PSObject.Properties['Summary'] -and $Data.Detection.APTIndicators.Summary) { $Data.Detection.APTIndicators.Summary.TotalIndicators } else { @($Data.Detection.APTIndicators).Count })</span></div></div>")
+        [void]$html.AppendLine("      <div class='card'><div class='card-header'>Authentication Anomalies</div><div class='metric'><span class='metric-label'>Detected</span><span class='metric-value'>$(if ($null -ne $Data.Detection.SuspiciousAuthentications -and $Data.Detection.SuspiciousAuthentications.PSObject.Properties['Statistics'] -and $Data.Detection.SuspiciousAuthentications.Statistics) { $Data.Detection.SuspiciousAuthentications.Statistics.TotalFailedLogons + $Data.Detection.SuspiciousAuthentications.Statistics.TotalLockouts + $Data.Detection.SuspiciousAuthentications.Statistics.TotalPrivilegeUse + $Data.Detection.SuspiciousAuthentications.Statistics.TotalExplicitCreds } else { @($Data.Detection.SuspiciousAuthentications).Count })</span></div></div>")
+        [void]$html.AppendLine("      <div class='card'><div class='card-header'>APT Indicators</div><div class='metric'><span class='metric-label'>Detected</span><span class='metric-value'>$(if ($null -ne $Data.Detection.APTIndicators -and $Data.Detection.APTIndicators.PSObject.Properties['Summary'] -and $Data.Detection.APTIndicators.Summary) { $Data.Detection.APTIndicators.Summary.TotalIndicators } else { @($Data.Detection.APTIndicators).Count })</span></div></div>")
         [void]$html.AppendLine("    </div>")
     }
     

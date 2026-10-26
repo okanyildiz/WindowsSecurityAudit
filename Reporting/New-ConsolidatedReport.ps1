@@ -196,6 +196,9 @@ function New-ConsolidatedReport {
                 # Case 1: array of finding objects with a Severity property
                 if ($Data -is [array]) {
                     foreach ($item in $Data) {
+                        # Control-style entries that passed or need manual review are not findings
+                        $itemStatus = "$(Get-SafeProperty $item 'Status' '')"
+                        if ($itemStatus -in @('Pass', 'Passed', 'Compliant', 'InPlace', 'Manual', 'NotApplicable')) { continue }
                         $sev = Get-SafeProperty $item 'Severity' ''
                         switch -Regex ("$sev") {
                             '^Critical' { $counts.Critical++ }
@@ -209,12 +212,14 @@ function New-ConsolidatedReport {
 
                 # Case 2: object (or nested Summary) with numeric severity properties
                 # Array-valued properties (e.g. Findings) are inspected recursively
+                $arrayFindings = 0
                 $containers = @($Data)
                 $summary = Get-SafeProperty $Data 'Summary' $null
                 if ($null -ne $summary) { $containers += $summary }
 
                 foreach ($container in $containers) {
                     if ($null -eq $container) { continue }
+                    $isSummaryContainer = ($container -eq $summary -and $null -ne $summary)
                     $memberPairs = @()
                     if ($container -is [System.Collections.IDictionary]) {
                         foreach ($name in @($container.Keys)) {
@@ -233,8 +238,12 @@ function New-ConsolidatedReport {
                             $counts.High     += $nested.High
                             $counts.Medium   += $nested.Medium
                             $counts.Low      += $nested.Low
+                            $arrayFindings   += $nested.Critical + $nested.High + $nested.Medium + $nested.Low
                             continue
                         }
+                        # Summary severity counters aggregate the same findings arrays already
+                        # counted above; using both would double count every finding
+                        if ($isSummaryContainer -and $arrayFindings -gt 0) { continue }
                         $num = $value -as [int]
                         if ($null -eq $num) { continue }
                         if ($member.Name -match 'Total|Score|Percent') { continue }
@@ -317,7 +326,7 @@ function New-ConsolidatedReport {
             if ($FromJsonPath) {
                 Write-Host "`n[LOADING JSON DATA]" -ForegroundColor Cyan
                 try {
-                    $jsonData = Get-Content $FromJsonPath -Raw -ErrorAction Stop | ConvertFrom-Json -ErrorAction Stop
+                    $jsonData = Get-Content $FromJsonPath -Raw -Encoding UTF8 -ErrorAction Stop | ConvertFrom-Json -ErrorAction Stop
                     Write-Host "  Loaded: $FromJsonPath" -ForegroundColor Green
                 }
                 catch {

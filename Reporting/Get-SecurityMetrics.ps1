@@ -261,19 +261,19 @@ function Get-SecurityMetrics {
                 Enabled = $false
                 Frameworks = @{
                     CIS = @{
-                        Score = 0
+                        Score = $null
                         TotalControls = 0
                         PassedControls = 0
                         FailedControls = 0
                     }
                     NIST = @{
-                        Score = 0
+                        Score = $null
                         TotalControls = 0
                         CompliantControls = 0
                         NonCompliantControls = 0
                     }
                     PCIDSS = @{
-                        Score = 0
+                        Score = $null
                         TotalRequirements = 0
                         InPlace = 0
                         NotInPlace = 0
@@ -999,11 +999,14 @@ function Get-SecurityMetrics {
                 }
                 
                 # Calculate overall compliance - NULL SAFE with @() cast
+                # A genuinely collected 0% score is included in the average (same
+                # convention as New-SecurityDashboard); a failed collector leaves a
+                # $null score and is excluded
                 $compScores = @(
                     $script:metrics.Compliance.Frameworks.CIS.Score, 
                     $script:metrics.Compliance.Frameworks.NIST.Score, 
                     $script:metrics.Compliance.Frameworks.PCIDSS.Score
-                ) | Where-Object { $_ -gt 0 }
+                ) | Where-Object { $null -ne $_ }
                 
                 if (@($compScores).Count -gt 0) {
                     $script:metrics.Compliance.OverallScore = [Math]::Round(($compScores | Measure-Object -Average).Average, 1)
@@ -1807,15 +1810,22 @@ $script:metrics.Recommendations.Total =
                     
                     # Keep only last N days
                     $cutoffDate = (Get-Date).AddDays(-$HistoryDays)
-                    $history = @($history) | Where-Object { 
+                    $history = @($history | Where-Object { 
                         try { [DateTime]$_.Timestamp -gt $cutoffDate } catch { $false }
-                    }
+                    })
                     
                     # Add current metrics
                     $history += $script:metrics
                     
-                    # Save
-                    $history | ConvertTo-Json -Depth 10 | Out-File $historyPath -Encoding UTF8 -Force
+                    # Save atomically: write to a unique temp file, then replace the shared
+                    # history file so concurrent readers never observe a torn write
+                    $tempHistoryPath = "$historyPath.$(Get-Random).tmp"
+                    $history | ConvertTo-Json -Depth 10 | Out-File $tempHistoryPath -Encoding UTF8 -Force
+                    if (Test-Path $historyPath) {
+                        [System.IO.File]::Replace($tempHistoryPath, $historyPath, [NullString]::Value)
+                    } else {
+                        [System.IO.File]::Move($tempHistoryPath, $historyPath)
+                    }
                     
                     Write-Host "  History saved: $historyPath" -ForegroundColor Green
                     Write-Host "  History entries: $(@($history).Count)" -ForegroundColor Gray

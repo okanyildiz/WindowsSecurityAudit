@@ -1,4 +1,4 @@
-function Get-ADPrivilegedAccounts {
+﻿function Get-ADPrivilegedAccounts {
     <#
     .SYNOPSIS
         Identifies and analyzes privileged accounts in Active Directory

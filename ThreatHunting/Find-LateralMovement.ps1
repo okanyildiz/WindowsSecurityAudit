@@ -66,6 +66,7 @@ function Find-LateralMovement {
                 CriticalFindings = 0
                 HighFindings = 0
                 MediumFindings = 0
+                LowFindings = 0
             }
             Recommendations = @()
         }
@@ -331,6 +332,7 @@ function Find-LateralMovement {
                                     Write-Host "  [!] ADMIN SHARE: $($parts[1]) by $($parts[0]) ($($group.Count) times)" -ForegroundColor Red
                                 }
                                 else {
+                                    $results.Summary.LowFindings++
                                     Write-Host "  [!] Share: $($parts[1]) by $($parts[0]) ($($group.Count) times)" -ForegroundColor Yellow
                                 }
                             }
@@ -396,6 +398,7 @@ function Find-LateralMovement {
         Write-Host "  Critical: $($results.Summary.CriticalFindings)" -ForegroundColor Red
         Write-Host "  High: $($results.Summary.HighFindings)" -ForegroundColor Yellow
         Write-Host "  Medium: $($results.Summary.MediumFindings)" -ForegroundColor Yellow
+        Write-Host "  Low: $($results.Summary.LowFindings)" -ForegroundColor White
         
         if ($results.Summary.TotalIndicators -gt 0) {
             Write-Host "`nIndicator Breakdown:" -ForegroundColor Cyan

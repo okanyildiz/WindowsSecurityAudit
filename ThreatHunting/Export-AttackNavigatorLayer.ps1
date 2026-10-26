@@ -240,7 +240,7 @@ function Export-AttackNavigatorLayer {
                 throw "Input file not found: $InputPath"
             }
             try {
-                $rawJson = Get-Content -LiteralPath $InputPath -Raw -ErrorAction Stop
+                $rawJson = Get-Content -LiteralPath $InputPath -Raw -Encoding UTF8 -ErrorAction Stop
                 $loadedFindings = $rawJson | ConvertFrom-Json -ErrorAction Stop
                 foreach ($loadedItem in @($loadedFindings)) {
                     foreach ($record in @(Get-TechniqueRecord -Item $loadedItem)) {

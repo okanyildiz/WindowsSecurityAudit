@@ -322,6 +322,7 @@ function Export-ComplianceEvidence {
                     
                     $localGroups = @(Get-LocalGroup -ErrorAction SilentlyContinue)
                     foreach ($group in $localGroups) {
+                        if ($null -eq $group) { continue }
                         try {
                             $members = @(Get-LocalGroupMember -Group $group.Name -ErrorAction SilentlyContinue)
                             $groupData += [PSCustomObject]@{
@@ -400,6 +401,9 @@ function Export-ComplianceEvidence {
             $custodyPath = Join-Path $directories.Metadata "Chain_of_Custody.txt"
             $ipInfo = Get-NetIPAddress -AddressFamily IPv4 -ErrorAction SilentlyContinue | Where-Object {$null -ne $_ -and $_.InterfaceAlias -notlike '*Loopback*'} | Select-Object -First 1
             $ipAddress = if ($ipInfo) { $ipInfo.IPAddress } else { 'N/A' }
+            $osCaptionCustody = $null
+            try { $osCaptionCustody = (Get-CimInstance Win32_OperatingSystem -ErrorAction Stop).Caption } catch { $osCaptionCustody = $null }
+            if ($null -eq $osCaptionCustody) { $osCaptionCustody = 'Unknown' }
             $custody = @"
 CHAIN OF CUSTODY DOCUMENTATION
 ================================
@@ -412,7 +416,7 @@ SYSTEM INFORMATION:
 Computer Name: $($env:COMPUTERNAME)
 Domain: $($env:USERDOMAIN)
 IP Address: $ipAddress
-Operating System: $((Get-CimInstance Win32_OperatingSystem).Caption)
+Operating System: $osCaptionCustody
 
 EVIDENCE COLLECTOR:
 Name: $AuditorName

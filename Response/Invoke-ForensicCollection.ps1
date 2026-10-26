@@ -101,10 +101,10 @@ function Invoke-ForensicCollection {
                 
                 # Basic system info
                 $sysInfo = Get-SystemInfo -IncludeInstalledSoftware -IncludeHotfixes
-                $sysInfo | ConvertTo-Json -Depth 5 | Out-File (Join-Path $sysInfoPath "SystemInfo.json")
+                $sysInfo | ConvertTo-Json -Depth 5 | Out-File (Join-Path $sysInfoPath "SystemInfo.json") -Encoding UTF8
                 
                 # Computer information
-                Get-ComputerInfo | ConvertTo-Json -Depth 5 | Out-File (Join-Path $sysInfoPath "ComputerInfo.json")
+                Get-ComputerInfo | ConvertTo-Json -Depth 5 | Out-File (Join-Path $sysInfoPath "ComputerInfo.json") -Encoding UTF8
                 
                 # Environment variables
                 Get-ChildItem Env: | Export-Csv (Join-Path $sysInfoPath "EnvironmentVariables.csv") -NoTypeInformation
@@ -329,15 +329,15 @@ function Invoke-ForensicCollection {
                     
                     # Persistence mechanisms
                     $persistence = Find-PersistenceMechanisms
-                    $persistence | ConvertTo-Json -Depth 5 | Out-File (Join-Path $secPath "Persistence.json")
+                    $persistence | ConvertTo-Json -Depth 5 | Out-File (Join-Path $secPath "Persistence.json") -Encoding UTF8
                     
                     # Network anomalies
                     $network = Find-NetworkAnomalies -IncludeEstablished
-                    $network | ConvertTo-Json -Depth 5 | Out-File (Join-Path $secPath "NetworkAnomalies.json")
+                    $network | ConvertTo-Json -Depth 5 | Out-File (Join-Path $secPath "NetworkAnomalies.json") -Encoding UTF8
                     
                     # Authentication analysis
                     $auth = Find-SuspiciousAuthentication -Hours 168
-                    $auth | ConvertTo-Json -Depth 5 | Out-File (Join-Path $secPath "Authentication.json")
+                    $auth | ConvertTo-Json -Depth 5 | Out-File (Join-Path $secPath "Authentication.json") -Encoding UTF8
                     
                     $results.ArtifactsCollected += "Security Analysis"
                     Write-CollectionLog "Completed security analysis"

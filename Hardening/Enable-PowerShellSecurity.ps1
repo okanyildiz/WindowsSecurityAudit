@@ -1,4 +1,4 @@
-function Enable-PowerShellSecurity {
+﻿function Enable-PowerShellSecurity {
     <#
     .SYNOPSIS
         Hardens PowerShell security settings

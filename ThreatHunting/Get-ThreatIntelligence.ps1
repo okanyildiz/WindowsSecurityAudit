@@ -524,7 +524,7 @@ function Get-ThreatIntelligence {
                             } | ConvertTo-Json
                             $mispResponse = Invoke-RestMethod -Method Post -Uri "$($MISPUrl.TrimEnd('/'))/attributes/restSearch" -Headers @{ 'Authorization' = $MISPApiKey; 'Accept' = 'application/json' } -Body $mispBody -ContentType 'application/json' -TimeoutSec 60 -ErrorAction Stop
                             if ($null -eq $mispResponse) { throw "MISP returned an empty response" }
-                            ($mispResponse | ConvertTo-Json -Depth 10) | Set-Content -Path $mispCacheFile -ErrorAction Stop
+                            ($mispResponse | ConvertTo-Json -Depth 10) | Set-Content -Path $mispCacheFile -Encoding UTF8 -ErrorAction Stop
                             $mispSource = 'download'
                             $mispCacheItem = Get-Item $mispCacheFile
                             $mispCacheAgeHours = [math]::Max(0, [math]::Round(((Get-Date) - $mispCacheItem.LastWriteTime).TotalHours, 1))
@@ -696,7 +696,7 @@ function Get-ThreatIntelligence {
                             if ($taxiiMorePages -and $taxiiPagesFetched -ge $taxiiMaxPages) {
                                 Write-Warning "TAXII page cap ($taxiiMaxPages) reached - using indicators from the first $taxiiPagesFetched pages"
                             }
-                            ($taxiiObjects | ConvertTo-Json -Depth 10) | Set-Content -Path $taxiiCacheFile -ErrorAction Stop
+                            ($taxiiObjects | ConvertTo-Json -Depth 10) | Set-Content -Path $taxiiCacheFile -Encoding UTF8 -ErrorAction Stop
                             $taxiiSource = 'download'
                             $taxiiCacheItem = Get-Item $taxiiCacheFile
                             $taxiiCacheAgeHours = [math]::Max(0, [math]::Round(((Get-Date) - $taxiiCacheItem.LastWriteTime).TotalHours, 1))
@@ -772,7 +772,7 @@ function Get-ThreatIntelligence {
             
             if (Test-Path $StixFilePath) {
                 try {
-                    $stixBundle = Get-Content $StixFilePath -Raw -ErrorAction Stop | ConvertFrom-Json -ErrorAction Stop
+                    $stixBundle = Get-Content $StixFilePath -Raw -Encoding UTF8 -ErrorAction Stop | ConvertFrom-Json -ErrorAction Stop
                     $stixObjects = @()
                     if ($null -ne $stixBundle -and $stixBundle.PSObject.Properties['objects'] -and $null -ne $stixBundle.objects) {
                         $stixObjects = @($stixBundle.objects)
@@ -820,7 +820,7 @@ function Get-ThreatIntelligence {
         if ($IOCFile -and (Test-Path $IOCFile)) {
             Write-Host "Loading custom IOCs from: $IOCFile" -ForegroundColor Yellow
             try {
-                $customIOCs = Get-Content $IOCFile -Raw | ConvertFrom-Json
+                $customIOCs = Get-Content $IOCFile -Raw -Encoding UTF8 | ConvertFrom-Json
                 foreach ($section in 'MaliciousProcesses', 'MaliciousIPs', 'MaliciousHashes') {
                     if ($customIOCs.PSObject.Properties[$section]) {
                         foreach ($entry in $customIOCs.$section.PSObject.Properties) {

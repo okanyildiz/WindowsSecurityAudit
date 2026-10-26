@@ -93,16 +93,57 @@ function Export-SecurityReport {
     process {
         try {
             Write-Host "Collecting security data..." -ForegroundColor Yellow
-            
-            # Collect all security data
-            $baseline = Get-SecurityBaseline
-            $systemInfo = Get-SystemInfo
-            $persistence = Find-PersistenceMechanisms
-            $processes = Find-SuspiciousProcesses
-            $network = Find-NetworkAnomalies -IncludeEstablished
-            $auth = Find-SuspiciousAuthentication -Hours 168
-            $eventLog = Get-EventLogAnalysis -Hours 168
-            $registry = Get-RegistryAnalysis -IncludeAutoRun
+
+            # Null-safe property reader (same shape as New-ConsolidatedReport/Get-SafeProperty)
+            function Get-SafeProperty {
+                param($Object, $PropertyName, $Default = $null)
+                if ($null -eq $Object) { return $Default }
+                if ($Object -is [System.Collections.IDictionary]) {
+                    if ($Object.Contains($PropertyName)) {
+                        $value = $Object[$PropertyName]
+                        if ($null -eq $value) { return $Default }
+                        return $value
+                    }
+                    return $Default
+                }
+                if ($Object.PSObject.Properties[$PropertyName]) {
+                    $value = $Object.$PropertyName
+                    if ($null -eq $value) { return $Default }
+                    return $value
+                }
+                return $Default
+            }
+
+            # Collect all security data - each collector is isolated so a single
+            # failing collector degrades its section instead of aborting the report
+            $baseline = $null
+            try { $baseline = Get-SecurityBaseline -ErrorAction Stop } catch { Write-Warning "Get-SecurityBaseline failed: $_" }
+            $systemInfo = $null
+            try { $systemInfo = Get-SystemInfo -ErrorAction Stop } catch { Write-Warning "Get-SystemInfo failed: $_" }
+            $persistence = $null
+            try { $persistence = Find-PersistenceMechanisms -ErrorAction Stop } catch { Write-Warning "Find-PersistenceMechanisms failed: $_" }
+            $processes = $null
+            try { $processes = Find-SuspiciousProcesses -ErrorAction Stop } catch { Write-Warning "Find-SuspiciousProcesses failed: $_" }
+            $network = $null
+            try { $network = Find-NetworkAnomalies -IncludeEstablished -ErrorAction Stop } catch { Write-Warning "Find-NetworkAnomalies failed: $_" }
+            $auth = $null
+            try { $auth = Find-SuspiciousAuthentication -Hours 168 -ErrorAction Stop } catch { Write-Warning "Find-SuspiciousAuthentication failed: $_" }
+            $eventLog = $null
+            try { $eventLog = Get-EventLogAnalysis -Hours 168 -ErrorAction Stop } catch { Write-Warning "Get-EventLogAnalysis failed: $_" }
+            $registry = $null
+            try { $registry = Get-RegistryAnalysis -IncludeAutoRun -ErrorAction Stop } catch { Write-Warning "Get-RegistryAnalysis failed: $_" }
+
+            # Safe scalar views of collector output (strict-mode safe for null/malformed results)
+            $baselineScore = Get-SafeProperty $baseline 'SecurityScore' $null
+            $baselineDefender = Get-SafeProperty $baseline 'WindowsDefender' $null
+            $baselineFirewall = Get-SafeProperty $baseline 'Firewall' $null
+            $baselineUac = Get-SafeProperty $baseline 'UAC' $null
+            $persistenceSuspicious = Get-SafeProperty $persistence 'SuspiciousCount' 0
+            $persistenceTotal = Get-SafeProperty $persistence 'TotalFindings' 0
+            $authStats = Get-SafeProperty $auth 'Statistics' $null
+            $authLockouts = Get-SafeProperty $authStats 'TotalLockouts' 0
+            $authFailedLogons = Get-SafeProperty $authStats 'TotalFailedLogons' 0
+            $networkAnomalies = Get-SafeProperty $network 'TotalAnomalies' 0
             
             # Build report data structure
             $reportData = [PSCustomObject]@{
@@ -110,7 +151,7 @@ function Export-SecurityReport {
                 GeneratedDate = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
                 ComputerName = $env:COMPUTERNAME
                 GeneratedBy = $env:USERNAME
-                SecurityScore = $baseline.SecurityScore
+                SecurityScore = $baselineScore
                 Summary = @{
                     CriticalFindings = 0
                     HighFindings = 0
@@ -134,24 +175,25 @@ function Export-SecurityReport {
             # Analyze findings and create recommendations
             Write-Host "Analyzing findings..." -ForegroundColor Yellow
             
-            # Critical findings
-            if ($baseline.SecurityScore -lt 50) {
+            # Critical findings (only when a baseline score was actually collected -
+            # a failed collector must not fabricate a "critically low" finding)
+            if ($null -ne $baselineScore -and $baselineScore -lt 50) {
                 $reportData.Summary.CriticalFindings++
                 $reportData.Findings += [PSCustomObject]@{
                     Severity = 'Critical'
                     Category = 'Security Baseline'
-                    Finding = "Security score is critically low: $($baseline.SecurityScore)/100"
+                    Finding = "Security score is critically low: $baselineScore/100"
                     Impact = 'System is highly vulnerable to attacks'
                     Recommendation = 'Immediate remediation required'
                 }
             }
             
-            if ($persistence.SuspiciousCount -gt 5) {
+            if ($persistenceSuspicious -gt 5) {
                 $reportData.Summary.HighFindings++
                 $reportData.Findings += [PSCustomObject]@{
                     Severity = 'High'
                     Category = 'Persistence'
-                    Finding = "$($persistence.SuspiciousCount) suspicious persistence mechanisms detected"
+                    Finding = "$persistenceSuspicious suspicious persistence mechanisms detected"
                     Impact = 'Potential malware or unauthorized software present'
                     Recommendation = 'Review and remove unauthorized persistence mechanisms'
                 }
@@ -159,7 +201,7 @@ function Export-SecurityReport {
             
             if (@($processes).Count -gt 0) {
                $processArray = @($processes)
-$highSeverityProcs = @($processArray | Where-Object { $_.SuspicionScore -ge 70 })
+$highSeverityProcs = @($processArray | Where-Object { $null -ne $_ -and $_.PSObject.Properties['SuspicionScore'] -and $_.SuspicionScore -ge 70 })
 if ($highSeverityProcs.Count -gt 0) {
     $reportData.Summary.HighFindings++
     $reportData.Findings += [PSCustomObject]@{
@@ -172,23 +214,23 @@ if ($highSeverityProcs.Count -gt 0) {
 }
             }
             
-            if ($auth.Statistics.TotalLockouts -gt 0) {
+            if ($authLockouts -gt 0) {
                 $reportData.Summary.MediumFindings++
                 $reportData.Findings += [PSCustomObject]@{
                     Severity = 'Medium'
                     Category = 'Authentication'
-                    Finding = "$($auth.Statistics.TotalLockouts) account lockouts detected"
+                    Finding = "$authLockouts account lockouts detected"
                     Impact = 'Possible brute force attempts'
                     Recommendation = 'Review failed authentication events and implement MFA'
                 }
             }
             
-            if ($network.TotalAnomalies -gt 10) {
+            if ($networkAnomalies -gt 10) {
                 $reportData.Summary.MediumFindings++
                 $reportData.Findings += [PSCustomObject]@{
                     Severity = 'Medium'
                     Category = 'Network'
-                    Finding = "$($network.TotalAnomalies) network anomalies detected"
+                    Finding = "$networkAnomalies network anomalies detected"
                     Impact = 'Unusual network activity may indicate compromise'
                     Recommendation = 'Review network connections and implement network monitoring'
                 }
@@ -197,7 +239,7 @@ if ($highSeverityProcs.Count -gt 0) {
             # Generate recommendations based on report type
             if ($ReportType -eq 'Executive') {
                 $reportData.Recommendations = @(
-                    "Overall Security Score: $($baseline.SecurityScore)/100 - $(if ($baseline.SecurityScore -ge 80) { 'Good' } elseif ($baseline.SecurityScore -ge 60) { 'Fair' } else { 'Poor' })",
+                    "$(if ($null -ne $baselineScore) { "Overall Security Score: $baselineScore/100 - $(if ($baselineScore -ge 80) { 'Good' } elseif ($baselineScore -ge 60) { 'Fair' } else { 'Poor' })" } else { 'Overall Security Score: N/A - baseline collection failed' })",
                     "Critical Issues: $($reportData.Summary.CriticalFindings)",
                     "High Priority Issues: $($reportData.Summary.HighFindings)",
                     "Immediate action required on critical and high priority items",
@@ -397,12 +439,12 @@ if ($highSeverityProcs.Count -gt 0) {
         <h2>System Details</h2>
         <table>
             <tr><th>Component</th><th>Status</th></tr>
-            <tr><td>Windows Defender</td><td>$(if ($null -ne $baseline.WindowsDefender -and $baseline.WindowsDefender.PSObject.Properties['RealTimeProtectionEnabled']) { $baseline.WindowsDefender.RealTimeProtectionEnabled } else { $baseline.WindowsDefender })</td></tr>
-            <tr><td>Firewall</td><td>$(if ($baseline.Firewall -is [array] -and $baseline.Firewall.Count -gt 0) { $baseline.Firewall[0].Enabled } else { $baseline.Firewall })</td></tr>
-            <tr><td>UAC</td><td>$(if ($null -ne $baseline.UAC -and $baseline.UAC.PSObject.Properties['EnableLUA']) { $baseline.UAC.EnableLUA -eq 1 } else { $baseline.UAC })</td></tr>
-            <tr><td>Persistence Mechanisms</td><td>$($persistence.TotalFindings) total ($($persistence.SuspiciousCount) suspicious)</td></tr>
-            <tr><td>Network Anomalies</td><td>$($network.TotalAnomalies)</td></tr>
-            <tr><td>Failed Logons</td><td>$($auth.Statistics.TotalFailedLogons)</td></tr>
+            <tr><td>Windows Defender</td><td>$(if ($null -ne $baselineDefender -and $baselineDefender.PSObject.Properties['RealTimeProtectionEnabled']) { $baselineDefender.RealTimeProtectionEnabled } else { $baselineDefender })</td></tr>
+            <tr><td>Firewall</td><td>$(if ($baselineFirewall -is [array] -and $baselineFirewall.Count -gt 0) { $baselineFirewall[0].Enabled } else { $baselineFirewall })</td></tr>
+            <tr><td>UAC</td><td>$(if ($null -ne $baselineUac -and $baselineUac.PSObject.Properties['EnableLUA']) { $baselineUac.EnableLUA -eq 1 } else { $baselineUac })</td></tr>
+            <tr><td>Persistence Mechanisms</td><td>$persistenceTotal total ($persistenceSuspicious suspicious)</td></tr>
+            <tr><td>Network Anomalies</td><td>$networkAnomalies</td></tr>
+            <tr><td>Failed Logons</td><td>$authFailedLogons</td></tr>
         </table>
     </div>
     

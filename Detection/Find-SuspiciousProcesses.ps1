@@ -67,6 +67,7 @@ function Find-SuspiciousProcesses {
             }
             
             foreach ($proc in $processes) {
+                if ($null -eq $proc) { continue }
                 $suspicionScore = 0
                 $suspicionReasons = @()
                 
@@ -226,7 +227,8 @@ function Find-SuspiciousProcesses {
                     }
                 }
                 catch {
-                    Write-Verbose "Error processing process $($proc.ProcessName): $_"
+                    $failedProcName = if ($null -ne $proc -and $proc.PSObject.Properties['ProcessName']) { $proc.ProcessName } else { 'unknown' }
+                    Write-Verbose "Error processing process ${failedProcName}: $_"
                 }
             }
             
