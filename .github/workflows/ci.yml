@@ -61,6 +61,55 @@ jobs:
         run: |
           $config = New-PesterConfiguration
           $config.Run.Path = './tests'
+          # The real-Windows smoke suite runs in the dedicated 'smoke' job below
+          $config.Run.ExcludePath = './tests/Smoke.Windows.Tests.ps1'
+          $config.Run.Exit = $true          # exit code 1 when any test fails
+          $config.Output.Verbosity = 'Detailed'
+          Invoke-Pester -Configuration $config
+
+  smoke:
+    name: Smoke tests (real Windows execution)
+    # Runs after the structural gate: only spend smoke-test minutes on a repo
+    # that already parses, lints and imports cleanly.
+    needs: lint
+    # GitHub-hosted windows runners are elevated, so admin-only calls (fsutil,
+    # Security event log, HKLM) genuinely execute here.
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Pester
+        shell: pwsh
+        run: |
+          Set-PSRepository -Name PSGallery -InstallationPolicy Trusted
+          Install-Module -Name Pester -MinimumVersion 5.5.0 -Force -Scope CurrentUser -SkipPublisherCheck
+
+      - name: Smoke tests (PowerShell 7)
+        shell: pwsh
+        run: |
+          $config = New-PesterConfiguration
+          $config.Run.Path = './tests/Smoke.Windows.Tests.ps1'
+          $config.Run.Exit = $true          # exit code 1 when any test fails
+          $config.Output.Verbosity = 'Detailed'
+          Invoke-Pester -Configuration $config
+
+      - name: Install Pester (Windows PowerShell 5.1)
+        # 5.1 has its own CurrentUser module root (~\Documents\WindowsPowerShell\Modules),
+        # so the pwsh-side install above is not visible to it.
+        shell: powershell
+        run: |
+          Set-PSRepository -Name PSGallery -InstallationPolicy Trusted
+          Install-Module -Name Pester -MinimumVersion 5.5.0 -Force -Scope CurrentUser -SkipPublisherCheck
+
+      - name: Smoke tests (Windows PowerShell 5.1)
+        # The real-5.1-execution gate: the module targets 5.1+, so every smoke
+        # test must also pass under the desktop edition.
+        shell: powershell
+        run: |
+          $config = New-PesterConfiguration
+          $config.Run.Path = './tests/Smoke.Windows.Tests.ps1'
           $config.Run.Exit = $true          # exit code 1 when any test fails
           $config.Output.Verbosity = 'Detailed'
           Invoke-Pester -Configuration $config
