@@ -116,9 +116,9 @@ function Get-FileSystemJournal {
                             $fsutilExitCode = $script:FsutilLastExitCode
 
                             if ($fsutilExitCode -ne 0) {
-                                if ($fsutilExitCode -eq 5) {
-                                    Write-Warning "fsutil denied access to the USN journal (exit code 5). Rerun from an elevated prompt."
-                                    $result.Notes += "USN journal read failed: fsutil requires administrative privileges."
+                                if ($fsutilExitCode -eq 1 -or $fsutilExitCode -eq 5) {
+                                    Write-Warning "fsutil denied access to the USN journal (exit code $fsutilExitCode); fsutil requires elevation or access denied. Rerun from an elevated prompt."
+                                    $result.Notes += "USN journal read failed: fsutil requires elevation or access denied."
                                 }
                                 else {
                                     Write-Warning "fsutil usn readjournal failed with exit code $fsutilExitCode."
@@ -232,9 +232,9 @@ function Get-FileSystemJournal {
                             $fsutilExitCode = $script:FsutilLastExitCode
 
                             if ($fsutilExitCode -ne 0) {
-                                if ($fsutilExitCode -eq 5) {
-                                    Write-Warning "fsutil denied access to volume metadata (exit code 5). Rerun from an elevated prompt."
-                                    $result.Notes += "MFT summary collection failed: fsutil requires administrative privileges."
+                                if ($fsutilExitCode -eq 1 -or $fsutilExitCode -eq 5) {
+                                    Write-Warning "fsutil denied access to volume metadata (exit code $fsutilExitCode); fsutil requires elevation or access denied. Rerun from an elevated prompt."
+                                    $result.Notes += "MFT summary collection failed: fsutil requires elevation or access denied."
                                 }
                                 else {
                                     Write-Warning "fsutil fsinfo ntfsinfo failed with exit code $fsutilExitCode."
@@ -322,9 +322,9 @@ function Get-FileSystemJournal {
                                 $rawLines = @(Get-FsutilOutput -Arguments @('usn', 'readjournal', "$drive`:"))
                                 $fsutilExitCode = $script:FsutilLastExitCode
                                 if ($fsutilExitCode -ne 0) {
-                                    if ($fsutilExitCode -eq 5) {
-                                        Write-Warning "fsutil denied access to the USN journal (exit code 5); journal comparison will be skipped."
-                                        $result.Notes += "USN journal comparison skipped: fsutil requires administrative privileges."
+                                    if ($fsutilExitCode -eq 1 -or $fsutilExitCode -eq 5) {
+                                        Write-Warning "fsutil denied access to the USN journal (exit code $fsutilExitCode); fsutil requires elevation or access denied; journal comparison will be skipped."
+                                        $result.Notes += "USN journal comparison skipped: fsutil requires elevation or access denied."
                                     }
                                     else {
                                         Write-Warning "fsutil usn readjournal failed with exit code $fsutilExitCode; journal comparison will be skipped."

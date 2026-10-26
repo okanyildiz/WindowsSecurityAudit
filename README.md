@@ -148,6 +148,12 @@ A single, cohesive PowerShell module that consolidates essential security functi
 <td>✅ Open Source</td>
 </tr>
 <tr>
+<td><strong>Non-English Windows</strong></td>
+<td>✅ Fully locale-invariant (API/GUID/SID)</td>
+<td>✅ Varies</td>
+<td>❌ Often parses English-only output</td>
+</tr>
+<tr>
 <td><strong>Support</strong></td>
 <td>✅ Community + Pro</td>
 <td>✅ Vendor Support</td>
@@ -236,7 +242,11 @@ WindowsSecurityAudit/
 │   ├── Invoke-SecurityRemediation.ps1
 │   └── Set-SecurityBaseline.ps1
 │
-├── 📁 Private/                         # Internal functions (hidden)
+├── 📁 Private/                         # Internal locale-invariant data sources (hidden)
+│   ├── Get-AuditPolicyTable.ps1        # Audit policy via AuditQuerySystemPolicy/GUID CSV
+│   ├── Get-LocalPasswordPolicy.ps1     # Password policy via NetUserModalsGet
+│   ├── Get-WlanProfileList.ps1         # WLAN profiles via wlanapi.dll
+│   └── IdentityHelpers.ps1             # SID-first group/user/ACL resolution
 │
 ├── 📁 Reporting/                       # Reporting (4 functions)
 │   ├── Get-SecurityMetrics.ps1
@@ -251,8 +261,11 @@ WindowsSecurityAudit/
 │   ├── Invoke-IncidentResponse.ps1
 │   └── Send-SiemEvent.ps1
 │
-├── 📁 tests/                           # Pester tests (413 tests)
-│   └── WindowsSecurityAudit.Tests.ps1
+├── 📁 tests/                           # Pester tests (498 tests)
+│   ├── WindowsSecurityAudit.Tests.ps1  # Public API surface (425 tests)
+│   ├── Smoke.Windows.Tests.ps1         # Real-Windows execution smoke tests (48)
+│   ├── Locale.Regression.Tests.ps1     # EN/DE fixture equivalence + no-text-readers guard (25)
+│   └── fixtures/                       # auditpol EN/DE (cp1252) CSV fixtures
 │
 ├── 📁 ThreatHunting/                   # Threat Hunting (7 functions)
 │   ├── Export-AttackNavigatorLayer.ps1
@@ -286,6 +299,7 @@ WindowsSecurityAudit/
 ### Minimum Requirements
 - **Operating System**: Windows 10 1809+ / Windows Server 2016+
 - **PowerShell**: Version 5.1 (Windows PowerShell) or PowerShell 7+
+- **Display Language**: Any — all checks are locale-invariant since v1.6.0 (API/GUID/SID-based; correct results on Turkish, German, French and every other Windows UI language)
 - **Memory**: 4GB RAM (8GB recommended for enterprise scanning)
 - **Storage**: 1GB for module + 10GB for reports and logs
 - **Processor**: 2 cores minimum (4+ cores recommended)
@@ -823,8 +837,8 @@ The full feature set is documented in the module tables above — this section o
 
 **Quality infrastructure:**
 
-- 🧪 **Pester test suite** (`tests/WindowsSecurityAudit.Tests.ps1`) covering the public API surface (now 333 tests)
-- ⚙️ **GitHub Actions CI** (`.github/workflows/ci.yml`) on windows-latest: PSScriptAnalyzer Error gate, module import verified under both **PowerShell 7 (pwsh)** and **Windows PowerShell 5.1**, plus the full Pester suite
+- 🧪 **Pester test suite** (`tests/`) covering the public API surface plus real-Windows smoke tests and locale-regression fixtures (now 498 tests)
+- ⚙️ **GitHub Actions CI** (`.github/workflows/ci.yml`) on windows-latest: PSScriptAnalyzer Error gate, module import verified under both **PowerShell 7 (pwsh)** and **Windows PowerShell 5.1**, plus the full Pester suite and a real-Windows smoke job
 
 ### 📦 Already in the Toolbox (v1.0.0)
 

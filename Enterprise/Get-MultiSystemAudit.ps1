@@ -192,12 +192,19 @@ function Get-MultiSystemAudit {
                             
                             # Admin accounts
                             $admins = @()
-                            $adminLookupSucceeded = $false
-                            if (Get-Command Get-AdminGroupMembers -ErrorAction SilentlyContinue) {
-                                $admins = @(Get-AdminGroupMembers)
-                                $adminLookupSucceeded = ((Get-Variable -Name AdminGroupLookupSucceeded -Scope Script -ValueOnly -ErrorAction SilentlyContinue) -eq $true)
+                            $lookupOk = $false
+                            try {
+                                $admins = @(Get-LocalGroupMember -SID ([System.Security.Principal.SecurityIdentifier]'S-1-5-32-544') -ErrorAction Stop)
+                                $lookupOk = $true
+                            } catch {
+                                try {
+                                    $adminGroupName = ([System.Security.Principal.SecurityIdentifier]'S-1-5-32-544').Translate([System.Security.Principal.NTAccount]).Value.Split('\')[-1]
+                                    $group = ([ADSI]"WinNT://./$adminGroupName,group")
+                                    $admins = @($group.psbase.Invoke('Members'))
+                                    $lookupOk = $true
+                                } catch { $lookupOk = $false }
                             }
-                            if (-not $adminLookupSucceeded) {
+                            if (-not $lookupOk) {
                                 $findings += [PSCustomObject]@{
                                     Severity = 'Low'
                                     Finding = 'Unable to determine administrator count'
@@ -278,12 +285,19 @@ function Get-MultiSystemAudit {
                             
                             # Admin accounts
                             $admins = @()
-                            $adminLookupSucceeded = $false
-                            if (Get-Command Get-AdminGroupMembers -ErrorAction SilentlyContinue) {
-                                $admins = @(Get-AdminGroupMembers)
-                                $adminLookupSucceeded = ((Get-Variable -Name AdminGroupLookupSucceeded -Scope Script -ValueOnly -ErrorAction SilentlyContinue) -eq $true)
+                            $lookupOk = $false
+                            try {
+                                $admins = @(Get-LocalGroupMember -SID ([System.Security.Principal.SecurityIdentifier]'S-1-5-32-544') -ErrorAction Stop)
+                                $lookupOk = $true
+                            } catch {
+                                try {
+                                    $adminGroupName = ([System.Security.Principal.SecurityIdentifier]'S-1-5-32-544').Translate([System.Security.Principal.NTAccount]).Value.Split('\')[-1]
+                                    $group = ([ADSI]"WinNT://./$adminGroupName,group")
+                                    $admins = @($group.psbase.Invoke('Members'))
+                                    $lookupOk = $true
+                                } catch { $lookupOk = $false }
                             }
-                            if (-not $adminLookupSucceeded) {
+                            if (-not $lookupOk) {
                                 $findings += [PSCustomObject]@{
                                     Severity = 'Low'
                                     Finding = 'Unable to determine administrator count'

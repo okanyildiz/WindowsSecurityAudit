@@ -1,4 +1,4 @@
-﻿<#
+<#
 .SYNOPSIS
     Locale-invariant WLAN profile list helper (private).
 .DESCRIPTION
@@ -130,14 +130,14 @@ public static class WlanNative {
             Write-Verbose "Get-WlanProfileList: WLAN API unavailable (win32 $win32Error)"
             return $result
         }
-        foreach ($profile in $profiles) {
-            $flags = [uint32]$profile.Flags
+        foreach ($wlanProfile in $profiles) {
+            $flags = [uint32]$wlanProfile.Flags
             $result += [PSCustomObject]@{
-                Name                 = $profile.Name
+                Name                 = $wlanProfile.Name
                 Flags                = $flags
                 IsGroupPolicy        = [bool]($flags -band 1)
                 IsPerUser            = [bool]($flags -band 2)
-                InterfaceDescription = $profile.InterfaceDescription
+                InterfaceDescription = $wlanProfile.InterfaceDescription
             }
         }
     }

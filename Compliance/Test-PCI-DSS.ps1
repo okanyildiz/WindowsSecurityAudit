@@ -328,7 +328,7 @@ function Test-PCI-DSS {
                         Description = 'Logs must contain sufficient detail'
                         Expected = 'File system auditing enabled'
                         Actual = if ($null -eq $objectAuditValue) { 'Unable to determine (insufficient privileges or unsupported platform)' }
-                                 elseif ($objectAuditValue -ge 1) { "Enabled" } else { "Not configured" }
+                                 elseif ($objectAuditValue -ge 1 -and $objectAuditValue -le 3) { "Enabled" } else { "Not configured" }
                         Status = if ($null -eq $objectAuditValue) { 'NotApplicable' }
                                  elseif ($objectAuditValue -ge 1 -and $objectAuditValue -le 3) { 'InPlace' } else { 'NotInPlace' }
                         Priority = 'High'

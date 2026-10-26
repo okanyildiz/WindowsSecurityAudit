@@ -226,7 +226,7 @@ function Test-NISTCompliance {
                         $acl = Get-Acl $logPath -ErrorAction SilentlyContinue
                         $protected = @()
                         if ($acl) {
-                            $protected = @($acl.Access | Where-Object { (Test-IdentityReferenceIsSid -IdentityReference $_.IdentityReference -Sid 'S-1-5-32-545') -and $_.FileSystemRights -match "FullControl|Modify|Write" })
+                            $protected = @($acl.Access | Where-Object { ((Test-IdentityReferenceIsSid -IdentityReference $_.IdentityReference -Sid 'S-1-5-32-545') -or (Test-IdentityReferenceIsSid -IdentityReference $_.IdentityReference -Sid 'S-1-5-11') -or (Test-IdentityReferenceIsSid -IdentityReference $_.IdentityReference -Sid 'S-1-1-0')) -and $_.FileSystemRights -match "FullControl|Modify|Write" })
                         }
                         
                         $control = [PSCustomObject]@{

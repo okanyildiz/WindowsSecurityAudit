@@ -1,4 +1,4 @@
-﻿<#
+<#
 .SYNOPSIS
     Locale-invariant local password/lockout policy helper (private).
 .DESCRIPTION
@@ -7,12 +7,90 @@
     PasswordComplexity/ClearTextPassword (and serves as full fallback) from a
     secedit /export INF whose [System Access] keys are English on all locales.
     NEVER calls 'net accounts' (localized output).
+    ConvertTo-PolicyFromModals holds all pure unit/sentinel conversion logic so
+    it can be tested off-Windows (no P/Invoke, no OS calls).
 .NOTES
     Struct layouts verified from lmaccess.h (USER_MODALS_INFO_0/3).
-    NetApi ages are seconds; USER_MODALS_INFO_3 duration/observation window are
-    MINUTES per lmaccess.h (some sources wrongly say seconds). TIMEQ_FOREVER
-    (0xFFFFFFFF) maps to -1 ("never" / "until admin unlocks").
+    ALL NetApi time fields are SECONDS: USER_MODALS_INFO_0 max/min password age
+    and force-logoff, and USER_MODALS_INFO_3 lockout duration and observation
+    window (Microsoft Learn: usrmod3_lockout_duration "Specifies, in seconds...";
+    usrmod3_lockout_observation_window "...in seconds").
+    TIMEQ_FOREVER ([uint32]::MaxValue) maps to -1 ("never" / "until admin unlocks").
+    Sentinel checks MUST compare against [uint32]::MaxValue, never 0xFFFFFFFF:
+    PowerShell parses the literal 0xFFFFFFFF as [int] -1, so
+    '[uint32]4294967295 -eq 0xFFFFFFFF' is $false and the branch never fires.
 #>
+
+function ConvertTo-PolicyFromModals {
+    [CmdletBinding()]
+    [OutputType([PSCustomObject])]
+    param(
+        [Parameter()]
+        $Modals0,
+
+        [Parameter()]
+        $Modals3
+    )
+
+    $converted = [PSCustomObject]@{
+        MinPasswordLength               = $null
+        MaxPasswordAgeDays              = $null
+        MinPasswordAgeDays              = $null
+        PasswordHistoryLength           = $null
+        ForceLogoffHours                = $null
+        LockoutThreshold                = $null
+        LockoutDurationMinutes          = $null
+        LockoutObservationWindowMinutes = $null
+    }
+
+    if ($null -ne $Modals0) {
+        $converted.MinPasswordLength = [int]$Modals0.usrmod0_min_passwd_len
+
+        # USER_MODALS_INFO_0 ages are seconds; TIMEQ_FOREVER = [uint32]::MaxValue.
+        if ($Modals0.usrmod0_max_passwd_age -eq [uint32]::MaxValue) {
+            $converted.MaxPasswordAgeDays = -1
+        }
+        else {
+            $converted.MaxPasswordAgeDays = [int][math]::Round($Modals0.usrmod0_max_passwd_age / 86400)
+        }
+        if ($Modals0.usrmod0_min_passwd_age -eq [uint32]::MaxValue) {
+            $converted.MinPasswordAgeDays = -1
+        }
+        else {
+            $converted.MinPasswordAgeDays = [int][math]::Round($Modals0.usrmod0_min_passwd_age / 86400)
+        }
+        if ($Modals0.usrmod0_force_logoff -eq [uint32]::MaxValue) {
+            $converted.ForceLogoffHours = -1
+        }
+        else {
+            $converted.ForceLogoffHours = [int][math]::Round($Modals0.usrmod0_force_logoff / 3600)
+        }
+        $converted.PasswordHistoryLength = [int]$Modals0.usrmod0_password_hist_len
+    }
+
+    if ($null -ne $Modals3) {
+        # USER_MODALS_INFO_3 lockout duration and observation window are SECONDS
+        # (Microsoft Learn), so divide by 60 to report minutes. TIMEQ_FOREVER
+        # ([uint32]::MaxValue) duration = "until admin unlocks" -> -1, checked
+        # BEFORE the seconds-to-minutes conversion.
+        # Reported even when threshold is 0 (lockout disabled).
+        if ($Modals3.usrmod3_lockout_duration -eq [uint32]::MaxValue) {
+            $converted.LockoutDurationMinutes = -1
+        }
+        else {
+            $converted.LockoutDurationMinutes = [int][math]::Round($Modals3.usrmod3_lockout_duration / 60)
+        }
+        if ($Modals3.usrmod3_lockout_observation_window -eq [uint32]::MaxValue) {
+            $converted.LockoutObservationWindowMinutes = -1
+        }
+        else {
+            $converted.LockoutObservationWindowMinutes = [int][math]::Round($Modals3.usrmod3_lockout_observation_window / 60)
+        }
+        $converted.LockoutThreshold = [int]$Modals3.usrmod3_lockout_threshold
+    }
+
+    return $converted
+}
 
 function Get-LocalPasswordPolicy {
     [CmdletBinding()]
@@ -49,6 +127,8 @@ function Get-LocalPasswordPolicy {
 
     # --- Primary: NetUserModalsGet levels 0 and 3 ---
     $netApiOk = $false
+    $modals0 = $null
+    $modals3 = $null
     if (-not ([bool]('NetApiModals' -as [type]))) {
         $netApiModalsSource = @'
 using System;
@@ -64,8 +144,8 @@ public static class NetApiModals {
     }
     [StructLayout(LayoutKind.Sequential)]
     public struct USER_MODALS_INFO_3 {
-        public uint usrmod3_lockout_duration;           // minutes
-        public uint usrmod3_lockout_observation_window; // minutes
+        public uint usrmod3_lockout_duration;           // seconds; 0xFFFFFFFF = TIMEQ_FOREVER
+        public uint usrmod3_lockout_observation_window; // seconds; 0xFFFFFFFF = TIMEQ_FOREVER
         public uint usrmod3_lockout_threshold;
     }
     [DllImport("netapi32.dll", CharSet = CharSet.Unicode)]
@@ -99,28 +179,9 @@ public static class NetApiModals {
     if ([bool]('NetApiModals' -as [type])) {
         $level0Error = [uint32]0
         try {
-            $modals0 = [NetApiModals]::GetLevel0([ref]$level0Error)
+            $level0 = [NetApiModals]::GetLevel0([ref]$level0Error)
             if ($level0Error -eq 0) {
-                $policy.MinPasswordLength = [int]$modals0.usrmod0_min_passwd_len
-                if ($modals0.usrmod0_max_passwd_age -eq 0xFFFFFFFF) {
-                    $policy.MaxPasswordAgeDays = -1
-                }
-                else {
-                    $policy.MaxPasswordAgeDays = [int][math]::Round($modals0.usrmod0_max_passwd_age / 86400)
-                }
-                if ($modals0.usrmod0_min_passwd_age -eq 0xFFFFFFFF) {
-                    $policy.MinPasswordAgeDays = -1
-                }
-                else {
-                    $policy.MinPasswordAgeDays = [int][math]::Round($modals0.usrmod0_min_passwd_age / 86400)
-                }
-                if ($modals0.usrmod0_force_logoff -eq 0xFFFFFFFF) {
-                    $policy.ForceLogoffHours = -1
-                }
-                else {
-                    $policy.ForceLogoffHours = [int][math]::Round($modals0.usrmod0_force_logoff / 3600)
-                }
-                $policy.PasswordHistoryLength = [int]$modals0.usrmod0_password_hist_len
+                $modals0 = $level0
                 $netApiOk = $true
             }
             else {
@@ -133,23 +194,9 @@ public static class NetApiModals {
 
         $level3Error = [uint32]0
         try {
-            $modals3 = [NetApiModals]::GetLevel3([ref]$level3Error)
+            $level3 = [NetApiModals]::GetLevel3([ref]$level3Error)
             if ($level3Error -eq 0) {
-                # Minutes per lmaccess.h; reported as-is even when threshold is 0
-                # (lockout disabled). TIMEQ_FOREVER duration = until admin unlocks.
-                if ($modals3.usrmod3_lockout_duration -eq 0xFFFFFFFF) {
-                    $policy.LockoutDurationMinutes = -1
-                }
-                else {
-                    $policy.LockoutDurationMinutes = [int]$modals3.usrmod3_lockout_duration
-                }
-                if ($modals3.usrmod3_lockout_observation_window -eq 0xFFFFFFFF) {
-                    $policy.LockoutObservationWindowMinutes = -1
-                }
-                else {
-                    $policy.LockoutObservationWindowMinutes = [int]$modals3.usrmod3_lockout_observation_window
-                }
-                $policy.LockoutThreshold = [int]$modals3.usrmod3_lockout_threshold
+                $modals3 = $level3
                 $netApiOk = $true
             }
             else {
@@ -160,7 +207,18 @@ public static class NetApiModals {
             Write-Verbose "Get-LocalPasswordPolicy: NetApi level 3 failed: $($_.Exception.Message)"
         }
 
-        if ($netApiOk) { $policy.Source = 'NetApi' }
+        if ($netApiOk) {
+            $converted = ConvertTo-PolicyFromModals -Modals0 $modals0 -Modals3 $modals3
+            $policy.MinPasswordLength = $converted.MinPasswordLength
+            $policy.MaxPasswordAgeDays = $converted.MaxPasswordAgeDays
+            $policy.MinPasswordAgeDays = $converted.MinPasswordAgeDays
+            $policy.PasswordHistoryLength = $converted.PasswordHistoryLength
+            $policy.ForceLogoffHours = $converted.ForceLogoffHours
+            $policy.LockoutThreshold = $converted.LockoutThreshold
+            $policy.LockoutDurationMinutes = $converted.LockoutDurationMinutes
+            $policy.LockoutObservationWindowMinutes = $converted.LockoutObservationWindowMinutes
+            $policy.Source = 'NetApi'
+        }
     }
 
     # --- Secedit (elevated): full fallback, or merge of the two NetApi cannot see ---
@@ -247,7 +305,11 @@ public static class NetApiModals {
         if ($seceditData.ContainsKey('ClearTextPassword') -and $seceditData['ClearTextPassword'] -match '^-?\d+$') {
             $policy.ClearTextPassword = ([int]$seceditData['ClearTextPassword'] -eq 1)
         }
-        if ($netApiOk) { $policy.Source = 'NetApi+Secedit' }
+        # Only claim '+Secedit' when the merge actually contributed one of the
+        # two fields NetApi cannot see; an INF lacking both leaves Source='NetApi'.
+        if ($netApiOk -and (($null -ne $policy.PasswordComplexity) -or ($null -ne $policy.ClearTextPassword))) {
+            $policy.Source = 'NetApi+Secedit'
+        }
     }
 
     if ($policy.Source -eq 'Unavailable') {

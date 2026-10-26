@@ -78,6 +78,29 @@ $script:AuditSubcategoryMap = @{
 
 $script:AuditPolicyTableCache = $null
 
+function Copy-AuditPolicyTable {
+    <#
+    .SYNOPSIS
+        Clones an audit policy table (new hashtable + shallow-cloned entry objects).
+    .DESCRIPTION
+        Cache entries are PSCustomObjects returned by reference; without a clone a
+        caller mutating .Value/.Source would corrupt the session cache. Entries
+        contain only scalars, so a shallow .PSObject.Copy() per entry suffices.
+    #>
+    [CmdletBinding()]
+    [OutputType([hashtable])]
+    param(
+        [Parameter(Mandatory = $true)]
+        [hashtable]$Table
+    )
+
+    $copy = @{}
+    foreach ($key in $Table.Keys) {
+        $copy[$key] = $Table[$key].PSObject.Copy()
+    }
+    return $copy
+}
+
 function Get-AuditSubcategoryGuid {
     [CmdletBinding()]
     [OutputType([string])]
@@ -106,9 +129,10 @@ function ConvertFrom-AuditPolicyBackupCsv {
         row, subcategory names, inclusion text) are never interpreted: the header
         row is skipped positionally and replaced by fixed English headers
         (WinLogKit PR #58 / AuditPolicyDsc pattern), rows are matched by GUID and
-        numeric value only (which also drops the Option: rows), and when both
-        System and per-user rows exist the System rows win. Accepts either a file
-        -Path or raw -Lines (first line = header in both cases).
+        numeric value only (which also drops the Option: rows), and rows are
+        merged per GUID: the System row wins when present, otherwise the per-user
+        row for that GUID is used (per-user-only subcategories are not dropped).
+        Accepts either a file -Path or raw -Lines (first line = header in both cases).
     #>
     [CmdletBinding(DefaultParameterSetName = 'Path')]
     [OutputType([hashtable])]
@@ -152,14 +176,27 @@ function ConvertFrom-AuditPolicyBackupCsv {
             $candidates += $row
         }
     }
-    # Localized Windows may localize the Target column
-    $systemRows = @($candidates | Where-Object { $_.Target -eq 'System' })
-    if ($systemRows.Count -gt 0) { $effective = $systemRows } else { $effective = $candidates }
+    # Localized Windows may localize the Target column.
+    # auditpol emits the System row before the per-user rows, but the merge below
+    # is order-independent: per GUID the System row wins when present, otherwise
+    # the per-user row for THAT GUID is used (per-user-only subcategories must
+    # not be dropped just because other GUIDs have System rows).
     $seen = @{}
-    foreach ($row in $effective) {
+    $seenFromSystem = @{}
+    foreach ($row in $candidates) {
         $key = (($row.Guid -replace '[{}]', '').Trim()).ToLowerInvariant()
-        if ($seen.ContainsKey($key)) { continue }
+        $isSystemRow = ($row.Target -eq 'System')
+        if ($seen.ContainsKey($key)) {
+            # First-wins among same-target duplicates; a later System row
+            # overrides an already-recorded per-user row for the same GUID.
+            if ($isSystemRow -and -not $seenFromSystem[$key]) {
+                $values[$key] = [int]($row.Value.Trim())
+                $seenFromSystem[$key] = $true
+            }
+            continue
+        }
         $seen[$key] = $true
+        $seenFromSystem[$key] = $isSystemRow
         $values[$key] = [int]($row.Value.Trim())
     }
     return $values
@@ -180,7 +217,8 @@ function Get-AuditPolicyTable {
         $null -ne $Subcategory -and $Subcategory.Count -gt 0)
 
     if (-not $subsetRequested -and -not $Force -and $null -ne $script:AuditPolicyTableCache) {
-        return $script:AuditPolicyTableCache
+        # Clone on read: callers must not be able to mutate the cached entries
+        return (Copy-AuditPolicyTable -Table $script:AuditPolicyTableCache)
     }
 
     if ($subsetRequested) {
@@ -225,7 +263,7 @@ function Get-AuditPolicyTable {
     }
     if (-not $isWindowsHost) {
         Write-Verbose 'Get-AuditPolicyTable: not a Windows host; audit policy not applicable'
-        if (-not $subsetRequested) { $script:AuditPolicyTableCache = $table }
+        if (-not $subsetRequested) { $script:AuditPolicyTableCache = Copy-AuditPolicyTable -Table $table }
         return $table
     }
 
@@ -394,7 +432,9 @@ public static class AuditPolicyNative {
     }
 
     if (-not $subsetRequested) {
-        $script:AuditPolicyTableCache = $table
+        # Cache keeps its own copy so caller mutations of the returned table
+        # cannot corrupt the session cache
+        $script:AuditPolicyTableCache = Copy-AuditPolicyTable -Table $table
     }
     return $table
 }

@@ -1,4 +1,4 @@
-﻿<#
+<#
 .SYNOPSIS
     Locale-invariant identity helpers (private).
 .DESCRIPTION
@@ -102,6 +102,13 @@ function Get-AdminGroupMembers {
             }
             catch {
                 Write-Verbose "Get-AdminGroupMembers: member Class unreadable: $($_.Exception.Message)"
+            }
+            try {
+                $memberSidBytes = [byte[]]($member.GetType().InvokeMember('objectSID', 'GetProperty', $null, $member, $null))
+                $memberSid = (New-Object Security.Principal.SecurityIdentifier($memberSidBytes, 0)).Value
+            }
+            catch {
+                Write-Verbose "Get-AdminGroupMembers: member objectSID unreadable: $($_.Exception.Message)"
             }
             $members += [PSCustomObject]@{
                 Name        = $memberName

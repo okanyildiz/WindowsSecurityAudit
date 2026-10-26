@@ -48,6 +48,7 @@ function Test-SystemIntegrity {
         try {
             # Run SFC scan
             Write-Host "Running System File Checker (SFC)..." -ForegroundColor Yellow
+            $scanStart = Get-Date
             $sfcOutput = & sfc /scannow 2>&1 | Out-String
             $sfcExitCode = $LASTEXITCODE
 
@@ -57,9 +58,12 @@ function Test-SystemIntegrity {
             $cbsLogPath = "$env:windir\Logs\CBS\CBS.log"
             $cbsLogAvailable = Test-Path $cbsLogPath
             $cannotRepairLines = @()
+            $cbsTimestampsParseable = $false
             if ($cbsLogAvailable) {
-                $cannotRepairLines = @(Get-Content $cbsLogPath -Tail 500 -ErrorAction SilentlyContinue |
-                    Where-Object { $_ -match '\[SR\]' -and $_ -match 'Cannot repair' })
+                $cbsTail = @(Get-Content $cbsLogPath -Tail 500 -ErrorAction SilentlyContinue)
+                $cbsTailFilter = Select-CbsTailForCurrentScan -Lines $cbsTail -Since $scanStart
+                $cbsTimestampsParseable = $cbsTailFilter.TimestampsParseable
+                $cannotRepairLines = @($cbsTailFilter.Lines | Where-Object { $_ -match '\[SR\]' -and $_ -match 'Cannot repair' })
             }
 
             if ($sfcExitCode -ne 0) {
@@ -69,6 +73,9 @@ function Test-SystemIntegrity {
             elseif ($cannotRepairLines.Count -gt 0 -or
                     (-not $cbsLogAvailable -and $sfcOutput -match "Windows Resource Protection found corrupt files")) {
                 $results.SFCResult = "Corrupt files found"
+                if (-not $cbsTimestampsParseable -and $cannotRepairLines.Count -gt 0) {
+                    $results.SFCResult = "Corrupt files found (possible stale CBS.log entries)"
+                }
 
                 if ($cannotRepairLines.Count -gt 0) {
                     $results.CorruptedFiles = $cannotRepairLines
@@ -111,9 +118,12 @@ function Test-SystemIntegrity {
                 # separate those; servicing-stack CBS.log markers ('[SR]'/'Cannot
                 # repair', component-store corruption) are written in English
                 $storeCorruptionLines = @()
+                $dismTimestampsParseable = $false
                 if ($cbsLogAvailable) {
-                    $storeCorruptionLines = @(Get-Content $cbsLogPath -Tail 500 -ErrorAction SilentlyContinue |
-                        Where-Object { $_ -match '(?i)component store' -and $_ -match '(?i)corrupt' })
+                    $dismTail = @(Get-Content $cbsLogPath -Tail 500 -ErrorAction SilentlyContinue)
+                    $dismTailFilter = Select-CbsTailForCurrentScan -Lines $dismTail -Since $scanStart
+                    $dismTimestampsParseable = $dismTailFilter.TimestampsParseable
+                    $storeCorruptionLines = @($dismTailFilter.Lines | Where-Object { $_ -match '(?i)component store' -and $_ -match '(?i)corrupt' })
                 }
 
                 $repairable = ($storeCorruptionLines.Count -gt 0) -or ($dismCheck -match "The component store is repairable")
@@ -124,6 +134,9 @@ function Test-SystemIntegrity {
                 }
                 elseif ($repairable) {
                     $results.DISMResult = "Repairable corruption detected"
+                    if (-not $dismTimestampsParseable -and $storeCorruptionLines.Count -gt 0) {
+                        $results.DISMResult = "Repairable corruption detected (possible stale CBS.log entries)"
+                    }
 
                     if ($RepairFiles) {
                         Write-Host "Attempting DISM repair..." -ForegroundColor Yellow
@@ -178,5 +191,44 @@ function Test-SystemIntegrity {
     
     end {
         return $results
+    }
+}
+
+function Select-CbsTailForCurrentScan {
+    [CmdletBinding()]
+    param(
+        [Parameter()]
+        [AllowEmptyCollection()]
+        [string[]]$Lines = @(),
+
+        [Parameter(Mandatory = $true)]
+        [datetime]$Since
+    )
+
+    $windowStart = $Since.AddMinutes(-5)
+    $currentScanLines = @()
+    $timestampsParseable = $false
+
+    foreach ($line in $Lines) {
+        if ($null -eq $line) { continue }
+        if ($line -match '^(?<ts>\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2})') {
+            try {
+                $lineTime = [datetime]::ParseExact($Matches.ts, 'yyyy-MM-dd HH:mm:ss', [System.Globalization.CultureInfo]::InvariantCulture)
+                $timestampsParseable = $true
+                if ($lineTime -ge $windowStart) {
+                    $currentScanLines += $line
+                }
+            } catch { }
+        }
+    }
+
+    $filteredLines = @($Lines)
+    if ($timestampsParseable) {
+        $filteredLines = @($currentScanLines)
+    }
+
+    [PSCustomObject]@{
+        Lines = $filteredLines
+        TimestampsParseable = $timestampsParseable
     }
 }

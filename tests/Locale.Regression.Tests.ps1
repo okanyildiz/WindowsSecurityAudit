@@ -20,12 +20,12 @@
       to Unavailable/empty/$null instead of throwing; Test-IdentityReferenceIsSid
       and Get-WellKnownSid honor their SID contracts on every platform.
 
-    Two documented seams do NOT exist yet and their tests are skipped on purpose:
+    One documented seam does NOT exist yet and its test is skipped on purpose:
     the auditpol /get CSV parse is still inline in Get-AuditPolicyTable (strategy 3,
-    honest-unknown on localized inclusion text), and the NetApi seconds->days /
-    TIMEQ_FOREVER (0xFFFFFFFF) -> -1 conversions are inline behind the C#
-    NetUserModalsGet interop in Get-LocalPasswordPolicy.ps1. Extract pure parser
-    seams first, then unskip.
+    honest-unknown on localized inclusion text). The NetApi seconds->days /
+    TIMEQ_FOREVER (0xFFFFFFFF) -> -1 conversion seam now EXISTS as the pure
+    ConvertTo-PolicyFromModals helper in Private/Get-LocalPasswordPolicy.ps1 and
+    is covered by the tests below.
 
     The module targets Windows PowerShell 5.1+, so only APIs available in
     5.1 are used here (no null-coalescing/ternary operators, no ForEach-Object -Parallel).
@@ -37,36 +37,51 @@ BeforeDiscovery {
 
     # Locale-fragile patterns that must never appear. All legacy call sites were
     # migrated to the Private/ helpers in v1.6.0 — any match anywhere fails the guard.
+    # Every regex carries BadSamples: representative offending snippets the regex
+    # MUST match, pinned by the guard self-test below so a regex can never
+    # silently rot into a dead guard.
     $script:ForbiddenReaders = @(
         @{
             Name          = "raw 'auditpol /get' text parsing (localized Inclusion columns)"
             Regex         = 'auditpol(\.exe)?\s+/get\b'
             Grandfathered = @()
+            BadSamples    = @(
+                '$output = auditpol /get /category:* /r'
+                '$output = auditpol.exe /get /subcategory:"Logon"'
+            )
         }
         @{
             Name          = "'Minimum password length' label parsing of 'net accounts' output"
-            Regex         = 'Select-String\s+["''][^"'']*[Pp]assword\s+[Ll]ength'
+            Regex         = 'Select-String\b(\s+-Pattern)?\s+["''][^"'']*[Pp]assword\s+[Ll]ength'
             Grandfathered = @()
+            BadSamples    = @(
+                'Select-String ''Minimum password length'''
+                'Select-String -Pattern ''Minimum password length'''
+            )
         }
         @{
             Name          = 'name-based Get-LocalGroupMember -Group with a string literal'
             Regex         = 'Get-LocalGroupMember\b[^\n|]*-Group\s+["'']'
             Grandfathered = @()
+            BadSamples    = @('Get-LocalGroupMember -Group ''Administrators''')
         }
         @{
             Name          = 'name-based Get-LocalUser -Name Guest/Administrator'
             Regex         = 'Get-LocalUser\b[^\n|]*-Name\s+["''](Guest|Administrator)["'']'
             Grandfathered = @()
+            BadSamples    = @('Get-LocalUser -Name ''Guest''')
         }
         @{
             Name          = 'string identities (Everyone / NT AUTHORITY\SYSTEM / BUILTIN\Administrators) in FileSystemAccessRule'
             Regex         = 'FileSystemAccessRule\(\s*["''](Everyone|NT AUTHORITY\\SYSTEM|BUILTIN\\Administrators)["'']'
             Grandfathered = @()
+            BadSamples    = @('New-Object System.Security.AccessControl.FileSystemAccessRule(''Everyone'', ''FullControl'', ''Allow'')')
         }
         @{
             Name          = "IdentityReference matched against '(Everyone' style name patterns"
             Regex         = 'IdentityReference\b[^\n]*-match\s+["''][^"'']*\(?Everyone'
             Grandfathered = @()
+            BadSamples    = @('$rule.IdentityReference -match ''^(Everyone|BUILTIN)''')
         }
     )
 }
@@ -80,6 +95,20 @@ BeforeAll {
     $script:DeFixture = Join-Path -Path $script:FixturePath -ChildPath 'auditpol-backup-de.csv'
 
     Import-Module -Name $script:ModulePath -Force -DisableNameChecking
+
+    # Invocation-context guard for 'net accounts' reads (leading = | ; { ( & or
+    # line start). Hardening/Set-SecurityBaseline.ps1 is allowed (legit /set writes).
+    # Defined in BeforeAll (not BeforeDiscovery): run-phase script state is fresh,
+    # so runtime references from It blocks need run-phase initialization.
+    $script:NetAccountsGuard = @{
+        Name       = "'net accounts' invocation outside Hardening/Set-SecurityBaseline.ps1"
+        Regex      = '(?m)(=|\||;|\{|\(|&)\s*net(\.exe)?\s+accounts\b|^[ \t]*net(\.exe)?\s+accounts\b'
+        Allowed    = @('Hardening/Set-SecurityBaseline.ps1')
+        BadSamples = @(
+            '$x = net accounts'
+            '$x = & net accounts'
+        )
+    }
 
     $script:IsWindowsHost = $false
     try {
@@ -192,6 +221,60 @@ Describe 'ConvertFrom-AuditPolicyBackupCsv fixture equivalence (WinLogKit PR #58
         }
     }
 
+    It 'merges per-GUID: a per-user-only GUID survives next to a GUID where the System row wins' {
+        InModuleScope -ModuleName $script:ModuleName -ScriptBlock {
+            $lines = @(
+                'Machine Name,Policy Target,Subcategory,Subcategory GUID,Inclusion Setting,Exclusion Setting,Setting Value'
+                'WSA-TEST01,System,Logon,{0CCE9215-69AE-11D9-BED3-505054503030},Success and Failure,,3'
+                'WSA-TEST01,S-1-5-21-3623811015-3361044348-30300820-1001,Logoff,{0CCE9216-69AE-11D9-BED3-505054503030},Success,,1'
+            )
+            $map = ConvertFrom-AuditPolicyBackupCsv -Lines $lines
+            $map.Count | Should -Be 2 -Because 'a GUID with only per-user rows must not be dropped just because another GUID has a System row'
+            $map['0cce9215-69ae-11d9-bed3-505054503030'] | Should -Be 3 -Because 'the System row wins for Logon'
+            $map['0cce9216-69ae-11d9-bed3-505054503030'] | Should -Be 1 -Because 'Logoff has only the per-user row, so it is the source'
+        }
+    }
+
+    It 'lets the System row win even when the per-user row comes first (reordered rows)' {
+        InModuleScope -ModuleName $script:ModuleName -ScriptBlock {
+            $lines = @(
+                'Machine Name,Policy Target,Subcategory,Subcategory GUID,Inclusion Setting,Exclusion Setting,Setting Value'
+                'WSA-TEST01,S-1-5-21-3623811015-3361044348-30300820-1001,Logon,{0CCE9215-69AE-11D9-BED3-505054503030},Success,,1'
+                'WSA-TEST01,System,Logon,{0CCE9215-69AE-11D9-BED3-505054503030},Success and Failure,,3'
+            )
+            $map = ConvertFrom-AuditPolicyBackupCsv -Lines $lines
+            $map.Count | Should -Be 1
+            $map['0cce9215-69ae-11d9-bed3-505054503030'] | Should -Be 3 -Because 'row order must not matter: System wins regardless of position'
+        }
+    }
+
+    It 'drops rows whose Setting Value is outside the 0-3 range' {
+        InModuleScope -ModuleName $script:ModuleName -ScriptBlock {
+            $lines = @(
+                'Machine Name,Policy Target,Subcategory,Subcategory GUID,Inclusion Setting,Exclusion Setting,Setting Value'
+                'WSA-TEST01,System,Logon,{0CCE9215-69AE-11D9-BED3-505054503030},Success,,5'
+                'WSA-TEST01,System,Logoff,{0CCE9216-69AE-11D9-BED3-505054503030},Success,,1'
+            )
+            $map = ConvertFrom-AuditPolicyBackupCsv -Lines $lines
+            $map.Count | Should -Be 1 -Because "'5' is not a valid audit setting value (0-3) and the row must be rejected"
+            $map.ContainsKey('0cce9215-69ae-11d9-bed3-505054503030') | Should -BeFalse
+            $map['0cce9216-69ae-11d9-bed3-505054503030'] | Should -Be 1
+        }
+    }
+
+    It 'lets the first System row win when duplicate System rows exist for one GUID' {
+        InModuleScope -ModuleName $script:ModuleName -ScriptBlock {
+            $lines = @(
+                'Machine Name,Policy Target,Subcategory,Subcategory GUID,Inclusion Setting,Exclusion Setting,Setting Value'
+                'WSA-TEST01,System,Logon,{0CCE9215-69AE-11D9-BED3-505054503030},Success and Failure,,3'
+                'WSA-TEST01,System,Logon,{0CCE9215-69AE-11D9-BED3-505054503030},Success,,1'
+            )
+            $map = ConvertFrom-AuditPolicyBackupCsv -Lines $lines
+            $map.Count | Should -Be 1
+            $map['0cce9215-69ae-11d9-bed3-505054503030'] | Should -Be 3 -Because 'the first System row for a GUID wins'
+        }
+    }
+
     It 'accepts raw -Lines with the same result as -Path' {
         InModuleScope -ModuleName $script:ModuleName -ArgumentList $script:EnFixture -ScriptBlock {
             param($enFixture)
@@ -237,10 +320,8 @@ Describe 'No locale-fragile text readers (static regression guard)' {
     It "'net accounts' appears only in Hardening/Set-SecurityBaseline.ps1 (legit /set usage)" {
         # Invocation context only: the doc comment in Private/Get-LocalPasswordPolicy.ps1
         # ('NEVER calls net accounts') is documentation, not an invocation
-        $regex = '(?m)(=|\||;|\{|\()\s*net(\.exe)?\s+accounts\b|^[ \t]*net(\.exe)?\s+accounts\b'
-        $allowed = @(
-            'Hardening/Set-SecurityBaseline.ps1'        # legit /set (write) usage
-        )
+        $regex = $script:NetAccountsGuard.Regex
+        $allowed = $script:NetAccountsGuard.Allowed
         $offenders = @(
             foreach ($file in $script:GuardedFiles) {
                 if ($allowed -contains $file.RelativePath) { continue }
@@ -249,6 +330,18 @@ Describe 'No locale-fragile text readers (static regression guard)' {
             }
         )
         $offenders.Count | Should -Be 0 -Because ("'net accounts' output is localized; reads must go through Get-LocalPasswordPolicy, writes belong to Set-SecurityBaseline: {0}" -f ($offenders -join ', '))
+    }
+
+    It 'guard regex still matches its representative bad samples: <Name>' -ForEach $script:ForbiddenReaders {
+        foreach ($sample in $_.BadSamples) {
+            $sample -match $_.Regex | Should -BeTrue -Because "a guard regex that no longer matches its own bad sample is a dead guard (sample: $sample)"
+        }
+    }
+
+    It "guard regex still matches its representative bad samples: net accounts invocation" {
+        foreach ($sample in $script:NetAccountsGuard.BadSamples) {
+            $sample -match $script:NetAccountsGuard.Regex | Should -BeTrue -Because "a guard regex that no longer matches its own bad sample is a dead guard (sample: $sample)"
+        }
     }
 }
 
@@ -339,12 +432,160 @@ Describe 'Private helper contract and degradation' {
                 $sids.AuthenticatedUsers | Should -Be 'S-1-5-11'
             }
         }
+
+        It 'Test-IdentityReferenceIsSid matches a SecurityIdentifier object input against its SID string' {
+            InModuleScope -ModuleName $script:ModuleName -ScriptBlock {
+                # On non-Windows .NET the whole System.Security.Principal.Windows
+                # surface (including every SecurityIdentifier constructor) throws
+                # PlatformNotSupportedException, so the object cannot be built there;
+                # the assertion itself runs wherever the type is constructible.
+                $sidObject = $null
+                try {
+                    $sidObject = [System.Security.Principal.SecurityIdentifier]'S-1-5-32-544'
+                }
+                catch {
+                    Set-ItResult -Skipped -Because 'SecurityIdentifier cannot be constructed on this platform (Windows Principal functionality is not supported)'
+                    return
+                }
+                Test-IdentityReferenceIsSid -IdentityReference $sidObject -Sid 'S-1-5-32-544' | Should -BeTrue
+                Test-IdentityReferenceIsSid -IdentityReference $sidObject -Sid 'S-1-1-0' | Should -BeFalse
+            }
+        }
     }
 
-    # SKIPPED (no parse seam): the NetApi seconds -> days conversion and the
-    # TIMEQ_FOREVER (0xFFFFFFFF) -> -1 mapping live inline behind the C#
-    # NetUserModalsGet interop in Get-LocalPasswordPolicy.ps1 and cannot execute
-    # on non-Windows hosts. Extract a pure conversion helper first, then unskip.
-    It 'converts NetApi seconds to days and TIMEQ_FOREVER (0xFFFFFFFF) to -1' -Skip {
+    Context 'Get-AuditSubcategoryGuid name resolution' {
+        It 'resolves subcategory names case-insensitively' {
+            InModuleScope -ModuleName $script:ModuleName -ScriptBlock {
+                Get-AuditSubcategoryGuid -Name 'logon' | Should -Be '{0CCE9215-69AE-11D9-BED3-505054503030}'
+                Get-AuditSubcategoryGuid -Name 'Logon' | Should -Be '{0CCE9215-69AE-11D9-BED3-505054503030}'
+            }
+        }
+
+        It 'returns null for an unknown subcategory name' {
+            InModuleScope -ModuleName $script:ModuleName -ScriptBlock {
+                Get-AuditSubcategoryGuid -Name 'Not A Real Subcategory' | Should -BeNullOrEmpty
+            }
+        }
+    }
+
+    Context 'Get-AuditPolicyTable subset selection and cache behavior' {
+        It 'returns exactly the requested subcategories' {
+            InModuleScope -ModuleName $script:ModuleName -ScriptBlock {
+                $table = Get-AuditPolicyTable -Subcategory 'Logon', 'Logoff'
+                $table.Count | Should -Be 2
+                $table.ContainsKey('0cce9215-69ae-11d9-bed3-505054503030') | Should -BeTrue
+                $table.ContainsKey('0cce9216-69ae-11d9-bed3-505054503030') | Should -BeTrue
+            }
+        }
+
+        It 'skips unknown names in -Subcategory' {
+            InModuleScope -ModuleName $script:ModuleName -ScriptBlock {
+                $table = Get-AuditPolicyTable -Subcategory 'Logon', 'Logoff', 'Not A Real Subcategory'
+                $table.Count | Should -Be 2 -Because 'unknown subcategory names are skipped, not fatal'
+            }
+        }
+
+        It 'serves equivalent content from the cache on repeated calls without -Force' {
+            InModuleScope -ModuleName $script:ModuleName -ScriptBlock {
+                $first = Get-AuditPolicyTable
+                $second = Get-AuditPolicyTable
+                $second.Count | Should -Be $first.Count
+                $firstKeys = @($first.Keys | Sort-Object)
+                (@($second.Keys | Sort-Object) -join ',') | Should -Be ($firstKeys -join ',')
+                foreach ($key in $firstKeys) {
+                    $second[$key].Value | Should -Be $first[$key].Value
+                    $second[$key].Success | Should -Be $first[$key].Success
+                    $second[$key].Failure | Should -Be $first[$key].Failure
+                    $second[$key].Source | Should -Be $first[$key].Source
+                }
+            }
+        }
+
+        It 'never lets callers corrupt the cache (clone-on-read)' {
+            InModuleScope -ModuleName $script:ModuleName -ScriptBlock {
+                $table = Get-AuditPolicyTable
+                $entry = $table['0cce9215-69ae-11d9-bed3-505054503030']
+                $originalValue = $entry.Value
+                $entry.Value = 999
+                $fresh = Get-AuditPolicyTable
+                $fresh['0cce9215-69ae-11d9-bed3-505054503030'].Value |
+                    Should -Be $originalValue -Because 'mutating a returned table must not corrupt the cached table'
+                # Hygiene: rebuild the cache so no later test inherits state from this one
+                $null = Get-AuditPolicyTable -Force
+            }
+        }
+    }
+
+    Context 'Get-LocalUserByRid RID suffix matching' {
+        It 'does not match a user whose SID merely ends with the RID digits (RID 500 vs ...-1500)' {
+            InModuleScope -ModuleName $script:ModuleName -ScriptBlock {
+                # Get-LocalUser does not exist on non-Windows hosts and Pester can
+                # only mock existing commands, so define a stub first. The SID is a
+                # duck-typed .Value holder because SecurityIdentifier constructors
+                # throw PlatformNotSupportedException off Windows; the code under
+                # test only ever touches $_.SID.Value.
+                function Get-LocalUser { }
+                Mock Get-LocalUser {
+                    @(
+                        [PSCustomObject]@{
+                            Name        = 'Rid1500User'
+                            SID         = [PSCustomObject]@{ Value = 'S-1-5-21-3623811015-3361044348-30300820-1500' }
+                            Enabled     = $true
+                            Description = ''
+                        }
+                    )
+                }
+                Get-LocalUserByRid -Rid 500 | Should -BeNullOrEmpty -Because 'SID ...-1500 must not match RID 500 (suffix match includes the dash)'
+                $hit = Get-LocalUserByRid -Rid 1500
+                $hit.Name | Should -Be 'Rid1500User' -Because 'the mock wiring must actually be exercised (positive control)'
+            }
+        }
+    }
+
+    Context 'ConvertTo-PolicyFromModals pure conversion seam' {
+        It 'converts NetApi seconds to days/hours/minutes and TIMEQ_FOREVER (0xFFFFFFFF) to -1' {
+            InModuleScope -ModuleName $script:ModuleName -ScriptBlock {
+                $modals0 = @{
+                    usrmod0_min_passwd_len    = [uint32]7
+                    usrmod0_max_passwd_age    = [uint32]3628800    # 42 days, in seconds
+                    usrmod0_min_passwd_age    = [uint32]86400      # 1 day, in seconds
+                    usrmod0_force_logoff      = [uint32]::MaxValue # TIMEQ_FOREVER
+                    usrmod0_password_hist_len = [uint32]5
+                }
+                $modals3 = @{
+                    usrmod3_lockout_duration           = [uint32]1800 # 30 minutes, in seconds
+                    usrmod3_lockout_observation_window = [uint32]600  # 10 minutes, in seconds
+                    usrmod3_lockout_threshold          = [uint32]5
+                }
+                $policy = ConvertTo-PolicyFromModals -Modals0 $modals0 -Modals3 $modals3
+                $policy.MinPasswordLength | Should -Be 7
+                $policy.MaxPasswordAgeDays | Should -Be 42
+                $policy.MinPasswordAgeDays | Should -Be 1
+                $policy.PasswordHistoryLength | Should -Be 5
+                $policy.ForceLogoffHours | Should -Be -1 -Because 'TIMEQ_FOREVER (0xFFFFFFFF) maps to -1'
+                $policy.LockoutThreshold | Should -Be 5
+                $policy.LockoutDurationMinutes | Should -Be 30
+                $policy.LockoutObservationWindowMinutes | Should -Be 10
+            }
+        }
+
+        It 'maps a TIMEQ_FOREVER lockout duration to -1 and null Modals0 to null fields' {
+            InModuleScope -ModuleName $script:ModuleName -ScriptBlock {
+                $modals3 = @{
+                    usrmod3_lockout_duration           = [uint32]::MaxValue # TIMEQ_FOREVER: until admin unlocks
+                    usrmod3_lockout_observation_window = [uint32]600
+                    usrmod3_lockout_threshold          = [uint32]0
+                }
+                $policy = ConvertTo-PolicyFromModals -Modals0 $null -Modals3 $modals3
+                $policy.LockoutDurationMinutes | Should -Be -1
+                $policy.LockoutObservationWindowMinutes | Should -Be 10
+                $policy.LockoutThreshold | Should -Be 0
+                $policy.MinPasswordLength | Should -BeNullOrEmpty
+                $policy.MaxPasswordAgeDays | Should -BeNullOrEmpty
+                $policy.MinPasswordAgeDays | Should -BeNullOrEmpty
+                $policy.PasswordHistoryLength | Should -BeNullOrEmpty
+                $policy.ForceLogoffHours | Should -BeNullOrEmpty
+            }
+        }
     }
 }
