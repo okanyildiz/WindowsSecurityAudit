@@ -6,10 +6,11 @@
 [![Windows](https://img.shields.io/badge/Windows-10%2F11%2FServer%202016%2B-blue.svg)](https://www.microsoft.com/windows)
 [![License](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
 [![Version](https://img.shields.io/badge/Version-1.6.0-orange.svg)](https://github.com/okanyildiz/WindowsSecurityAudit/releases)
+[![PowerShell Gallery](https://img.shields.io/powershellgallery/v/WindowsSecurityAudit.svg?label=PSGallery)](https://www.powershellgallery.com/packages/WindowsSecurityAudit)
 [![Functions](https://img.shields.io/badge/Functions-72-brightgreen.svg)](https://github.com/okanyildiz/WindowsSecurityAudit)
 [![Modules](https://img.shields.io/badge/Modules-14-blue.svg)](https://github.com/okanyildiz/WindowsSecurityAudit)
 [![CI](https://github.com/okanyildiz/WindowsSecurityAudit/actions/workflows/ci.yml/badge.svg)](https://github.com/okanyildiz/WindowsSecurityAudit/actions/workflows/ci.yml)
-[![Tests](https://img.shields.io/badge/Tests-413%20Passed-brightgreen.svg)](https://github.com/okanyildiz/WindowsSecurityAudit/blob/main/tests/WindowsSecurityAudit.Tests.ps1)
+[![Tests](https://img.shields.io/badge/Tests-498%20Passed-brightgreen.svg)](https://github.com/okanyildiz/WindowsSecurityAudit/blob/main/tests/WindowsSecurityAudit.Tests.ps1)
 
 [![GitHub stars](https://img.shields.io/github/stars/okanyildiz/WindowsSecurityAudit)](https://github.com/okanyildiz/WindowsSecurityAudit/stargazers)
 [![GitHub forks](https://img.shields.io/github/forks/okanyildiz/WindowsSecurityAudit)](https://github.com/okanyildiz/WindowsSecurityAudit/network/members)
@@ -383,8 +384,8 @@ Import-Module ".\WindowsSecurityAudit-main\WindowsSecurityAudit.psd1" -Force
 > from inside the extracted ZIP folder fails with "no valid module file was found in
 > any module directory" unless you use the path-based import shown above.
 
-### Method 4: PowerShell Gallery (Coming soon)
-> **Note:** The module is **not yet published** to the PowerShell Gallery — `Install-Module -Name WindowsSecurityAudit` currently returns a 404. Use Method 1, 2 or 3 above until the gallery release lands.
+### Method 4: PowerShell Gallery
+> The module is **live on the PowerShell Gallery** since v1.6.0 — this is the easiest install method. Every release is published automatically after the full Windows test suite passes.
 
 ```powershell
 # Once published, installation will be:
