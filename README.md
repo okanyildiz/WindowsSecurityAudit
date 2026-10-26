@@ -323,6 +323,8 @@ Import-Module ".\WindowsSecurityAudit.psd1" -Force
 ```
 
 ### Method 2: Direct Download
+> **Note:** The `WindowsSecurityAudit.zip` asset is **not currently attached** to GitHub releases (the publish workflow only targets the PowerShell Gallery), so this download URL returns a 404 for now. Use Method 1 or 3 until a release ships the ZIP asset.
+
 ```powershell
 # Download latest release
 $url = "https://github.com/okanyildiz/WindowsSecurityAudit/releases/latest/download/WindowsSecurityAudit.zip"
@@ -403,7 +405,7 @@ Write-Host "Security Score: $($security.SecurityScore)/100" -ForegroundColor Yel
 $threats = Find-SuspiciousProcesses
 if ($threats) { 
     Write-Warning "Found $($threats.Count) suspicious processes!"
-    $threats | Format-Table Name, Path, RiskLevel
+    $threats | Format-Table ProcessName, Path, SuspicionScore
 }
 ```
 
@@ -412,11 +414,11 @@ if ($threats) {
 # Run full security assessment
 $report = Invoke-SecurityAssessment -Verbose
 
-# Export professional report
-$report | Export-SecurityReport -Format HTML -Path "C:\SecurityReports"
+# Export professional report (collects its own data; returns the generated file paths)
+$files = Export-SecurityReport -ReportType Technical -Format HTML -OutputPath "C:\SecurityReports"
 
-# Open report
-Start-Process "C:\SecurityReports\SecurityReport.html"
+# Open report (file name is timestamped: SecurityReport_Technical_yyyyMMdd_HHmmss.html)
+Start-Process ($files | Where-Object { $_ -match '\.html$' } | Select-Object -First 1)
 ```
 
 ### Real CVEs & Live Threat Feeds (New in v1.2.0)
@@ -454,8 +456,7 @@ Find-DefenseEvasion -IncludeLogGapAnalysis
 Get-CredentialAccessEvents -IncludeLSASSAccess
 
 # Export findings as SIEM-ready NDJSON without opening a browser
-$report = Invoke-SecurityAssessment
-$report | Export-SecurityReport -Format NDJSON -NoAutoOpen
+Export-SecurityReport -ReportType Technical -Format NDJSON -NoAutoOpen
 ```
 
 ### Fleet Scanning & Smart Alerts (New in v1.5.0)
@@ -483,9 +484,9 @@ New-ConsolidatedReport -OutputPath .\Report -FromJsonPath .\Report\ConsolidatedR
 
 ### Visualize Threats in MITRE ATT&CK Navigator (New in v1.1.0)
 ```powershell
-# Hunt for persistence mechanisms, then pipe straight into a
+# Map live findings to ATT&CK techniques, then pipe straight into a
 # Navigator layer with severity-based scoring and colors
-Find-PersistenceMechanisms | Export-AttackNavigatorLayer -OutputPath .\attack-layer.json
+Get-MITREAttackMapping -FullAnalysis | Export-AttackNavigatorLayer -OutputPath .\attack-layer.json
 
 # Import .\attack-layer.json at https://mitre-attack.github.io/attack-navigator/
 # to see exactly which techniques your findings cover — and where the gaps are

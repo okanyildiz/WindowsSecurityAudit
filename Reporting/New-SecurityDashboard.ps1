@@ -882,7 +882,7 @@ function New-SecurityDashboard {
                 
                 if ($DetailLevel -eq 'Detailed') {
                     try { 
-                        $script:dashboardData.Enterprise.MultiSystemAudit = Get-MultiSystemAudit -ErrorAction Stop
+                        $script:dashboardData.Enterprise.MultiSystemAudit = Get-MultiSystemAudit -ComputerName $env:COMPUTERNAME -ErrorAction Stop
                         $functionCount++
                         Write-Host "  [50/54] Get-MultiSystemAudit: OK" -ForegroundColor Green 
                     } catch { 

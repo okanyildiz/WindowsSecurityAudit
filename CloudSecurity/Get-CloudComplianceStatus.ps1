@@ -181,7 +181,7 @@ function Get-CloudComplianceStatus {
 
                 if ($Format -in @('HTML', 'All')) {
                     $htmlPath = Join-Path $ExportPath "Compliance_${Framework}_$timestamp.html"
-                    $htmlContent = Generate-ComplianceHTML -Results $results
+                    $htmlContent = Generate-CloudComplianceHTML -Results $results
                     $htmlContent | Out-File $htmlPath -Encoding UTF8
                     Write-Host "Exported HTML: $htmlPath" -ForegroundColor Green
                 }
@@ -219,7 +219,7 @@ function Get-CloudComplianceStatus {
     }
 }
 
-function Generate-ComplianceHTML {
+function Generate-CloudComplianceHTML {
     param($Results)
 
     $hasScore = ($null -ne $Results) -and ($null -ne $Results.ComplianceScore)

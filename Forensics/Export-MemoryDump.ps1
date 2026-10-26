@@ -77,6 +77,33 @@ function Export-MemoryDump {
             Method = $null
             ErrorMessage = $null
         }
+
+        # Memory dumps (LSASS especially) can contain plaintext credentials, so restrict
+        # the dump file to Administrators and SYSTEM instead of the inherited default
+        # that grants every local user read access (mirrors the generated-script lockdown
+        # in Register-ScheduledSecurityScan)
+        function Protect-DumpFile {
+            param([Parameter(Mandatory = $true)][string]$Path)
+            if ($env:OS -ne 'Windows_NT') { return }
+            try {
+                $fileAcl = Get-Acl -Path $Path -ErrorAction Stop
+                $fileAcl.SetAccessRuleProtection($true, $false)
+                foreach ($existingRule in @($fileAcl.Access)) {
+                    $null = $fileAcl.RemoveAccessRule($existingRule)
+                }
+                foreach ($identity in @('NT AUTHORITY\SYSTEM', 'BUILTIN\Administrators')) {
+                    $accessRule = New-Object System.Security.AccessControl.FileSystemAccessRule(
+                        $identity,
+                        [System.Security.AccessControl.FileSystemRights]::FullControl,
+                        [System.Security.AccessControl.AccessControlType]::Allow)
+                    $fileAcl.AddAccessRule($accessRule)
+                }
+                Set-Acl -Path $Path -AclObject $fileAcl -ErrorAction Stop
+            }
+            catch {
+                Write-Warning "Could not restrict permissions on '$Path'; the dump may contain credentials and may be readable by other local users: $_"
+            }
+        }
     }
     
     process {
@@ -131,11 +158,13 @@ function Export-MemoryDump {
             if ($UseProcDump) {
                 Write-Host "`n[1/3] Attempting ProcDump method..." -ForegroundColor Cyan
                 
+                # Only search admin-controlled fixed paths. This function runs elevated
+                # (and can target LSASS), so a procdump.exe planted in a user-writable
+                # location (TEMP, current directory) would execute attacker-controlled
+                # code with elevated privileges
                 $procDumpPaths = @(
                     "C:\Tools\procdump.exe",
-                    "C:\Tools\procdump64.exe",
-                    "$env:TEMP\procdump.exe",
-                    ".\procdump.exe"
+                    "C:\Tools\procdump64.exe"
                 )
                 
                 $foundProcDump = $null
@@ -336,7 +365,8 @@ public class ProcessDump {
             if ($result.Success -and (Test-Path $dumpFilePath)) {
                 $dumpFile = Get-Item $dumpFilePath
                 $result.FileSize = $dumpFile.Length
-                
+                Protect-DumpFile -Path $dumpFilePath
+
                 $fileSizeMB = [Math]::Round($dumpFile.Length / 1MB, 2)
                 Write-Host "`n[SUCCESS] Memory dump created!" -ForegroundColor Green
                 Write-Host "  File: $dumpFilePath" -ForegroundColor Cyan
@@ -352,6 +382,7 @@ public class ProcessDump {
                         Compress-Archive -Path $dumpFilePath -DestinationPath $zipPath -CompressionLevel Optimal
                         
                         if (Test-Path $zipPath) {
+                            Protect-DumpFile -Path $zipPath
                             $zipFile = Get-Item $zipPath
                             $zipSizeMB = [Math]::Round($zipFile.Length / 1MB, 2)
                             $compressionRatio = [Math]::Round((1 - ($zipFile.Length / $dumpFile.Length)) * 100, 1)

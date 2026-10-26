@@ -19,10 +19,10 @@ function Invoke-SecurityRemediation {
     .PARAMETER RollbackDirectory
         Directory where the rollback script is written (default: current location)
     .EXAMPLE
-        Invoke-SecurityRemediation -AssessmentPath "C:\Assessments\AssessmentResults.json" -WhatIf
+        Invoke-SecurityRemediation -AssessmentPath "C:\Assessments\SecurityAssessment.json" -WhatIf
         Preview every remediation that would be applied without changing any state
     .EXAMPLE
-        Invoke-SecurityRemediation -AssessmentPath "C:\Assessments\AssessmentResults.json" -MaxSeverity Critical -GenerateRollback
+        Invoke-SecurityRemediation -AssessmentPath "C:\Assessments\SecurityAssessment.json" -MaxSeverity Critical -GenerateRollback
         Remediate only Critical findings and write a rollback script with pre-change values
     .EXAMPLE
         Invoke-SecurityAssessment -OutputPath "C:\Assessments" | Invoke-SecurityRemediation -GenerateRollback -Confirm
@@ -438,7 +438,11 @@ function Invoke-SecurityRemediation {
                     }
 
                     if ($GenerateRollback -and @($capturedRollback).Count -gt 0) {
-                        $rollbackScriptLines += "# Rollback for: $findingText"
+                        # Finding text comes from a JSON file / pipeline input; a newline
+                        # would break out of the comment and inject lines into the
+                        # elevated rollback script, so collapse line breaks
+                        $rollbackFindingText = $findingText -replace '[\r\n]+', ' '
+                        $rollbackScriptLines += "# Rollback for: $rollbackFindingText"
                         $rollbackScriptLines += "# Remediation applied: $($matched.Name) on $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')"
                         $rollbackScriptLines += $capturedRollback
                         $rollbackScriptLines += ""
