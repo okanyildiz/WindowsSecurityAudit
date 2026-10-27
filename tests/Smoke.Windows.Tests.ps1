@@ -354,10 +354,12 @@ Describe 'WindowsSecurityAudit real-Windows smoke tests' -Tag @('Smoke', 'Window
         $result = Invoke-SecurityRemediation -AssessmentPath $assessmentJson -GenerateRollback -WhatIf -RollbackDirectory $TestDrive
         Assert-ResultShape -Object $result -Names @('RemediationDate', 'MaxSeverity', 'WhatIf', 'FindingsProcessed', 'Remediated', 'ManualReview', 'Failed', 'RollbackPath')
         $result.WhatIf | Should -BeTrue
-        # WhatIf: nothing may be applied and no rollback script may be written
+        # WhatIf: nothing may be applied; since v1.6.1 a rollback PREVIEW script is
+        # generated (README contract: preview fixes with a rollback script, no changes)
         @($result.Remediated).Count | Should -Be 0
-        $result.RollbackPath | Should -BeNullOrEmpty
-        @(Get-ChildItem -Path $TestDrive -Filter 'SecurityRemediation_Rollback_*.ps1' -Recurse -ErrorAction SilentlyContinue).Count | Should -Be 0
+        $result.RollbackPath | Should -Not -BeNullOrEmpty
+        $result.RollbackPath | Should -Exist
+        (Get-Content -Path $result.RollbackPath -Raw) | Should -Match 'WHATIF PREVIEW'
     }
 
     It 'Update-DefenderConfiguration honors -WhatIf without changing the system' {
