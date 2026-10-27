@@ -79,6 +79,7 @@
                 FileSystemChanges = 0
                 RegistryChanges = 0
                 NetworkConnections = 0
+                Truncated = $false
             }
         }
         
@@ -108,6 +109,12 @@
                             StartTime = $StartTime
                             EndTime = $EndTime
                         } -ErrorAction SilentlyContinue -MaxEvents 1000)
+
+                        # Cap hit: results are silently truncated - warn and flag it
+                        if ($events.Count -ge 1000) {
+                            Write-Warning "Event log cap (1000) reached for '$logName' - timeline truncated; use a narrower time range for complete coverage"
+                            $timeline.Summary.Truncated = $true
+                        }
                         
                         foreach ($event in $events) {
                             # FIXED: Safe message handling with null check
@@ -332,7 +339,11 @@
                 # Export CSV
                 if ($Format -in @('CSV', 'All')) {
                     $csvPath = Join-Path $OutputPath "$reportName.csv"
-                    $timeline.Events | Select-Object Timestamp, Source, Category, Level, Message | 
+                    $timeline.Events | Select-Object Timestamp,
+                        @{N='Source';E={Protect-CsvField $_.Source}},
+                        @{N='Category';E={Protect-CsvField $_.Category}},
+                        @{N='Level';E={Protect-CsvField $_.Level}},
+                        @{N='Message';E={Protect-CsvField $_.Message}} |
                         Export-Csv $csvPath -NoTypeInformation -Encoding UTF8
                     Write-Host "  CSV timeline saved: $csvPath" -ForegroundColor Green
                 }

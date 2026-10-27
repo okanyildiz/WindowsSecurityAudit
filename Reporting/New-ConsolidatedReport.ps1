@@ -600,7 +600,7 @@ function Generate-ConsolidatedReportHTML {
     [void]$html.AppendLine("  <meta charset='UTF-8'>")
     [void]$html.AppendLine("  <meta name='viewport' content='width=device-width, initial-scale=1.0'>")
     [void]$html.AppendLine("  <title>Consolidated Security Report - $($ReportData.Hostname)</title>")
-    [void]$html.AppendLine("  <script src='https://cdn.jsdelivr.net/npm/chart.js'></script>")
+    [void]$html.AppendLine("  <script src='https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js' integrity='sha384-e6nUZLBkQ86NJ6TVVKAeSaK8jWa3NhkYWZFomE39AvDbQWeie9PlQqM3pmYW5d1g' crossorigin='anonymous'></script>")
     [void]$html.AppendLine("  <style>")
     [void]$html.AppendLine("    * { margin: 0; padding: 0; box-sizing: border-box; }")
     [void]$html.AppendLine("    body { font-family: 'Segoe UI', Tahoma, sans-serif; background: #f5f5f5; color: #333333; padding: 20px; line-height: 1.6; }")

@@ -5,7 +5,8 @@
     .DESCRIPTION
         Analyzes registry, event logs, and setup logs to identify all USB devices
         that have been connected to the system, including timestamps, serial numbers,
-        vendor information, and last connection times.
+        and vendor information. LastConnected is reported as unknown ($null) - the
+        registry values read here contain no last-connection timestamp.
     .PARAMETER IncludeEventLogs
         Include event log analysis for USB connection/disconnection events
     .PARAMETER IncludeSetupAPI
@@ -118,7 +119,9 @@
                                     Revision = $revision
                                     SerialNumber = $serialNumber
                                     FirstInstalled = $installDate
-                                    LastConnected = $installDate
+                                    # USBSTOR registry values carry no last-connection timestamp -
+                                    # report unknown rather than duplicating the install date
+                                    LastConnected = $null
                                     RegistryPath = $device.PSPath
                                 }
                                 
@@ -199,7 +202,9 @@
                                         Revision = 'N/A'
                                         SerialNumber = $serialNumber
                                         FirstInstalled = $installDate
-                                        LastConnected = $installDate
+                                        # USB registry values carry no last-connection timestamp -
+                                        # report unknown rather than duplicating the install date
+                                        LastConnected = $null
                                         RegistryPath = $instance.PSPath
                                     }
                                     
@@ -336,7 +341,15 @@
                 # Export CSV
                 if ($Format -in @('CSV', 'All')) {
                     $csvPath = Join-Path $OutputPath "$reportName.csv"
-                    $results.USBDevices | Export-Csv $csvPath -NoTypeInformation -Encoding UTF8
+                    $results.USBDevices | Select-Object @{N='Type';E={Protect-CsvField $_.Type}},
+                        @{N='FriendlyName';E={Protect-CsvField $_.FriendlyName}},
+                        @{N='Vendor';E={Protect-CsvField $_.Vendor}},
+                        @{N='Product';E={Protect-CsvField $_.Product}},
+                        @{N='Revision';E={Protect-CsvField $_.Revision}},
+                        @{N='SerialNumber';E={Protect-CsvField $_.SerialNumber}},
+                        FirstInstalled, LastConnected,
+                        @{N='RegistryPath';E={Protect-CsvField $_.RegistryPath}} |
+                        Export-Csv $csvPath -NoTypeInformation -Encoding UTF8
                     Write-Host "  CSV report saved: $csvPath" -ForegroundColor Green
                 }
                 

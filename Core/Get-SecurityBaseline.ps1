@@ -6,7 +6,10 @@ function Get-SecurityBaseline {
         Retrieves comprehensive security configuration including Windows Defender, 
         Firewall, UAC, BitLocker, and Windows Update status
     .PARAMETER ComputerName
-        Name of the computer to check (default: local computer)
+        Name of the computer to check (default: local computer).
+        NOTE: all checks run against the LOCAL machine; this parameter currently
+        only labels the report and exported file name. Remote querying is not
+        implemented - a warning is emitted when a non-local name is supplied.
     .PARAMETER ExportPath
         Path to export the results as JSON
     .EXAMPLE
@@ -27,6 +30,15 @@ function Get-SecurityBaseline {
     
     begin {
         Write-Verbose "Starting security baseline check for $ComputerName"
+
+        # No remoting is implemented: every check below queries the LOCAL
+        # machine. When a non-local name is supplied, say so honestly instead
+        # of silently labeling local results with a remote computer's name.
+        $localComputerNames = @('localhost', '.', '127.0.0.1', [Environment]::MachineName)
+        if (-not [string]::IsNullOrWhiteSpace($ComputerName) -and $localComputerNames -notcontains $ComputerName) {
+            Write-Warning "Get-SecurityBaseline does not query remote machines: all checks run against the LOCAL computer. -ComputerName '$ComputerName' only labels the report and export file name."
+        }
+
         $results = [PSCustomObject]@{
             ComputerName = $ComputerName
             ScanDate = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
@@ -103,8 +115,9 @@ function Get-SecurityBaseline {
             # Check BitLocker Status
             Write-Verbose "Checking BitLocker status..."
             try {
-                $bitlockerVolumes = Get-BitLockerVolume -ErrorAction Stop
+                $bitlockerVolumes = @(Get-BitLockerVolume -ErrorAction Stop)
                 $results.BitLocker = @()
+                $protectedVolumeCount = 0
                 foreach ($volume in $bitlockerVolumes) {
                     $results.BitLocker += [PSCustomObject]@{
                         MountPoint = $volume.MountPoint
@@ -113,7 +126,15 @@ function Get-SecurityBaseline {
                         EncryptionPercentage = $volume.EncryptionPercentage
                         EncryptionMethod = if ($volume.EncryptionMethod) { $volume.EncryptionMethod.ToString() } else { "None" }
                     }
-                    if ($volume.ProtectionStatus -eq "On") { $results.SecurityScore += 10 }
+                    if ($volume.ProtectionStatus -eq "On") { $protectedVolumeCount++ }
+                }
+                # Scoring rule: BitLocker contributes a fixed 10-point budget,
+                # awarded proportionally to the share of protected volumes
+                # (all protected = 10, half = 5, none = 0). Awarding points per
+                # volume made the contribution depend on how many volumes a
+                # machine happens to have instead of how well it is protected.
+                if ($bitlockerVolumes.Count -gt 0) {
+                    $results.SecurityScore += [int][Math]::Round(10 * $protectedVolumeCount / $bitlockerVolumes.Count)
                 }
             }
             catch {
@@ -193,7 +214,7 @@ function Get-SecurityBaseline {
             if (-not (Test-Path $ExportPath)) {
                 New-Item -Path $ExportPath -ItemType Directory -Force | Out-Null
             }
-            $exportFile = Join-Path -Path $ExportPath -ChildPath "SecurityBaseline_$ComputerName_$(Get-Date -Format 'yyyyMMdd_HHmmss').json"
+            $exportFile = Join-Path -Path $ExportPath -ChildPath "SecurityBaseline_${ComputerName}_$(Get-Date -Format 'yyyyMMdd_HHmmss').json"
             $results | ConvertTo-Json -Depth 5 | Out-File -FilePath $exportFile -Encoding UTF8
             Write-Verbose "Results exported to: $exportFile"
         }

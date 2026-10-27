@@ -7,6 +7,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.6.1] - 2026-10-27
+
+Post-release audit hardening. Every finding below was verified against the code by independent reviewers before fixing.
+
+### Security
+
+- `Invoke-IncidentResponse`: network isolation now requires `-IsolateSystem` explicitly — `-Severity Critical` alone no longer disables all network adapters (WinRM lockout risk); ConfirmImpact='High' added here and in `Set-SecurityBaseline`, `Enable-PowerShellSecurity`, `Update-DefenderConfiguration`.
+- `Export-MemoryDump`: SupportsShouldProcess + ConfirmImpact='High'; dump files are ACL-locked (SYSTEM+Administrators) BEFORE content is written, not after (credential-bearing dumps were world-readable during the write window).
+- `Register-ScheduledSecurityScan`: the generated scan script (embeds the webhook secret) is ACL-locked before content is written.
+- CSV formula-injection escaping (`Protect-CsvField`) across all forensic/incident/compliance CSV exports; HTML encoding (`ConvertTo-HtmlEncoded`) for UPN/IP/process/computer names in HTML reports; Chart.js pinned to 4.4.0 with SRI integrity hash in both HTML reports.
+
+### Fixed
+
+- `Test-M365SecurityPosture`: removed hardcoded Pass/Fail/Warning results — checks now query Microsoft Graph where possible (Conditional Access, Security Defaults) or honestly report NotEvaluated; score computed only over evaluated checks, null when nothing could be evaluated.
+- `Get-SecurityMetrics`: no longer reports 100/Excellent when collectors fail — DataCompleteness reported, >50% collector failure → score null/Unknown, any failure caps health at Good.
+- `Get-ThreatIntelligence`: domain/host IOCs now actually correlate (DNS client cache + Sysmon event 22) and hash IOCs are matched against running-process image hashes; new SourcesChecked transparency list.
+- `Get-MemoryAnalysis`: replaced the structurally-dead hollowing check with an honest system-process name/image-location heuristic.
+- Compliance (CIS/NIST/PCI): controls no longer vanish when a cmdlet is missing (inflating percentages) — they report Manual/NotApplicable with the reason; NIST AC-7 reads the real lockout policy via Get-LocalPasswordPolicy, AC-11 rejects 0, AU-9 no longer reports Compliant on unreadable ACLs; dead -Level/-Revision/-Version parameters now warn and label accurately.
+- `Invoke-SecurityAssessment`: WDAC audit mode (1) is no longer reported as Enforced (2); failed port/share/user queries no longer score as Pass; strict-mode crash on a single restore point fixed; -AssessmentType warns it currently runs identical checks.
+- Strict-mode crashes fixed in `Get-SecurityBaseline` (-ExportPath `$ComputerName_`), `Get-MultiSystemAudit` (clean hosts no longer abort the run), `Get-EventLogAnalysis` (single matching event).
+- `Get-SecurityBaseline`: BitLocker points awarded proportionally (fully-encrypted single-disk machines can reach 100); -ComputerName honestly warns it labels only.
+- `Invoke-SecurityRemediation -WhatIf` now generates the rollback script preview as documented.
+- `Test-SystemIntegrity`: SFC/DISM verdicts no longer parse localized English text — exit codes + timestamp-correlated CBS.log markers only (locale-independence claim is now true).
+- `Find-LateralMovement`/`New-ForensicTimeline`: hitting -MaxEvents now warns loudly and flags Truncated.
+- `Get-USBHistory`: LastConnected no longer duplicates the install date (reported as unknown).
+- Packaging: manifest exports the explicit 72-function list (Gallery metadata/autoload), psd1 is UTF-8 BOM (PS 5.1 safe), CompatiblePSEditions added, honest dependency description; loader no longer swallows file-load errors (partial loads warn loudly and export only what loaded); quiet import (Write-Verbose); publish workflow stages a clean package (no tests/.github/helper scripts) and fails on tag/manifest version mismatch.
+- README: all unverifiable marketing claims and inflated feature descriptions replaced with audited, code-verified wording.
+
 ## [1.6.0] - 2026-10-26
 
 ### Added
@@ -113,8 +141,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Cloud Security: Azure AD risky sign-ins, M365 security posture, cloud compliance status.
 - Hardening: audit policies, PowerShell security (logging, transcription), security baseline enforcement — all with `-WhatIf` support.
 
-[Unreleased]: https://github.com/okanyildiz/WindowsSecurityAudit/compare/v1.3.0...HEAD
+[Unreleased]: https://github.com/okanyildiz/WindowsSecurityAudit/compare/v1.6.1...HEAD
+[1.6.1]: https://github.com/okanyildiz/WindowsSecurityAudit/releases/tag/v1.6.1
+[1.6.0]: https://github.com/okanyildiz/WindowsSecurityAudit/releases/tag/v1.6.0
+[1.5.0]: https://github.com/okanyildiz/WindowsSecurityAudit/releases/tag/v1.5.0
+[1.4.0]: https://github.com/okanyildiz/WindowsSecurityAudit/releases/tag/v1.4.0
 [1.3.0]: https://github.com/okanyildiz/WindowsSecurityAudit/releases/tag/v1.3.0
 [1.2.0]: https://github.com/okanyildiz/WindowsSecurityAudit/releases/tag/v1.2.0
 [1.1.0]: https://github.com/okanyildiz/WindowsSecurityAudit/releases/tag/v1.1.0
-[1.0.0]: https://github.com/okanyildiz/WindowsSecurityAudit/releases/tag/v1.0.0
+[1.0.0]: https://github.com/okanyildiz/WindowsSecurityAudit

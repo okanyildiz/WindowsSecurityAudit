@@ -4,7 +4,15 @@ function Get-ThreatIntelligence {
         Matches system artifacts against threat intelligence indicators
     .DESCRIPTION
         Checks running processes, network connections, files, and registry against
-        known Indicators of Compromise (IOCs) from threat intelligence feeds
+        known Indicators of Compromise (IOCs) from threat intelligence feeds.
+        IP indicators are exact-matched against the live TCP connection table.
+        Domain/URL-host indicators cannot be matched against literal IP addresses,
+        so they are correlated against real hostname telemetry: the DNS client
+        cache (Get-DnsClientCache) and Sysmon DNS query events (ID 22) when
+        available. Hash indicators are matched against Get-FileHash results for
+        the image paths of running processes (algorithms are derived from the
+        stored hash lengths). The SourcesChecked property of the result lists
+        exactly which correlation sources were queried on this system.
     .PARAMETER CheckProcesses
         Check running processes against IOCs
     .PARAMETER CheckNetwork
@@ -133,6 +141,7 @@ function Get-ThreatIntelligence {
                 FeedStats = @()
             }
             Recommendations = @()
+            SourcesChecked = @()
         }
         
         # Built-in IOC Database (Common malware/threat indicators)
@@ -854,11 +863,26 @@ function Get-ThreatIntelligence {
                 Write-Host "`n[1/4] Checking processes against IOCs..." -ForegroundColor Cyan
                 
                 try {
-                    $processes = Get-CimInstance Win32_Process | 
-                        Where-Object { $null -ne $_.CommandLine } |
-                        Select-Object Name, ProcessId, ExecutablePath, CommandLine
-                    
                     $foundCount = 0
+                    
+                    # Process names and command lines come from CIM (Windows only)
+                    if (Get-Command Get-CimInstance -ErrorAction SilentlyContinue) {
+                        $processes = @()
+                        try {
+                            $processes = @(Get-CimInstance Win32_Process -ErrorAction Stop |
+                                Where-Object { $null -ne $_.CommandLine } |
+                                Select-Object Name, ProcessId, ExecutablePath, CommandLine)
+                            $results.SourcesChecked += 'Process names and command lines (Win32_Process via CIM)'
+                        }
+                        catch {
+                            $results.SourcesChecked += "Process name/command-line correlation unavailable (Win32_Process query failed: $_)"
+                            Write-Warning "Could not enumerate processes via CIM: $_"
+                        }
+                    }
+                    else {
+                        $processes = @()
+                        $results.SourcesChecked += 'Process name/command-line correlation unavailable (Get-CimInstance not present on this platform)'
+                    }
                     
                     foreach ($process in $processes) {
                         # Check process name against malicious process list
@@ -959,6 +983,92 @@ function Get-ThreatIntelligence {
                         }
                     }
                     
+                    # Hash the image paths of running processes and compare against
+                    # MaliciousHashes. Hash algorithms are derived from the stored
+                    # indicator key lengths (32 hex chars = MD5, 40 = SHA1, 64 = SHA256)
+                    if ($iocDatabase.MaliciousHashes.Count -gt 0) {
+                        if (Get-Command Get-FileHash -ErrorAction SilentlyContinue) {
+                            $hashAlgorithms = @()
+                            foreach ($hashKey in $iocDatabase.MaliciousHashes.Keys) {
+                                switch ([string]$hashKey.Length) {
+                                    '32' { if ($hashAlgorithms -notcontains 'MD5') { $hashAlgorithms += 'MD5' } }
+                                    '40' { if ($hashAlgorithms -notcontains 'SHA1') { $hashAlgorithms += 'SHA1' } }
+                                    '64' { if ($hashAlgorithms -notcontains 'SHA256') { $hashAlgorithms += 'SHA256' } }
+                                }
+                            }
+                            
+                            if ($hashAlgorithms.Count -gt 0) {
+                                $maxHashFiles = 500
+                                $imagePaths = @{}
+                                foreach ($runningProcess in @(Get-Process -ErrorAction SilentlyContinue)) {
+                                    if ($imagePaths.Count -ge $maxHashFiles) { break }
+                                    $imagePath = $null
+                                    try { $imagePath = $runningProcess.Path } catch { continue }  # access-denied/system process: skip silently
+                                    if (-not [string]::IsNullOrWhiteSpace($imagePath) -and -not $imagePaths.ContainsKey($imagePath)) {
+                                        $imagePaths[$imagePath] = $runningProcess.ProcessName
+                                    }
+                                }
+                                
+                                $hashedFileCount = 0
+                                foreach ($imagePath in $imagePaths.Keys) {
+                                    $fileHashes = @{}
+                                    foreach ($algorithm in $hashAlgorithms) {
+                                        try {
+                                            $fileHashes[$algorithm] = (Get-FileHash -Path $imagePath -Algorithm $algorithm -ErrorAction Stop).Hash.ToLower()
+                                        }
+                                        catch {
+                                            $fileHashes = $null
+                                            break  # locked/inaccessible file: skip remaining algorithms silently
+                                        }
+                                    }
+                                    if ($null -eq $fileHashes) { continue }
+                                    $hashedFileCount++
+                                    
+                                    foreach ($algorithm in $fileHashes.Keys) {
+                                        $hashValue = $fileHashes[$algorithm]
+                                        if ($iocDatabase.MaliciousHashes.ContainsKey($hashValue)) {
+                                            $ioc = $iocDatabase.MaliciousHashes[$hashValue]
+                                            
+                                            $match = [PSCustomObject]@{
+                                                Type = 'Process'
+                                                IOCType = 'MaliciousHash'
+                                                Indicator = $hashValue
+                                                HashAlgorithm = $algorithm
+                                                ProcessName = $imagePaths[$imagePath]
+                                                Path = $imagePath
+                                                Severity = $ioc.Severity
+                                                Description = $ioc.Description
+                                                Timestamp = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
+                                            }
+                                            
+                                            $results.Matches.ProcessIOCs += $match
+                                            $foundCount++
+                                            
+                                            switch ($ioc.Severity) {
+                                                'Critical' { $results.Summary.CriticalMatches++ }
+                                                'High' { $results.Summary.HighMatches++ }
+                                                'Medium' { $results.Summary.MediumMatches++ }
+                                            }
+                                            
+                                            Write-Host "  [!] MATCH: Malicious hash ($algorithm) for running process image '$imagePath'" -ForegroundColor Red
+                                        }
+                                    }
+                                }
+                                
+                                $results.SourcesChecked += "Running process image hashes ($hashedFileCount file(s) hashed, cap $maxHashFiles; algorithms: $($hashAlgorithms -join ', '))"
+                            }
+                            else {
+                                $results.SourcesChecked += 'Running process image hashes skipped (no recognizable MD5/SHA1/SHA256 indicators in MaliciousHashes)'
+                            }
+                        }
+                        else {
+                            $results.SourcesChecked += 'Running process image hashes unavailable (Get-FileHash not present on this platform)'
+                        }
+                    }
+                    else {
+                        $results.SourcesChecked += 'Running process image hashes skipped (no hash indicators loaded)'
+                    }
+                    
                     if ($foundCount -eq 0) {
                         Write-Host "  No process IOC matches found" -ForegroundColor Green
                     }
@@ -973,9 +1083,18 @@ function Get-ThreatIntelligence {
                 Write-Host "`n[2/4] Checking network connections against IOCs..." -ForegroundColor Cyan
                 
                 try {
-                    $connections = Get-NetTCPConnection -State Established -ErrorAction SilentlyContinue
-                    
                     $foundCount = 0
+                    
+                    # TCP connections carry literal IP addresses only, so they can
+                    # satisfy IP exact-match indicators but never domain/host indicators
+                    if (Get-Command Get-NetTCPConnection -ErrorAction SilentlyContinue) {
+                        $connections = @(Get-NetTCPConnection -State Established -ErrorAction SilentlyContinue)
+                        $results.SourcesChecked += "TCP connection table ($(@($connections).Count) established connection(s); IP exact match)"
+                    }
+                    else {
+                        $connections = @()
+                        $results.SourcesChecked += 'TCP connection table unavailable (Get-NetTCPConnection not present on this platform)'
+                    }
                     
                     foreach ($conn in $connections) {
                         $remoteAddress = $conn.RemoteAddress.ToString()
@@ -1010,39 +1129,112 @@ function Get-ThreatIntelligence {
                             
                             Write-Host "  [!] MATCH: Malicious IP $($conn.RemoteAddress) via $processName" -ForegroundColor Red
                         }
+                    }
+                    
+                    # Feed-derived domain/URL-host indicators hold hostnames, not IPs, so
+                    # matching them against $conn.RemoteAddress (always a literal address)
+                    # could never fire. Correlate them against real hostname telemetry
+                    # instead: the DNS client cache and Sysmon DNS query events (ID 22)
+                    if ($iocDatabase.SuspiciousPatterns.NetworkIndicators.Count -gt 0) {
+                        $observedHostnames = @{}
                         
-                        # Check against feed-derived network indicators
-                        foreach ($pattern in $iocDatabase.SuspiciousPatterns.NetworkIndicators) {
-                            if ($remoteAddress -match $pattern.Pattern) {
-                                $process = Get-Process -Id $conn.OwningProcess -ErrorAction SilentlyContinue
-                                $processName = if ($process) { $process.Name } else { "PID $($conn.OwningProcess)" }
-                                
-                                $match = [PSCustomObject]@{
-                                    Type = 'Network'
-                                    IOCType = 'FeedNetworkIndicator'
-                                    Indicator = $pattern.Pattern
-                                    ProcessName = $processName
-                                    ProcessId = $conn.OwningProcess
-                                    LocalAddress = "$($conn.LocalAddress):$($conn.LocalPort)"
-                                    RemoteAddress = "$($conn.RemoteAddress):$($conn.RemotePort)"
-                                    Severity = $pattern.Severity
-                                    Description = $pattern.Description
-                                    Timestamp = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
+                        # Source (a): DNS client cache (Entry = queried name, Name = resolved name/alias)
+                        if (Get-Command Get-DnsClientCache -ErrorAction SilentlyContinue) {
+                            try {
+                                $dnsCacheEntries = @(Get-DnsClientCache -ErrorAction Stop)
+                                foreach ($cacheEntry in $dnsCacheEntries) {
+                                    if ($null -eq $cacheEntry) { continue }
+                                    foreach ($propertyName in 'Entry', 'Name') {
+                                        if ($cacheEntry.PSObject.Properties[$propertyName]) {
+                                            $cacheValue = [string]($cacheEntry.$propertyName)
+                                            if (-not [string]::IsNullOrWhiteSpace($cacheValue) -and $cacheValue -notmatch '^\d{1,3}(\.\d{1,3}){3}$') {
+                                                $observedHostnames[$cacheValue.TrimEnd('.').ToLower()] = 'DNS client cache'
+                                            }
+                                        }
+                                    }
                                 }
-                                
-                                $results.Matches.NetworkIOCs += $match
-                                $foundCount++
-                                
-                                switch ($pattern.Severity) {
-                                    'Critical' { $results.Summary.CriticalMatches++ }
-                                    'High' { $results.Summary.HighMatches++ }
-                                    'Medium' { $results.Summary.MediumMatches++ }
-                                }
-                                
-                                Write-Host "  [!] MATCH: Feed indicator '$($pattern.Pattern)' via $processName" -ForegroundColor Red
-                                break
+                                $results.SourcesChecked += "DNS client cache ($($observedHostnames.Count) hostname(s) observed)"
+                            }
+                            catch {
+                                $results.SourcesChecked += "DNS client cache unavailable (query failed: $_)"
                             }
                         }
+                        else {
+                            $results.SourcesChecked += 'DNS client cache unavailable (Get-DnsClientCache not present on this platform)'
+                        }
+                        
+                        # Source (b): Sysmon DNS query events (ID 22), bounded to the feed
+                        # freshness window (FeedMaxAgeHours) and a 500-event cap
+                        $sysmonLogName = 'Microsoft-Windows-Sysmon/Operational'
+                        if (Get-Command Get-WinEvent -ErrorAction SilentlyContinue) {
+                            $sysmonLogAvailable = $false
+                            try {
+                                $null = Get-WinEvent -ListLog $sysmonLogName -ErrorAction Stop
+                                $sysmonLogAvailable = $true
+                            }
+                            catch {
+                                $results.SourcesChecked += "Sysmon DNS query log (event 22) unavailable (log '$sysmonLogName' not present)"
+                            }
+                            
+                            if ($sysmonLogAvailable) {
+                                try {
+                                    $sysmonQueryCount = 0
+                                    $dnsEvents = @(Get-WinEvent -FilterHashtable @{
+                                        LogName = $sysmonLogName
+                                        Id = 22
+                                        StartTime = (Get-Date).AddHours(-$FeedMaxAgeHours)
+                                    } -MaxEvents 500 -ErrorAction Stop)
+                                    foreach ($dnsEvent in $dnsEvents) {
+                                        if ($null -eq $dnsEvent) { continue }
+                                        $eventData = ([xml]$dnsEvent.ToXml()).Event.EventData.Data
+                                        $queryNode = @($eventData | Where-Object { $_.Name -eq 'QueryName' } | Select-Object -First 1)
+                                        if ($queryNode.Count -gt 0 -and -not [string]::IsNullOrWhiteSpace($queryNode[0].InnerText)) {
+                                            $observedHostnames[$queryNode[0].InnerText.TrimEnd('.').ToLower()] = 'Sysmon DNS query (event 22)'
+                                            $sysmonQueryCount++
+                                        }
+                                    }
+                                    $results.SourcesChecked += "Sysmon DNS query log (event 22, last $FeedMaxAgeHours hour(s), $sysmonQueryCount query name(s))"
+                                }
+                                catch {
+                                    $results.SourcesChecked += "Sysmon DNS query log (event 22) could not be read: $_"
+                                }
+                            }
+                        }
+                        else {
+                            $results.SourcesChecked += 'Sysmon DNS query log (event 22) unavailable (Get-WinEvent not present on this platform)'
+                        }
+                        
+                        foreach ($hostname in $observedHostnames.Keys) {
+                            foreach ($pattern in $iocDatabase.SuspiciousPatterns.NetworkIndicators) {
+                                if ($hostname -match $pattern.Pattern) {
+                                    $match = [PSCustomObject]@{
+                                        Type = 'Network'
+                                        IOCType = 'FeedDomainIndicator'
+                                        Indicator = $pattern.Pattern
+                                        MatchedHostname = $hostname
+                                        HostnameSource = $observedHostnames[$hostname]
+                                        Severity = $pattern.Severity
+                                        Description = $pattern.Description
+                                        Timestamp = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
+                                    }
+                                    
+                                    $results.Matches.NetworkIOCs += $match
+                                    $foundCount++
+                                    
+                                    switch ($pattern.Severity) {
+                                        'Critical' { $results.Summary.CriticalMatches++ }
+                                        'High' { $results.Summary.HighMatches++ }
+                                        'Medium' { $results.Summary.MediumMatches++ }
+                                    }
+                                    
+                                    Write-Host "  [!] MATCH: Domain indicator '$($pattern.Pattern)' matched hostname '$hostname' ($($observedHostnames[$hostname]))" -ForegroundColor Red
+                                    break
+                                }
+                            }
+                        }
+                    }
+                    else {
+                        $results.SourcesChecked += 'DNS client cache / Sysmon DNS query correlation skipped (no domain/host indicators loaded)'
                     }
                     
                     if ($foundCount -eq 0) {
@@ -1311,6 +1503,13 @@ function Get-ThreatIntelligence {
                     $pageText = ", $($stat.PagesFetched) page(s)"
                 }
                 Write-Host "  - $($stat.Feed): $($stat.EntryCount) entries ($($stat.Source)$pageText, $ageText)" -ForegroundColor Gray
+            }
+        }
+        
+        if (@($results.SourcesChecked).Count -gt 0) {
+            Write-Host "`nCorrelation Sources:" -ForegroundColor Cyan
+            foreach ($sourceChecked in $results.SourcesChecked) {
+                Write-Host "  - $sourceChecked" -ForegroundColor Gray
             }
         }
         

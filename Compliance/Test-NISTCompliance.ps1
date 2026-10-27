@@ -30,6 +30,10 @@ function Test-NISTCompliance {
     )
     
     begin {
+        if ($Revision -ne 5) {
+            Write-Warning "Revision $Revision requested; only Revision 5 checks are currently implemented"
+            $Revision = 5
+        }
         Write-Host "=== NIST 800-53 COMPLIANCE TEST ===" -ForegroundColor Cyan
         Write-Host "Start Time: $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')" -ForegroundColor Yellow
         Write-Host "Revision: NIST 800-53 Rev $Revision" -ForegroundColor Yellow
@@ -119,34 +123,47 @@ function Test-NISTCompliance {
                     $results.Controls += $control
                     
                     # AC-7: Unsuccessful Logon Attempts
-                    $regTest = Test-RegistryValue -Path 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System' `
-                        -Name 'MaxDevicePasswordFailedAttempts' -ExpectedValue 5
-                    
+                    # Read the real account lockout threshold via the module helper
+                    # (NetUserModalsGet/secedit); the old MaxDevicePasswordFailedAttempts
+                    # registry check measured a different, device-specific policy.
+                    $passwordPolicy = Get-LocalPasswordPolicy
+                    $lockoutThreshold = $passwordPolicy.LockoutThreshold
+
                     $control = [PSCustomObject]@{
                         ControlID = 'AC-7'
                         ControlName = 'Unsuccessful Logon Attempts'
                         ControlFamily = 'AccessControl'
                         Description = 'System should lock after failed login attempts'
-                        Expected = '5 or fewer attempts'
-                        Actual = if ($regTest.ActualValue) { "$($regTest.ActualValue) attempts" } else { "Not configured" }
-                        Status = if ($regTest.Compliant) { 'Compliant' } else { 'NonCompliant' }
+                        Expected = 'Account lockout threshold between 1 and 10 attempts'
+                        Actual = if ($null -eq $lockoutThreshold) { 'Unable to determine' }
+                                 elseif ($lockoutThreshold -eq 0) { 'Lockout disabled (0)' }
+                                 else { "$lockoutThreshold attempts" }
+                        Status = if ($null -eq $lockoutThreshold) { 'NotApplicable' }
+                                 elseif ($lockoutThreshold -ge 1 -and $lockoutThreshold -le 10) { 'Compliant' }
+                                 else { 'NonCompliant' }
                         Impact = 'High'
-                        Remediation = 'Configure account lockout after 5 failed attempts'
+                        Remediation = 'Configure account lockout threshold between 1 and 10 failed attempts'
                     }
                     $results.Controls += $control
                     
                     # AC-11: Session Lock
                     $regTest = Test-RegistryValue -Path 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System' `
                         -Name 'InactivityTimeoutSecs' -ExpectedValue 900
+                    $inactivitySecs = $regTest.ActualValue
+                    $inactivityIsNumeric = ($null -ne $inactivitySecs) -and ("$inactivitySecs" -match '^\d+$')
+                    # 0 means the session never locks -> NonCompliant; valid range is 1..900
+                    $inactivityValid = $inactivityIsNumeric -and ([int]$inactivitySecs -gt 0) -and ([int]$inactivitySecs -le 900)
                     
                     $control = [PSCustomObject]@{
                         ControlID = 'AC-11'
                         ControlName = 'Session Lock'
                         ControlFamily = 'AccessControl'
                         Description = 'Automatic screen lock after inactivity'
-                        Expected = '15 minutes (900 seconds) or less'
-                        Actual = if ($regTest.ActualValue) { "$([math]::Round($regTest.ActualValue/60)) minutes" } else { "Not configured" }
-                        Status = if ($regTest.Compliant -or ($null -ne $regTest.ActualValue -and $regTest.ActualValue -le 900)) { 'Compliant' } else { 'NonCompliant' }
+                        Expected = '15 minutes (900 seconds) or less, and not disabled (0)'
+                        Actual = if (-not $inactivityIsNumeric) { "Not configured" }
+                                 elseif ([int]$inactivitySecs -eq 0) { "Never locks (0)" }
+                                 else { "$([math]::Round([int]$inactivitySecs/60)) minutes" }
+                        Status = if ($inactivityValid) { 'Compliant' } else { 'NonCompliant' }
                         Impact = 'Medium'
                         Remediation = 'Configure screen lock timeout to 15 minutes or less'
                     }
@@ -204,7 +221,11 @@ function Test-NISTCompliance {
                     $results.Controls += $control
                     
                     # AU-3: Content of Audit Records
-                    $securityLog = Get-WinEvent -ListLog Security -ErrorAction SilentlyContinue
+                    $winEventAvailable = $null -ne (Get-Command Get-WinEvent -ErrorAction SilentlyContinue)
+                    $securityLog = $null
+                    if ($winEventAvailable) {
+                        try { $securityLog = Get-WinEvent -ListLog Security -ErrorAction Stop } catch { $securityLog = $null }
+                    }
                     $eventLogSize = if ($securityLog) { $securityLog.MaximumSizeInBytes } else { 0 }
                     
                     $control = [PSCustomObject]@{
@@ -213,8 +234,10 @@ function Test-NISTCompliance {
                         ControlFamily = 'AuditAccountability'
                         Description = 'Audit records must contain sufficient detail'
                         Expected = 'Security log size >= 100MB'
-                        Actual = "$([math]::Round($eventLogSize/1MB)) MB"
-                        Status = if ($eventLogSize -ge 100MB) { 'Compliant' } else { 'NonCompliant' }
+                        Actual = if (-not $winEventAvailable) { 'Unable to evaluate — Get-WinEvent unavailable' }
+                                 else { "$([math]::Round($eventLogSize/1MB)) MB" }
+                        Status = if (-not $winEventAvailable) { 'NotApplicable' }
+                                 elseif ($eventLogSize -ge 100MB) { 'Compliant' } else { 'NonCompliant' }
                         Impact = 'Medium'
                         Remediation = 'Increase Security event log size to at least 100MB'
                     }
@@ -223,22 +246,37 @@ function Test-NISTCompliance {
                     # AU-9: Protection of Audit Information
                     $logPath = "C:\Windows\System32\winevt\Logs\Security.evtx"
                     if (Test-Path $logPath) {
-                        $acl = Get-Acl $logPath -ErrorAction SilentlyContinue
-                        $protected = @()
-                        if ($acl) {
-                            $protected = @($acl.Access | Where-Object { ((Test-IdentityReferenceIsSid -IdentityReference $_.IdentityReference -Sid 'S-1-5-32-545') -or (Test-IdentityReferenceIsSid -IdentityReference $_.IdentityReference -Sid 'S-1-5-11') -or (Test-IdentityReferenceIsSid -IdentityReference $_.IdentityReference -Sid 'S-1-1-0')) -and $_.FileSystemRights -match "FullControl|Modify|Write" })
+                        $acl = $null
+                        try { $acl = Get-Acl $logPath -ErrorAction Stop } catch { $acl = $null }
+
+                        if ($null -eq $acl) {
+                            # No ACL data -> honest unknown; never claim Compliant without data
+                            $control = [PSCustomObject]@{
+                                ControlID = 'AU-9'
+                                ControlName = 'Protection of Audit Information'
+                                ControlFamily = 'AuditAccountability'
+                                Description = 'Audit logs must be protected from unauthorized access'
+                                Expected = 'Security log protected from normal users'
+                                Actual = 'Unable to read ACL'
+                                Status = 'NotApplicable'
+                                Impact = 'High'
+                                Remediation = 'Restrict Security event log access to administrators only'
+                            }
                         }
-                        
-                        $control = [PSCustomObject]@{
-                            ControlID = 'AU-9'
-                            ControlName = 'Protection of Audit Information'
-                            ControlFamily = 'AuditAccountability'
-                            Description = 'Audit logs must be protected from unauthorized access'
-                            Expected = 'Security log protected from normal users'
-                            Actual = if ($protected.Count -gt 0) { "Weak permissions detected" } else { "Properly protected" }
-                            Status = if ($protected.Count -eq 0) { 'Compliant' } else { 'NonCompliant' }
-                            Impact = 'High'
-                            Remediation = 'Restrict Security event log access to administrators only'
+                        else {
+                            $protected = @($acl.Access | Where-Object { ((Test-IdentityReferenceIsSid -IdentityReference $_.IdentityReference -Sid 'S-1-5-32-545') -or (Test-IdentityReferenceIsSid -IdentityReference $_.IdentityReference -Sid 'S-1-5-11') -or (Test-IdentityReferenceIsSid -IdentityReference $_.IdentityReference -Sid 'S-1-1-0')) -and $_.FileSystemRights -match "FullControl|Modify|Write" })
+
+                            $control = [PSCustomObject]@{
+                                ControlID = 'AU-9'
+                                ControlName = 'Protection of Audit Information'
+                                ControlFamily = 'AuditAccountability'
+                                Description = 'Audit logs must be protected from unauthorized access'
+                                Expected = 'Security log protected from normal users'
+                                Actual = if ($protected.Count -gt 0) { "Weak permissions detected" } else { "Properly protected" }
+                                Status = if ($protected.Count -eq 0) { 'Compliant' } else { 'NonCompliant' }
+                                Impact = 'High'
+                                Remediation = 'Restrict Security event log access to administrators only'
+                            }
                         }
                         $results.Controls += $control
                     }
@@ -342,7 +380,13 @@ function Test-NISTCompliance {
                 
                 try {
                     # SC-7: Boundary Protection - FIX: Wrap in @()
-                    $firewallProfiles = Get-NetFirewallProfile -ErrorAction SilentlyContinue
+                    # CommandNotFoundException ignores -ErrorAction SilentlyContinue, so
+                    # gate on Get-Command first; a missing cmdlet must not drop the control.
+                    $firewallCmdletAvailable = $null -ne (Get-Command Get-NetFirewallProfile -ErrorAction SilentlyContinue)
+                    $firewallProfiles = $null
+                    if ($firewallCmdletAvailable) {
+                        try { $firewallProfiles = Get-NetFirewallProfile -ErrorAction Stop } catch { $firewallProfiles = $null }
+                    }
                     $disabledFirewalls = @($firewallProfiles | Where-Object { $null -ne $_ -and -not $_.Enabled })
                     $allFirewallsEnabled = ($null -ne $firewallProfiles) -and ($disabledFirewalls.Count -eq 0)
                     
@@ -352,9 +396,11 @@ function Test-NISTCompliance {
                         ControlFamily = 'SystemProtection'
                         Description = 'Firewall must protect system boundaries'
                         Expected = 'All firewall profiles enabled'
-                        Actual = if ($null -eq $firewallProfiles) { "Unable to retrieve firewall profiles" }
+                        Actual = if (-not $firewallCmdletAvailable) { 'Unable to evaluate — Get-NetFirewallProfile unavailable' }
+                                 elseif ($null -eq $firewallProfiles) { "Unable to retrieve firewall profiles" }
                                  elseif ($allFirewallsEnabled) { "All enabled" } else { "Some disabled" }
-                        Status = if ($allFirewallsEnabled) { 'Compliant' } else { 'NonCompliant' }
+                        Status = if (-not $firewallCmdletAvailable) { 'NotApplicable' }
+                                 elseif ($allFirewallsEnabled) { 'Compliant' } else { 'NonCompliant' }
                         Impact = 'Critical'
                         Remediation = 'Enable Windows Firewall for all profiles'
                     }
@@ -378,7 +424,14 @@ function Test-NISTCompliance {
                     $results.Controls += $control
                     
                     # SC-28: Protection of Information at Rest
-                    $bitlockerStatus = Get-BitLockerVolume -MountPoint "C:" -ErrorAction SilentlyContinue
+                    # Gate on Get-Command: CommandNotFoundException ignores
+                    # -ErrorAction SilentlyContinue and would drop this control via the
+                    # family-level catch.
+                    $bitlockerAvailable = $null -ne (Get-Command Get-BitLockerVolume -ErrorAction SilentlyContinue)
+                    $bitlockerStatus = $null
+                    if ($bitlockerAvailable) {
+                        try { $bitlockerStatus = Get-BitLockerVolume -MountPoint "C:" -ErrorAction Stop } catch { $bitlockerStatus = $null }
+                    }
                     $bitlockerEnabled = ($null -ne $bitlockerStatus) -and ($bitlockerStatus.ProtectionStatus -eq 'On')
                     
                     $control = [PSCustomObject]@{
@@ -387,8 +440,10 @@ function Test-NISTCompliance {
                         ControlFamily = 'SystemProtection'
                         Description = 'Data at rest should be encrypted'
                         Expected = 'BitLocker enabled'
-                        Actual = if ($bitlockerEnabled) { "Enabled" } else { "Disabled" }
-                        Status = if ($bitlockerEnabled) { 'Compliant' } else { 'NonCompliant' }
+                        Actual = if (-not $bitlockerAvailable) { 'Unable to evaluate — Get-BitLockerVolume unavailable' }
+                                 elseif ($bitlockerEnabled) { "Enabled" } else { "Disabled" }
+                        Status = if (-not $bitlockerAvailable) { 'NotApplicable' }
+                                 elseif ($bitlockerEnabled) { 'Compliant' } else { 'NonCompliant' }
                         Impact = 'High'
                         Remediation = 'Enable BitLocker encryption'
                     }
@@ -405,7 +460,14 @@ function Test-NISTCompliance {
                 
                 try {
                     # CM-6: Configuration Settings
-                    $defenderStatus = Get-MpComputerStatus -ErrorAction SilentlyContinue
+                    # Gate on Get-Command: CommandNotFoundException ignores
+                    # -ErrorAction SilentlyContinue and would drop CM-6/7/8 via the
+                    # family-level catch.
+                    $mpStatusAvailable = $null -ne (Get-Command Get-MpComputerStatus -ErrorAction SilentlyContinue)
+                    $defenderStatus = $null
+                    if ($mpStatusAvailable) {
+                        try { $defenderStatus = Get-MpComputerStatus -ErrorAction Stop } catch { $defenderStatus = $null }
+                    }
                     $defenderEnabled = ($null -ne $defenderStatus) -and $defenderStatus.AntivirusEnabled
                     
                     $control = [PSCustomObject]@{
@@ -414,17 +476,25 @@ function Test-NISTCompliance {
                         ControlFamily = 'ConfigurationManagement'
                         Description = 'Security configuration settings must be established'
                         Expected = 'Windows Defender enabled'
-                        Actual = if ($defenderEnabled) { "Enabled" } else { "Disabled" }
-                        Status = if ($defenderEnabled) { 'Compliant' } else { 'NonCompliant' }
+                        Actual = if (-not $mpStatusAvailable) { 'Unable to evaluate — Get-MpComputerStatus unavailable' }
+                                 elseif ($defenderEnabled) { "Enabled" } else { "Disabled" }
+                        Status = if (-not $mpStatusAvailable) { 'NotApplicable' }
+                                 elseif ($defenderEnabled) { 'Compliant' } else { 'NonCompliant' }
                         Impact = 'Critical'
                         Remediation = 'Enable Windows Defender antivirus'
                     }
                     $results.Controls += $control
                     
                     # CM-7: Least Functionality - FIX: Wrap in @()
-                    $allServices = Get-Service -ErrorAction SilentlyContinue
+                    # Get-Service is Windows/Linux-only; gate on Get-Command so a
+                    # missing cmdlet cannot drop CM-7/CM-8 via the family catch.
+                    $serviceCmdletAvailable = $null -ne (Get-Command Get-Service -ErrorAction SilentlyContinue)
+                    $allServices = $null
+                    if ($serviceCmdletAvailable) {
+                        try { $allServices = Get-Service -ErrorAction Stop } catch { $allServices = $null }
+                    }
                     $unnecessaryServices = @($allServices | Where-Object { 
-                        $_.Name -in @('TlntSvr', 'SNMP', 'SSDPSRV') -and $_.Status -eq 'Running'
+                        $null -ne $_ -and $_.Name -in @('TlntSvr', 'SNMP', 'SSDPSRV') -and $_.Status -eq 'Running'
                     })
                     
                     $control = [PSCustomObject]@{
@@ -433,8 +503,10 @@ function Test-NISTCompliance {
                         ControlFamily = 'ConfigurationManagement'
                         Description = 'Unnecessary services should be disabled'
                         Expected = 'No unnecessary services running'
-                        Actual = if ($unnecessaryServices.Count -eq 0) { "Clean" } else { "$($unnecessaryServices.Count) unnecessary services" }
-                        Status = if ($unnecessaryServices.Count -eq 0) { 'Compliant' } else { 'NonCompliant' }
+                        Actual = if (-not $serviceCmdletAvailable) { 'Unable to evaluate — Get-Service unavailable' }
+                                 elseif ($unnecessaryServices.Count -eq 0) { "Clean" } else { "$($unnecessaryServices.Count) unnecessary services" }
+                        Status = if (-not $serviceCmdletAvailable) { 'NotApplicable' }
+                                 elseif ($unnecessaryServices.Count -eq 0) { 'Compliant' } else { 'NonCompliant' }
                         Impact = 'Medium'
                         Remediation = 'Disable unnecessary services (Telnet, SNMP, SSDP)'
                     }

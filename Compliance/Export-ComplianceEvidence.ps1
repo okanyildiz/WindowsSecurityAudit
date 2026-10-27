@@ -462,7 +462,10 @@ DIRECTORY STRUCTURE:
 04_SystemInfo/      - System inventory and information
 
 INTEGRITY VERIFICATION:
-All collected files have been hashed with SHA-256.
+The configuration exports (security policy, audit policy, firewall rules) are
+hashed with SHA-256 at collection time, and the SHA-256 hash of the final ZIP
+bundle is printed at the end of collection. Other collected files (logs, status
+captures, system information) are not individually hashed.
 See 00_Metadata/Evidence_Manifest.json for hash values.
 
 IMPORTANT NOTES:

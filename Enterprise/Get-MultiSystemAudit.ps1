@@ -319,7 +319,10 @@ function Get-MultiSystemAudit {
                     }
                     
                     $systemAudit.SecurityScore = $securityChecks.Score
-                    $systemAudit.Findings = $securityChecks.Findings
+                    # Force to array: an empty findings list comes back from
+                    # Invoke-Command as $null, and $null.Count / $null.Finding
+                    # would throw under Set-StrictMode
+                    $systemAudit.Findings = @($securityChecks.Findings)
                     
                     # Determine security level
                     if ($systemAudit.SecurityScore -ge 80) {
@@ -382,7 +385,15 @@ function Get-MultiSystemAudit {
                 $auditResults.ComparativeAnalysis.LeastSecureSystem = $worstSystem.ComputerName
                 
                 # Find common findings
-                $allFindings = $successfulAudits | ForEach-Object { $_.Findings.Finding }
+                # Null/empty-safe enumeration: a host with zero findings carries
+                # an empty Findings array, and member access on it (or on $null)
+                # throws under Set-StrictMode - guard the Count first
+                $allFindings = @($successfulAudits | ForEach-Object {
+                    $hostFindings = @($_.Findings)
+                    if ($hostFindings.Count -gt 0) {
+                        foreach ($hostFinding in $hostFindings) { $hostFinding.Finding }
+                    }
+                })
                 $commonFindings = @($allFindings | Group-Object | Where-Object { $_.Count -ge ($successfulAudits.Count / 2) } | 
                     Select-Object -ExpandProperty Name)
                 
@@ -494,7 +505,7 @@ function Get-MultiSystemAudit {
             </tr>
             $($auditResults.SystemAudits | ForEach-Object {
                 "<tr>
-                    <td>$($_.ComputerName)</td>
+                    <td>$(ConvertTo-HtmlEncoded $_.ComputerName)</td>
                     <td>$($_.Status)</td>
                     <td>$($_.SecurityScore)/100</td>
                     <td class='$($_.SecurityLevel.ToLower())'>$($_.SecurityLevel)</td>

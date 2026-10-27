@@ -4,7 +4,11 @@ function Get-MemoryAnalysis {
         Analyzes process memory for suspicious indicators
     .DESCRIPTION
         Examines running processes for memory-based threats including code injection,
-        hollowing, and suspicious memory patterns
+        hollowing, and suspicious memory patterns. The hollowing check is a
+        name/location heuristic: without reading process memory it cannot compare
+        in-memory code against the on-disk image, so it flags well-known Windows
+        system process names (svchost, lsass, csrss, ...) whose main module image
+        resides outside the expected %SystemRoot% location instead.
     .PARAMETER ProcessId
         Specific process ID to analyze (optional)
     .PARAMETER CheckAllProcesses
@@ -33,9 +37,18 @@ function Get-MemoryAnalysis {
     begin {
         Write-Host "Analyzing process memory..." -ForegroundColor Cyan
         
-        # Check for admin privileges
-        $isAdmin = ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
-        if (-not $isAdmin) {
+        # Check for admin privileges (the Windows principal API is unavailable
+        # on non-Windows platforms - skip the check there instead of throwing)
+        $isAdmin = $false
+        $adminCheckAvailable = $true
+        try {
+            $isAdmin = ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
+        }
+        catch {
+            $adminCheckAvailable = $false
+            Write-Verbose "Administrator privilege check not available on this platform: $_"
+        }
+        if ($adminCheckAvailable -and -not $isAdmin) {
             Write-Warning "Administrator privileges recommended for complete memory analysis"
         }
         
@@ -58,6 +71,30 @@ function Get-MemoryAnalysis {
             'inject', 'hook', 'reflective', 'payload', 'shellcode',
             'mimikatz', 'meterpreter', 'cobalt', 'beacon'
         )
+        
+        # Expected on-disk image for well-known Windows system process names.
+        # A process using one of these names whose main module lives elsewhere is a
+        # masquerading / process-hollowing heuristic signal (no memory is read).
+        # Empty when %SystemRoot% is unavailable (non-Windows platforms).
+        $expectedSystemImages = @{}
+        if (-not [string]::IsNullOrEmpty($env:SystemRoot)) {
+            $expectedSystemImages = @{
+                'svchost'       = "$env:SystemRoot\System32\svchost.exe"
+                'lsass'         = "$env:SystemRoot\System32\lsass.exe"
+                'csrss'         = "$env:SystemRoot\System32\csrss.exe"
+                'smss'          = "$env:SystemRoot\System32\smss.exe"
+                'wininit'       = "$env:SystemRoot\System32\wininit.exe"
+                'winlogon'      = "$env:SystemRoot\System32\winlogon.exe"
+                'services'      = "$env:SystemRoot\System32\services.exe"
+                'spoolsv'       = "$env:SystemRoot\System32\spoolsv.exe"
+                'lsm'           = "$env:SystemRoot\System32\lsm.exe"
+                'dwm'           = "$env:SystemRoot\System32\dwm.exe"
+                'sihost'        = "$env:SystemRoot\System32\sihost.exe"
+                'taskhostw'     = "$env:SystemRoot\System32\taskhostw.exe"
+                'runtimebroker' = "$env:SystemRoot\System32\RuntimeBroker.exe"
+                'explorer'      = "$env:SystemRoot\explorer.exe"
+            }
+        }
     }
     
     process {
@@ -148,27 +185,52 @@ function Get-MemoryAnalysis {
                         Write-Verbose "Could not enumerate modules for $($process.ProcessName): $_"
                     }
                     
-                    # Check for process hollowing indicators
-                    # Look for mismatches between process image and memory
-                    if ($process.Path) {
+                    # Process hollowing / masquerading heuristic.
+                    # Process.Path IS MainModule.FileName in the .NET Process API, so
+                    # comparing the two (as this check previously did) is structurally
+                    # false and can never fire. Without reading process memory there is
+                    # no reliable hollowing check, so instead flag well-known Windows
+                    # system process names whose main module image does not reside at
+                    # the expected system location (e.g. a process named 'svchost'
+                    # whose image is not %SystemRoot%\System32\svchost.exe).
+                    $processNameLower = $process.ProcessName.ToLower()
+                    if ($expectedSystemImages.ContainsKey($processNameLower)) {
+                        $actualImagePath = $null
                         try {
                             $mainModule = $process.MainModule
+                            if ($null -ne $mainModule) { $actualImagePath = $mainModule.FileName }
+                        }
+                        catch {
+                            Write-Verbose "Could not read main module for $($process.ProcessName)"
+                        }
+                        
+                        if (-not [string]::IsNullOrWhiteSpace($actualImagePath)) {
+                            # Tolerate the SysWOW64 twin of System32 images (32-bit services)
+                            $expectedImagePath = $expectedSystemImages[$processNameLower]
+                            $expectedImagePaths = @($expectedImagePath)
+                            if ($expectedImagePath -match '\\System32\\') {
+                                $expectedImagePaths += ($expectedImagePath -replace '\\System32\\', '\SysWOW64\')
+                            }
                             
-                            # Compare main module with process path
-                            if ($mainModule.FileName -ne $process.Path) {
+                            $imagePathMatches = $false
+                            foreach ($expectedPath in $expectedImagePaths) {
+                                if ($actualImagePath.Equals($expectedPath, [System.StringComparison]::OrdinalIgnoreCase)) {
+                                    $imagePathMatches = $true
+                                    break
+                                }
+                            }
+                            
+                            if (-not $imagePathMatches) {
                                 $results.HollowingIndicators += [PSCustomObject]@{
                                     ProcessName = $process.ProcessName
                                     ProcessId = $process.Id
-                                    ExpectedPath = $process.Path
-                                    ActualPath = $mainModule.FileName
-                                    Reason = "Main module path mismatch - possible process hollowing"
+                                    ExpectedPath = $expectedImagePath
+                                    ActualPath = $actualImagePath
+                                    Reason = "Well-known system process name running from an unexpected image location - masquerading/hollowing heuristic (image paths compared, memory contents NOT compared)"
                                 }
                                 $results.Statistics.HollowingIndicators++
-                                $processAnalysis.Findings += "Possible process hollowing detected"
+                                $processAnalysis.Findings += "System process name with unexpected image location: $actualImagePath (masquerade/hollowing heuristic)"
                             }
-                        }
-                        catch {
-                            Write-Verbose "Could not check main module for $($process.ProcessName)"
                         }
                     }
                     

@@ -20,7 +20,7 @@ function Set-SecurityBaseline {
         PSCustomObject with baseline configuration results
     #>
     
-    [CmdletBinding(SupportsShouldProcess)]
+    [CmdletBinding(SupportsShouldProcess, ConfirmImpact = 'High')]
     param(
         [Parameter()]
         [ValidateSet('Basic', 'Recommended', 'Strict')]

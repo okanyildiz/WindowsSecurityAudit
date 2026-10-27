@@ -39,6 +39,49 @@ jobs:
           $manifest = Test-ModuleManifest -Path ./WindowsSecurityAudit.psd1 -ErrorAction Stop
           Write-Host "Manifest OK: $($manifest.Name) $($manifest.Version)"
 
+      - name: Guard tag version matches manifest
+        # When the run was triggered by a vX.Y.Z tag, refuse to publish if the
+        # tag version differs from the psd1 ModuleVersion (prevents shipping a
+        # package whose version does not match the release tag).
+        shell: pwsh
+        run: |
+          if ($env:GITHUB_REF -like 'refs/tags/v*') {
+            $tagVersion = $env:GITHUB_REF -replace '^refs/tags/v', ''
+            $manifest = Test-ModuleManifest -Path ./WindowsSecurityAudit.psd1 -ErrorAction Stop
+            $moduleVersion = $manifest.Version.ToString()
+            if ($tagVersion -ne $moduleVersion) {
+              Write-Error "Tag version '$tagVersion' ($env:GITHUB_REF) does not match manifest ModuleVersion '$moduleVersion'. Update WindowsSecurityAudit.psd1 or re-tag the release."
+              exit 1
+            }
+            Write-Host "Tag version v$moduleVersion matches the manifest."
+          } else {
+            Write-Host "Not a tag build ($env:GITHUB_REF) - skipping tag/version guard."
+          }
+
+      - name: Stage module for publish
+        # Publish-Module ships the entire -Path directory, so copy only the
+        # files the module needs into a clean staging dir (excludes .github,
+        # tests, helper scripts, CHANGELOG.md, etc.).
+        shell: pwsh
+        run: |
+          $staging = Join-Path $env:RUNNER_TEMP 'module-staging'
+          New-Item -Path $staging -ItemType Directory -Force | Out-Null
+          $items = @(
+            'WindowsSecurityAudit.psd1',
+            'WindowsSecurityAudit.psm1',
+            'LICENSE',
+            'README.md',
+            'Core', 'Detection', 'Analysis', 'Response', 'Enterprise',
+            'Hardening', 'WindowsDefender', 'ThreatHunting', 'Compliance',
+            'ActiveDirectory', 'Vulnerability', 'Forensics', 'CloudSecurity',
+            'Reporting', 'Private'
+          )
+          foreach ($item in $items) {
+            Copy-Item -Path (Join-Path . $item) -Destination $staging -Recurse -Force -ErrorAction Stop
+          }
+          $stagedManifest = Test-ModuleManifest -Path (Join-Path $staging 'WindowsSecurityAudit.psd1') -ErrorAction Stop
+          Write-Host "Staged $($stagedManifest.Name) $($stagedManifest.Version) at $staging"
+
       - name: Publish to PowerShell Gallery
         # Publish only when the PSGALLERY_API_KEY repository secret exists;
         # without it the run ends green with a notice instead of a red failure.
@@ -51,5 +94,6 @@ jobs:
             Write-Host "::notice::PSGALLERY_API_KEY secret is not configured - skipping gallery publish. Tests and manifest validation passed."
             exit 0
           }
-          Publish-Module -Path . -NuGetApiKey $env:PSGALLERY_API_KEY -ErrorAction Stop
+          $staging = Join-Path $env:RUNNER_TEMP 'module-staging'
+          Publish-Module -Path $staging -NuGetApiKey $env:PSGALLERY_API_KEY -ErrorAction Stop
           Write-Host "Published WindowsSecurityAudit to the PowerShell Gallery."

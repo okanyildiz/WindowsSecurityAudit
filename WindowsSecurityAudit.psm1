@@ -4,17 +4,18 @@
 .DESCRIPTION
     Comprehensive Windows security audit toolkit for threat detection and incident response
 .VERSION
-    1.0.0
+    1.6.1 (keep in sync with WindowsSecurityAudit.psd1 ModuleVersion)
 .AUTHOR
-    Security Team
+    Okan YILDIZ (keep in sync with WindowsSecurityAudit.psd1 Author)
 #>
 
 # Set strict mode
 Set-StrictMode -Version Latest
 
 # Module variables
+# NOTE: keep ModuleVersion in sync with the ModuleVersion field in WindowsSecurityAudit.psd1
 $script:ModuleRoot = $PSScriptRoot
-$script:ModuleVersion = '1.6.0'
+$script:ModuleVersion = '1.6.1'
 
 # Import all function files
 $Public = @(Get-ChildItem -Path "$PSScriptRoot\Core\*.ps1" -ErrorAction SilentlyContinue)
@@ -35,17 +36,31 @@ $Public += @(Get-ChildItem -Path "$PSScriptRoot\Reporting\*.ps1" -ErrorAction Si
 
 $Private = @(Get-ChildItem -Path "$PSScriptRoot\Private\*.ps1" -ErrorAction SilentlyContinue)
 
-# Import all function files
+# Import all function files, tracking failures so a broken file does not
+# silently export a missing function
+$script:FailedImports = [System.Collections.Generic.List[object]]::new()
+$script:LoadedPublic = [System.Collections.Generic.List[object]]::new()
 foreach ($import in @($Public + $Private)) {
     try {
         . $import.FullName
+        if ($Public -contains $import) {
+            $script:LoadedPublic.Add($import)
+        }
     }
     catch {
         Write-Error "Failed to import function $($import.FullName): $_"
+        $script:FailedImports.Add($import)
     }
 }
 
-# Export public functions
-Export-ModuleMember -Function $Public.BaseName
+# Export only the public functions that loaded successfully
+Export-ModuleMember -Function $script:LoadedPublic.BaseName
 
-Write-Host "Windows Security Audit Module v$script:ModuleVersion loaded successfully" -ForegroundColor Green
+if ($script:FailedImports.Count -gt 0) {
+    $failedNames = $script:FailedImports.FullName -join ', '
+    Write-Warning ("Windows Security Audit Module v$script:ModuleVersion loaded with {0} of {1} functions. Failed files: {2}" -f
+        $script:LoadedPublic.Count, $Public.Count, $failedNames)
+}
+else {
+    Write-Verbose "Windows Security Audit Module v$script:ModuleVersion loaded successfully ($($script:LoadedPublic.Count) functions)"
+}

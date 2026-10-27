@@ -22,7 +22,7 @@ function Invoke-IncidentResponse {
         PSCustomObject with incident response actions and results
     #>
     
-    [CmdletBinding(SupportsShouldProcess)]
+    [CmdletBinding(SupportsShouldProcess, ConfirmImpact = 'High')]
     param(
         [Parameter(Mandatory = $true)]
         [ValidateSet('Low', 'Medium', 'High', 'Critical')]
@@ -46,10 +46,14 @@ function Invoke-IncidentResponse {
         Write-Host "Severity Level: $Severity" -ForegroundColor Red
         Write-Host "Timestamp: $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')" -ForegroundColor Yellow
         
-        # Check for admin privileges
-        $isAdmin = ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
-        if (-not $isAdmin) {
-            throw "Incident Response requires Administrator privileges!"
+        # Check for admin privileges (Windows-only check; the WindowsPrincipal APIs
+        # do not exist on other platforms, where the destructive cmdlets below are
+        # unavailable anyway)
+        if ($env:OS -eq 'Windows_NT') {
+            $isAdmin = ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
+            if (-not $isAdmin) {
+                throw "Incident Response requires Administrator privileges!"
+            }
         }
         
         # Create output directory
@@ -147,8 +151,10 @@ function Invoke-IncidentResponse {
                 Write-IRLog "Error scanning network: $_" 'ERROR'
             }
             
-            # Step 3: Network Isolation (if requested or Critical severity)
-            if ($IsolateSystem -or $Severity -eq 'Critical') {
+            # Step 3: Network Isolation (only when explicitly requested via -IsolateSystem;
+            # disabling all adapters over a WinRM/remote session would sever that session
+            # and brick remote access, so severity alone must never trigger it)
+            if ($IsolateSystem) {
                 Write-Host "`n[3/6] Isolating system from network..." -ForegroundColor Red
                 
                 if ($PSCmdlet.ShouldProcess($env:COMPUTERNAME, "Disable network adapters")) {
@@ -169,6 +175,11 @@ function Invoke-IncidentResponse {
                         Write-Warning "Network isolation failed: $_"
                     }
                 }
+            }
+            elseif ($Severity -eq 'Critical') {
+                Write-Warning "Severity is Critical but network isolation was NOT performed: -IsolateSystem was not specified. Disabling all network adapters can sever remote (WinRM) access; re-run with -IsolateSystem to isolate the system."
+                Write-Host "`n[3/6] Network isolation: SKIPPED (Critical severity, but -IsolateSystem not specified)" -ForegroundColor Yellow
+                $results.Actions += "Network isolation skipped (Critical severity without -IsolateSystem)"
             }
             else {
                 Write-Host "`n[3/6] Network isolation: SKIPPED" -ForegroundColor Yellow
@@ -222,9 +233,10 @@ function Invoke-IncidentResponse {
                     Write-IRLog "Failed to collect system info: $_" 'ERROR'
                 }
                 
-                # Collect running processes
+                # Collect running processes (Name/Path are attacker-controlled strings;
+                # escape them against CSV formula injection)
                 try {
-                    Get-Process | Select-Object Name, Id, Path, StartTime, CPU, WorkingSet64 | 
+                    Get-Process | Select-Object @{ Name = 'Name'; Expression = { Protect-CsvField $_.Name } }, Id, @{ Name = 'Path'; Expression = { Protect-CsvField $_.Path } }, StartTime, CPU, WorkingSet64 |
                         Export-Csv (Join-Path $OutputPath "RunningProcesses.csv") -NoTypeInformation
                     $results.EvidenceCollected += "Running processes list"
                     Write-IRLog "Collected process list" 'SUCCESS'
@@ -233,9 +245,10 @@ function Invoke-IncidentResponse {
                     Write-IRLog "Failed to collect processes: $_" 'ERROR'
                 }
                 
-                # Collect network connections
+                # Collect network connections (address fields are attacker-influenced
+                # strings; escape them against CSV formula injection)
                 try {
-                    Get-NetTCPConnection | Select-Object LocalAddress, LocalPort, RemoteAddress, RemotePort, State, OwningProcess |
+                    Get-NetTCPConnection | Select-Object @{ Name = 'LocalAddress'; Expression = { Protect-CsvField $_.LocalAddress } }, LocalPort, @{ Name = 'RemoteAddress'; Expression = { Protect-CsvField $_.RemoteAddress } }, RemotePort, State, OwningProcess |
                         Export-Csv (Join-Path $OutputPath "NetworkConnections.csv") -NoTypeInformation
                     $results.EvidenceCollected += "Network connections"
                     Write-IRLog "Collected network connections" 'SUCCESS'

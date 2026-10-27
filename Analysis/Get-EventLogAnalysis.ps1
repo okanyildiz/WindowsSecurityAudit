@@ -112,11 +112,14 @@ function Get-EventLogAnalysis {
                 }
                 
                 try {
-                    $events = Get-WinEvent -FilterHashtable @{
+                    # Force to array: a single matching event comes back as a
+                    # scalar EventLogRecord, and .Count on it throws under
+                    # Set-StrictMode (dropping the whole log via the catch)
+                    $events = @(Get-WinEvent -FilterHashtable @{
                         LogName = $logName
                         Level = $filterLevels
                         StartTime = $startTime
-                    } -ErrorAction SilentlyContinue
+                    } -ErrorAction SilentlyContinue)
                     
                     if ($events) {
                         $results.Statistics.TotalEventsAnalyzed += $events.Count

@@ -52,9 +52,11 @@ function Test-SystemIntegrity {
             $sfcOutput = & sfc /scannow 2>&1 | Out-String
             $sfcExitCode = $LASTEXITCODE
 
-            # SFC output text is fully localized; the exit code and the CBS.log
-            # '[SR]'/'Cannot repair' tokens (written in English by the SFC engine
-            # regardless of UI language) are the locale-invariant sources
+            # SFC output text is fully localized, so it is NEVER used for the
+            # verdict; the exit code and the CBS.log '[SR]'/'Cannot repair'
+            # tokens (written in English by the SFC engine regardless of UI
+            # language), filtered to the current scan window, are the only
+            # locale-invariant sources
             $cbsLogPath = "$env:windir\Logs\CBS\CBS.log"
             $cbsLogAvailable = Test-Path $cbsLogPath
             $cannotRepairLines = @()
@@ -66,42 +68,40 @@ function Test-SystemIntegrity {
                 $cannotRepairLines = @($cbsTailFilter.Lines | Where-Object { $_ -match '\[SR\]' -and $_ -match 'Cannot repair' })
             }
 
+            # Localized SFC console text as a verbose hint only - never a verdict input
+            if ($sfcOutput -match 'Windows Resource Protection') {
+                $sfcHint = @($sfcOutput -split '\r?\n' | Where-Object { $_ -match 'Windows Resource Protection' } | Select-Object -First 1)
+                if ($sfcHint.Count -gt 0) { Write-Verbose "SFC output hint (localized, informational only): $($sfcHint[0].Trim())" }
+            }
+
             if ($sfcExitCode -ne 0) {
+                # Covers the 'could not perform the requested operation' case -
+                # SFC exits non-zero there, no text matching needed
                 $results.SFCResult = "SFC could not complete scan - may need to run in Safe Mode"
                 Write-Warning "SFC could not complete the scan (exit code $sfcExitCode)"
             }
-            elseif ($cannotRepairLines.Count -gt 0 -or
-                    (-not $cbsLogAvailable -and $sfcOutput -match "Windows Resource Protection found corrupt files")) {
+            elseif ($cannotRepairLines.Count -gt 0) {
                 $results.SFCResult = "Corrupt files found"
-                if (-not $cbsTimestampsParseable -and $cannotRepairLines.Count -gt 0) {
+                if (-not $cbsTimestampsParseable) {
                     $results.SFCResult = "Corrupt files found (possible stale CBS.log entries)"
                 }
 
-                if ($cannotRepairLines.Count -gt 0) {
-                    $results.CorruptedFiles = $cannotRepairLines
-                }
-                elseif ($cbsLogAvailable) {
-                    $cbsLog = Get-Content $cbsLogPath -Tail 100 -ErrorAction SilentlyContinue |
-                        Where-Object { $_ -match "corrupt" -or $_ -match "repaired" }
-                    if ($cbsLog) {
-                        $results.CorruptedFiles = $cbsLog
-                    }
-                }
+                $results.CorruptedFiles = $cannotRepairLines
 
                 if ($RepairFiles) {
                     Write-Host "Attempting to repair corrupt files..." -ForegroundColor Yellow
                     $results.RepairAttempted = $true
                 }
             }
-            elseif ($cbsLogAvailable -or $sfcOutput -match "Windows Resource Protection did not find any integrity violations") {
+            elseif ($cbsLogAvailable -and $cbsTimestampsParseable) {
+                # Exit code 0 and the current-scan CBS.log window was actually
+                # examined (timestamps parsed) with no 'Cannot repair' markers
                 $results.SFCResult = "No integrity violations found"
                 Write-Host "SFC: No integrity violations found" -ForegroundColor Green
             }
-            elseif ($sfcOutput -match "Windows Resource Protection could not perform") {
-                $results.SFCResult = "SFC could not complete scan - may need to run in Safe Mode"
-                Write-Warning "SFC could not complete the scan"
-            }
             else {
+                # Inconclusive: CBS.log missing or its timestamps unparseable -
+                # never report 'healthy' from a parse miss
                 $results.SFCResult = "Scan completed - check CBS.log for details"
             }
             
@@ -114,9 +114,11 @@ function Test-SystemIntegrity {
                 $dismCheckExitCode = $LASTEXITCODE
 
                 # DISM output text is fully localized and CheckHealth returns 0 for
-                # both 'healthy' and 'repairable', so the exit code alone cannot
-                # separate those; servicing-stack CBS.log markers ('[SR]'/'Cannot
-                # repair', component-store corruption) are written in English
+                # both 'healthy' and 'repairable', so neither the output text nor
+                # the exit code alone can separate those; servicing-stack CBS.log
+                # markers (component-store corruption, written in English by the
+                # engine), filtered to the current scan window, are the only
+                # locale-invariant source. English DISM text is never matched.
                 $storeCorruptionLines = @()
                 $dismTimestampsParseable = $false
                 if ($cbsLogAvailable) {
@@ -126,7 +128,13 @@ function Test-SystemIntegrity {
                     $storeCorruptionLines = @($dismTailFilter.Lines | Where-Object { $_ -match '(?i)component store' -and $_ -match '(?i)corrupt' })
                 }
 
-                $repairable = ($storeCorruptionLines.Count -gt 0) -or ($dismCheck -match "The component store is repairable")
+                # Localized DISM console text as a verbose hint only - never a verdict input
+                if ($dismCheck -match '(?i)component store') {
+                    $dismHint = @($dismCheck -split '\r?\n' | Where-Object { $_ -match '(?i)component store' } | Select-Object -First 1)
+                    if ($dismHint.Count -gt 0) { Write-Verbose "DISM output hint (localized, informational only): $($dismHint[0].Trim())" }
+                }
+
+                $repairable = ($storeCorruptionLines.Count -gt 0)
 
                 if ($dismCheckExitCode -ne 0) {
                     $results.DISMResult = "DISM CheckHealth failed (exit code $dismCheckExitCode) - review CBS.log"
@@ -154,11 +162,15 @@ function Test-SystemIntegrity {
                         }
                     }
                 }
-                elseif ($dismCheck -match "No component store corruption detected") {
+                elseif ($cbsLogAvailable -and $dismTimestampsParseable) {
+                    # Exit code 0 and the current-scan CBS.log window was actually
+                    # examined (timestamps parsed) with no corruption markers
                     $results.DISMResult = "Healthy"
                     Write-Host "DISM: System image is healthy" -ForegroundColor Green
                 }
                 else {
+                    # Inconclusive: CBS.log missing or its timestamps unparseable -
+                    # never report 'healthy' from a parse miss
                     $results.DISMResult = "Check completed - review CBS.log"
                 }
             }

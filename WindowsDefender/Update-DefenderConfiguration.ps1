@@ -33,7 +33,7 @@ function Update-DefenderConfiguration {
         PSCustomObject with configuration update results
     #>
     
-    [CmdletBinding(SupportsShouldProcess)]
+    [CmdletBinding(SupportsShouldProcess, ConfirmImpact = 'High')]
     param(
         [Parameter()]
         [ValidateNotNull()]

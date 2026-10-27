@@ -404,17 +404,26 @@ function Get-UserActivityArtifacts {
                     New-Item -Path $OutputPath -ItemType Directory -Force | Out-Null
                 }
 
+                # Escapes string fields against CSV formula injection before export
+                filter Protect-CsvRowFields {
+                    $escaped = [ordered]@{}
+                    foreach ($prop in $_.PSObject.Properties) {
+                        $escaped[$prop.Name] = if ($prop.Value -is [string]) { Protect-CsvField $prop.Value } else { $prop.Value }
+                    }
+                    [PSCustomObject]$escaped
+                }
+
                 if (@($results.RecycleBin).Count -gt 0) {
-                    $results.RecycleBin | Export-Csv -Path (Join-Path $OutputPath 'RecycleBin.csv') -NoTypeInformation -Encoding UTF8
+                    $results.RecycleBin | Protect-CsvRowFields | Export-Csv -Path (Join-Path $OutputPath 'RecycleBin.csv') -NoTypeInformation -Encoding UTF8
                 }
                 if (@($results.RecentLinks).Count -gt 0) {
-                    $results.RecentLinks | Export-Csv -Path (Join-Path $OutputPath 'RecentLinks.csv') -NoTypeInformation -Encoding UTF8
+                    $results.RecentLinks | Protect-CsvRowFields | Export-Csv -Path (Join-Path $OutputPath 'RecentLinks.csv') -NoTypeInformation -Encoding UTF8
                 }
                 if (@($results.JumpLists).Count -gt 0) {
-                    $results.JumpLists | Export-Csv -Path (Join-Path $OutputPath 'JumpLists.csv') -NoTypeInformation -Encoding UTF8
+                    $results.JumpLists | Protect-CsvRowFields | Export-Csv -Path (Join-Path $OutputPath 'JumpLists.csv') -NoTypeInformation -Encoding UTF8
                 }
                 if (@($results.Timeline).Count -gt 0) {
-                    $results.Timeline | Export-Csv -Path (Join-Path $OutputPath 'Timeline.csv') -NoTypeInformation -Encoding UTF8
+                    $results.Timeline | Protect-CsvRowFields | Export-Csv -Path (Join-Path $OutputPath 'Timeline.csv') -NoTypeInformation -Encoding UTF8
                 }
 
                 Write-Host "`nCSV exports written to: $OutputPath" -ForegroundColor Green

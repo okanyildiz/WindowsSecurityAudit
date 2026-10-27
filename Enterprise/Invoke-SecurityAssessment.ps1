@@ -36,6 +36,10 @@ function Invoke-SecurityAssessment {
         Write-Host "Assessment Type: $AssessmentType" -ForegroundColor Yellow
         Write-Host "Start Time: $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')" -ForegroundColor Yellow
         
+        if ($AssessmentType -ne 'Standard') {
+            Write-Warning "AssessmentType '$AssessmentType' is accepted, but Basic, Standard, and Advanced currently all run the same set of checks."
+        }
+        
         if (-not (Test-Path $OutputPath)) {
             New-Item -Path $OutputPath -ItemType Directory -Force | Out-Null
         }
@@ -136,10 +140,29 @@ function Invoke-SecurityAssessment {
                 }
             }
             
-            # Firewall
-            $firewallProfiles = Get-NetFirewallProfile -ErrorAction SilentlyContinue
+            # Firewall (cmdlet absent on hosts without the NetSecurity module - guard the lookup)
+            $firewallProfiles = @()
+            $firewallQuerySucceeded = $false
+            $firewallQueryError = $null
+            if (Get-Command Get-NetFirewallProfile -ErrorAction SilentlyContinue) {
+                try {
+                    $firewallProfiles = @(Get-NetFirewallProfile -ErrorAction Stop)
+                    $firewallQuerySucceeded = $true
+                } catch {
+                    $firewallQueryError = ($_.Exception.Message -split "\r?\n")[0]
+                }
+            } else {
+                $firewallQueryError = 'Get-NetFirewallProfile cmdlet not available'
+            }
             $enabledProfiles = @($firewallProfiles | Where-Object { $null -ne $_ -and $_.PSObject.Properties['Enabled'] -and $_.Enabled -eq $true }).Count
-            if ($enabledProfiles -eq 3) {
+            if (-not $firewallQuerySucceeded) {
+                $systemSecurity.Checks += [PSCustomObject]@{
+                    Check = 'Windows Firewall'
+                    Status = 'Warning'
+                    Score = 0
+                    Details = "Unable to evaluate - $firewallQueryError"
+                }
+            } elseif ($enabledProfiles -eq 3) {
                 $systemSecurity.CategoryScore += 20
                 $systemSecurity.Checks += [PSCustomObject]@{
                     Check = 'Windows Firewall'
@@ -299,10 +322,25 @@ function Invoke-SecurityAssessment {
             
             # Check for dangerous open ports
             $dangerousPorts = @(23, 135, 139, 445, 1433, 3389, 5985, 5986)
-            $listeningPorts = Get-NetTCPConnection -State Listen -ErrorAction SilentlyContinue
+            $listeningPorts = @()
+            $portQuerySucceeded = $false
+            $portQueryError = $null
+            try {
+                $listeningPorts = @(Get-NetTCPConnection -State Listen -ErrorAction Stop)
+                $portQuerySucceeded = $true
+            } catch {
+                $portQueryError = ($_.Exception.Message -split "\r?\n")[0]
+            }
             $exposedPorts = @($listeningPorts | Where-Object { $null -ne $_ -and $_.PSObject.Properties['LocalPort'] -and $dangerousPorts -contains $_.LocalPort })
             
-            if ($exposedPorts.Count -eq 0) {
+            if (-not $portQuerySucceeded) {
+                $networkSecurity.Checks += [PSCustomObject]@{
+                    Check = 'Dangerous Ports'
+                    Status = 'Warning'
+                    Score = 0
+                    Details = "Unable to evaluate - $portQueryError"
+                }
+            } elseif ($exposedPorts.Count -eq 0) {
                 $networkSecurity.CategoryScore += 30
                 $networkSecurity.Checks += [PSCustomObject]@{
                     Check = 'Dangerous Ports'
@@ -328,10 +366,26 @@ function Invoke-SecurityAssessment {
             
             # Network shares
             $shares = @()
+            $shareQuerySucceeded = $false
+            $shareQueryError = $null
             if (Get-Command Get-SmbShare -ErrorAction SilentlyContinue) {
-                $shares = @(Get-SmbShare -ErrorAction SilentlyContinue | Where-Object { $null -ne $_ -and $_.PSObject.Properties['Name'] -and $_.Name -notmatch '^(ADMIN\$|C\$|IPC\$)$' })
+                try {
+                    $shares = @(Get-SmbShare -ErrorAction Stop | Where-Object { $null -ne $_ -and $_.PSObject.Properties['Name'] -and $_.Name -notmatch '^(ADMIN\$|C\$|IPC\$)$' })
+                    $shareQuerySucceeded = $true
+                } catch {
+                    $shareQueryError = ($_.Exception.Message -split "\r?\n")[0]
+                }
+            } else {
+                $shareQueryError = 'Get-SmbShare cmdlet not available'
             }
-            if ($shares.Count -eq 0) {
+            if (-not $shareQuerySucceeded) {
+                $networkSecurity.Checks += [PSCustomObject]@{
+                    Check = 'Network Shares'
+                    Status = 'Warning'
+                    Score = 0
+                    Details = "Unable to evaluate - $shareQueryError"
+                }
+            } elseif ($shares.Count -eq 0) {
                 $networkSecurity.CategoryScore += 20
                 $networkSecurity.Checks += [PSCustomObject]@{
                     Check = 'Network Shares'
@@ -422,17 +476,49 @@ function Invoke-SecurityAssessment {
             }
             
             # Local accounts
-            $localUsers = @(Get-LocalUser -ErrorAction SilentlyContinue | Where-Object { $null -ne $_ -and $_.PSObject.Properties['Enabled'] -and $_.Enabled -eq $true })
-            $accountSecurity.Checks += [PSCustomObject]@{
-                Check = 'Local User Accounts'
-                Status = 'Info'
-                Score = 0
-                Details = "$($localUsers.Count) enabled accounts"
+            $localUsers = @()
+            $localUserQuerySucceeded = $false
+            $localUserQueryError = $null
+            try {
+                $localUsers = @(Get-LocalUser -ErrorAction Stop | Where-Object { $null -ne $_ -and $_.PSObject.Properties['Enabled'] -and $_.Enabled -eq $true })
+                $localUserQuerySucceeded = $true
+            } catch {
+                $localUserQueryError = ($_.Exception.Message -split "\r?\n")[0]
+            }
+            if ($localUserQuerySucceeded) {
+                $accountSecurity.Checks += [PSCustomObject]@{
+                    Check = 'Local User Accounts'
+                    Status = 'Info'
+                    Score = 0
+                    Details = "$($localUsers.Count) enabled accounts"
+                }
+            } else {
+                $accountSecurity.Checks += [PSCustomObject]@{
+                    Check = 'Local User Accounts'
+                    Status = 'Warning'
+                    Score = 0
+                    Details = "Unable to evaluate - $localUserQueryError"
+                }
             }
             
             # Administrator account status (well-known SID RID 500 - culture-invariant)
-            $adminAccount = @(Get-LocalUser -ErrorAction SilentlyContinue | Where-Object { $null -ne $_ -and $_.PSObject.Properties['SID'] -and $null -ne $_.SID -and $_.SID.Value -match '-500$' }) | Select-Object -First 1
-            if ($adminAccount -and $adminAccount.Enabled -eq $false) {
+            $adminAccount = $null
+            $adminQuerySucceeded = $false
+            $adminQueryError = $null
+            try {
+                $adminAccount = @(Get-LocalUser -ErrorAction Stop | Where-Object { $null -ne $_ -and $_.PSObject.Properties['SID'] -and $null -ne $_.SID -and $_.SID.Value -match '-500$' }) | Select-Object -First 1
+                $adminQuerySucceeded = $true
+            } catch {
+                $adminQueryError = ($_.Exception.Message -split "\r?\n")[0]
+            }
+            if (-not $adminQuerySucceeded) {
+                $accountSecurity.Checks += [PSCustomObject]@{
+                    Check = 'Built-in Administrator Account'
+                    Status = 'Warning'
+                    Score = 0
+                    Details = "Unable to evaluate - $adminQueryError"
+                }
+            } elseif ($adminAccount -and $adminAccount.Enabled -eq $false) {
                 $accountSecurity.CategoryScore += 20
                 $accountSecurity.Checks += [PSCustomObject]@{
                     Check = 'Built-in Administrator Account'
@@ -457,8 +543,23 @@ function Invoke-SecurityAssessment {
             }
             
             # Guest account (well-known SID RID 501 - culture-invariant)
-            $guestAccount = @(Get-LocalUser -ErrorAction SilentlyContinue | Where-Object { $null -ne $_ -and $_.PSObject.Properties['SID'] -and $null -ne $_.SID -and $_.SID.Value -match '-501$' }) | Select-Object -First 1
-            if ($guestAccount -and $guestAccount.Enabled -eq $false) {
+            $guestAccount = $null
+            $guestQuerySucceeded = $false
+            $guestQueryError = $null
+            try {
+                $guestAccount = @(Get-LocalUser -ErrorAction Stop | Where-Object { $null -ne $_ -and $_.PSObject.Properties['SID'] -and $null -ne $_.SID -and $_.SID.Value -match '-501$' }) | Select-Object -First 1
+                $guestQuerySucceeded = $true
+            } catch {
+                $guestQueryError = ($_.Exception.Message -split "\r?\n")[0]
+            }
+            if (-not $guestQuerySucceeded) {
+                $accountSecurity.Checks += [PSCustomObject]@{
+                    Check = 'Guest Account'
+                    Status = 'Warning'
+                    Score = 0
+                    Details = "Unable to evaluate - $guestQueryError"
+                }
+            } elseif ($guestAccount -and $guestAccount.Enabled -eq $false) {
                 $accountSecurity.CategoryScore += 15
                 $accountSecurity.Checks += [PSCustomObject]@{
                     Check = 'Guest Account'
@@ -498,7 +599,14 @@ function Invoke-SecurityAssessment {
             
             # Accounts without passwords
             $noPasswordAccounts = @($localUsers | Where-Object { $_.PasswordRequired -eq $false })
-            if ($noPasswordAccounts.Count -eq 0) {
+            if (-not $localUserQuerySucceeded) {
+                $accountSecurity.Checks += [PSCustomObject]@{
+                    Check = 'Password Required'
+                    Status = 'Warning'
+                    Score = 0
+                    Details = "Unable to evaluate - $localUserQueryError"
+                }
+            } elseif ($noPasswordAccounts.Count -eq 0) {
                 $accountSecurity.CategoryScore += 25
                 $accountSecurity.Checks += [PSCustomObject]@{
                     Check = 'Password Required'
@@ -642,14 +750,33 @@ try {
 }
             
             # Windows Defender Application Control
-            $wdacStatus = Get-CimInstance -ClassName Win32_DeviceGuard -Namespace root\Microsoft\Windows\DeviceGuard -ErrorAction SilentlyContinue
-            if ($wdacStatus -and $wdacStatus.CodeIntegrityPolicyEnforcementStatus -eq 1) {
+            # Win32_DeviceGuard.CodeIntegrityPolicyEnforcementStatus: 1 = Audit mode, 2 = Enforced
+            $wdacStatus = $null
+            if (Get-Command Get-CimInstance -ErrorAction SilentlyContinue) {
+                $wdacStatus = Get-CimInstance -ClassName Win32_DeviceGuard -Namespace root\Microsoft\Windows\DeviceGuard -ErrorAction SilentlyContinue
+            }
+            $wdacEnforcement = if ($null -ne $wdacStatus -and $wdacStatus.PSObject.Properties['CodeIntegrityPolicyEnforcementStatus']) { $wdacStatus.CodeIntegrityPolicyEnforcementStatus } else { $null }
+            if ($null -eq $wdacEnforcement) {
+                $applicationSecurity.Checks += [PSCustomObject]@{
+                    Check = 'Windows Defender Application Control'
+                    Status = 'Warning'
+                    Score = 0
+                    Details = 'Unable to determine'
+                }
+            } elseif ($wdacEnforcement -eq 2) {
                 $applicationSecurity.CategoryScore += 30
                 $applicationSecurity.Checks += [PSCustomObject]@{
                     Check = 'Windows Defender Application Control'
                     Status = 'Pass'
                     Score = 30
                     Details = 'Enforced'
+                }
+            } elseif ($wdacEnforcement -eq 1) {
+                $applicationSecurity.Checks += [PSCustomObject]@{
+                    Check = 'Windows Defender Application Control'
+                    Status = 'Warning'
+                    Score = 0
+                    Details = 'Audit mode only (not enforcing)'
                 }
             } else {
                 $applicationSecurity.Checks += [PSCustomObject]@{
@@ -721,7 +848,7 @@ try {
             # System Restore (cmdlet absent on Server Core / non-Windows - guard the lookup)
             $systemRestore = $null
             if (Get-Command Get-ComputerRestorePoint -ErrorAction SilentlyContinue) {
-                $systemRestore = Get-ComputerRestorePoint -ErrorAction SilentlyContinue
+                $systemRestore = @(Get-ComputerRestorePoint -ErrorAction SilentlyContinue)
             }
             if ($systemRestore) {
                 $dataProtection.CategoryScore += 15

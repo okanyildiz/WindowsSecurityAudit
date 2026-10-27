@@ -171,7 +171,12 @@ function Get-AzureADRiskySignIns {
                 
                 if ($Format -in @('CSV', 'All')) {
                     $csvPath = Join-Path $ExportPath "RiskySignIns_$timestamp.csv"
-                    $results.RiskySignIns | Export-Csv $csvPath -NoTypeInformation
+                    $results.RiskySignIns |
+                        Select-Object DetectionId, CreatedDateTime,
+                            @{N='UserPrincipalName';E={Protect-CsvField $_.UserPrincipalName}},
+                            RiskLevel, RiskState, RiskEventType,
+                            @{N='IPAddress';E={Protect-CsvField $_.IPAddress}} |
+                        Export-Csv $csvPath -NoTypeInformation
                     Write-Host "Exported CSV: $csvPath" -ForegroundColor Green
                 }
                 
@@ -275,14 +280,17 @@ function Generate-RiskySignInsHTML {
     foreach ($signIn in ($Results.RiskySignIns | Sort-Object CreatedDateTime -Descending)) {
         $riskClass = $signIn.RiskLevel.ToLower()
         $dateTime = $signIn.CreatedDateTime.ToString('yyyy-MM-dd HH:mm:ss')
-        
+        $userPrincipalName = ConvertTo-HtmlEncoded $signIn.UserPrincipalName
+        $ipAddress = ConvertTo-HtmlEncoded $signIn.IPAddress
+        $riskEventType = ConvertTo-HtmlEncoded $signIn.RiskEventType
+
         $html += @"
                 <tr>
                     <td>$dateTime</td>
-                    <td>$($signIn.UserPrincipalName)</td>
+                    <td>$userPrincipalName</td>
                     <td class="$riskClass">$($signIn.RiskLevel.ToUpper())</td>
-                    <td>$($signIn.IPAddress)</td>
-                    <td>$($signIn.RiskEventType)</td>
+                    <td>$ipAddress</td>
+                    <td>$riskEventType</td>
                 </tr>
 "@
     }

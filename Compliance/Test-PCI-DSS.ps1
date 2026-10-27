@@ -28,6 +28,10 @@ function Test-PCI-DSS {
     )
     
     begin {
+        if ($Version -ne '4.0') {
+            Write-Warning "Version $Version requested; only 4.0 checks are currently implemented"
+            $Version = '4.0'
+        }
         Write-Host "=== PCI-DSS COMPLIANCE TEST ===" -ForegroundColor Cyan
         Write-Host "Start Time: $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')" -ForegroundColor Yellow
         Write-Host "PCI-DSS Version: $Version" -ForegroundColor Yellow
@@ -92,7 +96,14 @@ function Test-PCI-DSS {
                 
                 try {
                     # Req 1.2: Network security controls (firewalls)
-                    $firewallProfiles = Get-NetFirewallProfile -ErrorAction SilentlyContinue
+                    # Gate on Get-Command: CommandNotFoundException ignores
+                    # -ErrorAction SilentlyContinue and would drop all network
+                    # requirements via the catch block below.
+                    $firewallCmdletAvailable = $null -ne (Get-Command Get-NetFirewallProfile -ErrorAction SilentlyContinue)
+                    $firewallProfiles = $null
+                    if ($firewallCmdletAvailable) {
+                        try { $firewallProfiles = Get-NetFirewallProfile -ErrorAction Stop } catch { $firewallProfiles = $null }
+                    }
                     $allFirewallsEnabled = ($null -ne $firewallProfiles) -and (@($firewallProfiles | Where-Object { $null -ne $_ -and -not $_.Enabled }).Count -eq 0)
                     
                     $req = [PSCustomObject]@{
@@ -101,9 +112,11 @@ function Test-PCI-DSS {
                         Category = 'Network'
                         Description = 'Firewalls must be enabled and properly configured'
                         Expected = 'All firewall profiles enabled'
-                        Actual = if ($null -eq $firewallProfiles) { "Unable to retrieve firewall profiles" }
+                        Actual = if (-not $firewallCmdletAvailable) { 'Unable to evaluate — Get-NetFirewallProfile unavailable' }
+                                 elseif ($null -eq $firewallProfiles) { "Unable to retrieve firewall profiles" }
                                  elseif ($allFirewallsEnabled) { "All enabled" } else { "Some disabled" }
-                        Status = if ($allFirewallsEnabled) { 'InPlace' } else { 'NotInPlace' }
+                        Status = if (-not $firewallCmdletAvailable) { 'NotApplicable' }
+                                 elseif ($allFirewallsEnabled) { 'InPlace' } else { 'NotInPlace' }
                         Priority = 'Critical'
                         Remediation = 'Enable all Windows Firewall profiles (Domain, Private, Public)'
                     }
@@ -118,9 +131,11 @@ function Test-PCI-DSS {
                         Category = 'Network'
                         Description = 'Inbound traffic should be denied by default'
                         Expected = 'Default action: Block'
-                        Actual = if ($null -eq $firewallProfiles) { "Unable to retrieve firewall profiles" }
+                        Actual = if (-not $firewallCmdletAvailable) { 'Unable to evaluate — Get-NetFirewallProfile unavailable' }
+                                 elseif ($null -eq $firewallProfiles) { "Unable to retrieve firewall profiles" }
                                  elseif ($defaultInboundBlock.Count -eq 0) { "All blocked" } else { "$($defaultInboundBlock.Count) profiles allow" }
-                        Status = if (($null -ne $firewallProfiles) -and $defaultInboundBlock.Count -eq 0) { 'InPlace' } else { 'NotInPlace' }
+                        Status = if (-not $firewallCmdletAvailable) { 'NotApplicable' }
+                                 elseif (($null -ne $firewallProfiles) -and $defaultInboundBlock.Count -eq 0) { 'InPlace' } else { 'NotInPlace' }
                         Priority = 'High'
                         Remediation = 'Set default inbound action to Block for all profiles'
                     }
@@ -135,8 +150,10 @@ function Test-PCI-DSS {
                         Category = 'Network'
                         Description = 'Public network profile must be restrictive'
                         Expected = 'Public profile enabled and blocking inbound'
-                        Actual = if ($publicProfile) { "Enabled: $($publicProfile.Enabled), Inbound: $($publicProfile.DefaultInboundAction)" } else { "Public profile not found" }
-                        Status = if ($publicProfile -and $publicProfile.Enabled -and $publicProfile.DefaultInboundAction -eq 'Block') { 'InPlace' } else { 'NotInPlace' }
+                        Actual = if (-not $firewallCmdletAvailable) { 'Unable to evaluate — Get-NetFirewallProfile unavailable' }
+                                 elseif ($publicProfile) { "Enabled: $($publicProfile.Enabled), Inbound: $($publicProfile.DefaultInboundAction)" } else { "Public profile not found" }
+                        Status = if (-not $firewallCmdletAvailable) { 'NotApplicable' }
+                                 elseif ($publicProfile -and $publicProfile.Enabled -and $publicProfile.DefaultInboundAction -eq 'Block') { 'InPlace' } else { 'NotInPlace' }
                         Priority = 'High'
                         Remediation = 'Enable Public profile with default inbound block'
                     }
@@ -167,7 +184,13 @@ function Test-PCI-DSS {
                     $results.Requirements += $req
                     
                     # Req 3.5: Primary account number (PAN) protection
-                    $bitlockerStatus = Get-BitLockerVolume -MountPoint "C:" -ErrorAction SilentlyContinue
+                    # Gate on Get-Command: CommandNotFoundException ignores
+                    # -ErrorAction SilentlyContinue and would drop this requirement.
+                    $bitlockerAvailable = $null -ne (Get-Command Get-BitLockerVolume -ErrorAction SilentlyContinue)
+                    $bitlockerStatus = $null
+                    if ($bitlockerAvailable) {
+                        try { $bitlockerStatus = Get-BitLockerVolume -MountPoint "C:" -ErrorAction Stop } catch { $bitlockerStatus = $null }
+                    }
                     $bitlockerEnabled = ($null -ne $bitlockerStatus) -and ($bitlockerStatus.ProtectionStatus -eq 'On')
                     
                     $req = [PSCustomObject]@{
@@ -176,8 +199,10 @@ function Test-PCI-DSS {
                         Category = 'Data'
                         Description = 'PAN must be rendered unreadable (encryption)'
                         Expected = 'Disk encryption enabled (BitLocker)'
-                        Actual = if ($bitlockerEnabled) { "Enabled" } else { "Disabled" }
-                        Status = if ($bitlockerEnabled) { 'InPlace' } else { 'NotInPlace' }
+                        Actual = if (-not $bitlockerAvailable) { 'Unable to evaluate — Get-BitLockerVolume unavailable' }
+                                 elseif ($bitlockerEnabled) { "Enabled" } else { "Disabled" }
+                        Status = if (-not $bitlockerAvailable) { 'NotApplicable' }
+                                 elseif ($bitlockerEnabled) { 'InPlace' } else { 'NotInPlace' }
                         Priority = 'Critical'
                         Remediation = 'Enable BitLocker or third-party disk encryption'
                     }
@@ -337,7 +362,11 @@ function Test-PCI-DSS {
                     $results.Requirements += $req
                     
                     # Req 10.5: Protect audit trails
-                    $securityLog = Get-WinEvent -ListLog Security -ErrorAction SilentlyContinue
+                    $winEventAvailable = $null -ne (Get-Command Get-WinEvent -ErrorAction SilentlyContinue)
+                    $securityLog = $null
+                    if ($winEventAvailable) {
+                        try { $securityLog = Get-WinEvent -ListLog Security -ErrorAction Stop } catch { $securityLog = $null }
+                    }
                     $eventLogSize = if ($securityLog) { $securityLog.MaximumSizeInBytes } else { 0 }
                     
                     $req = [PSCustomObject]@{
@@ -346,15 +375,23 @@ function Test-PCI-DSS {
                         Category = 'Monitoring'
                         Description = 'Audit trails must be secured and retained'
                         Expected = 'Security log >= 100MB'
-                        Actual = "$([math]::Round($eventLogSize/1MB)) MB"
-                        Status = if ($eventLogSize -ge 100MB) { 'InPlace' } else { 'NotInPlace' }
+                        Actual = if (-not $winEventAvailable) { 'Unable to evaluate — Get-WinEvent unavailable' }
+                                 else { "$([math]::Round($eventLogSize/1MB)) MB" }
+                        Status = if (-not $winEventAvailable) { 'NotApplicable' }
+                                 elseif ($eventLogSize -ge 100MB) { 'InPlace' } else { 'NotInPlace' }
                         Priority = 'High'
                         Remediation = 'Increase Security log size to at least 100MB'
                     }
                     $results.Requirements += $req
                     
                     # Req 10.7: Time synchronization
-                    $w32timeService = Get-Service -Name W32Time -ErrorAction SilentlyContinue
+                    # Get-Service is Windows/Linux-only; gate on Get-Command so a
+                    # missing cmdlet cannot drop this requirement via the catch below.
+                    $serviceCmdletAvailable = $null -ne (Get-Command Get-Service -ErrorAction SilentlyContinue)
+                    $w32timeService = $null
+                    if ($serviceCmdletAvailable) {
+                        try { $w32timeService = Get-Service -Name W32Time -ErrorAction Stop } catch { $w32timeService = $null }
+                    }
                     
                     $req = [PSCustomObject]@{
                         RequirementID = '10.7.1'
@@ -362,8 +399,10 @@ function Test-PCI-DSS {
                         Category = 'Monitoring'
                         Description = 'System clocks must be synchronized'
                         Expected = 'Windows Time service running'
-                        Actual = if ($w32timeService) { $w32timeService.Status } else { "Not found" }
-                        Status = if ($w32timeService -and $w32timeService.Status -eq 'Running') { 'InPlace' } else { 'NotInPlace' }
+                        Actual = if (-not $serviceCmdletAvailable) { 'Unable to evaluate — Get-Service unavailable' }
+                                 elseif ($w32timeService) { $w32timeService.Status } else { "Not found" }
+                        Status = if (-not $serviceCmdletAvailable) { 'NotApplicable' }
+                                 elseif ($w32timeService -and $w32timeService.Status -eq 'Running') { 'InPlace' } else { 'NotInPlace' }
                         Priority = 'Medium'
                         Remediation = 'Ensure Windows Time service is running and configured'
                     }
@@ -380,7 +419,13 @@ function Test-PCI-DSS {
                 
                 try {
                     # Req 11.3: Vulnerability scanning
-                    $defenderStatus = Get-MpComputerStatus -ErrorAction SilentlyContinue
+                    # Gate on Get-Command: CommandNotFoundException ignores
+                    # -ErrorAction SilentlyContinue and would drop this requirement.
+                    $mpStatusAvailable = $null -ne (Get-Command Get-MpComputerStatus -ErrorAction SilentlyContinue)
+                    $defenderStatus = $null
+                    if ($mpStatusAvailable) {
+                        try { $defenderStatus = Get-MpComputerStatus -ErrorAction Stop } catch { $defenderStatus = $null }
+                    }
                     $defenderEnabled = ($null -ne $defenderStatus) -and $defenderStatus.AntivirusEnabled
                     
                     $req = [PSCustomObject]@{
@@ -389,8 +434,10 @@ function Test-PCI-DSS {
                         Category = 'Testing'
                         Description = 'Vulnerability scans must be performed'
                         Expected = 'Antivirus enabled'
-                        Actual = if ($defenderEnabled) { "Windows Defender enabled" } else { "Disabled" }
-                        Status = if ($defenderEnabled) { 'InPlace' } else { 'NotInPlace' }
+                        Actual = if (-not $mpStatusAvailable) { 'Unable to evaluate — Get-MpComputerStatus unavailable' }
+                                 elseif ($defenderEnabled) { "Windows Defender enabled" } else { "Disabled" }
+                        Status = if (-not $mpStatusAvailable) { 'NotApplicable' }
+                                 elseif ($defenderEnabled) { 'InPlace' } else { 'NotInPlace' }
                         Priority = 'Critical'
                         Remediation = 'Enable Windows Defender or approved antivirus'
                     }

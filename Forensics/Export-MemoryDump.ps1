@@ -25,7 +25,7 @@ function Export-MemoryDump {
         PSCustomObject with dump file information
     #>
     
-    [CmdletBinding()]
+    [CmdletBinding(SupportsShouldProcess, ConfirmImpact = 'High')]
     param(
         [Parameter()]
         [string]$ProcessName,
@@ -52,17 +52,22 @@ function Export-MemoryDump {
         Write-Host "Dump Type: $DumpType" -ForegroundColor Yellow
         Write-Host "Output Path: $OutputPath" -ForegroundColor Yellow
         
-        # Check if running as Administrator
-        $isAdmin = ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
-        
-        if (-not $isAdmin) {
-            throw "This function requires Administrator privileges!"
+        # Check if running as Administrator (Windows-only check; the WindowsPrincipal
+        # APIs do not exist on other platforms)
+        if ($env:OS -eq 'Windows_NT') {
+            $isAdmin = ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
+            
+            if (-not $isAdmin) {
+                throw "This function requires Administrator privileges!"
+            }
         }
         
         # Create output directory
         if (-not (Test-Path $OutputPath)) {
-            New-Item -Path $OutputPath -ItemType Directory -Force | Out-Null
-            Write-Host "Created output directory: $OutputPath" -ForegroundColor Green
+            if ($PSCmdlet.ShouldProcess($OutputPath, 'Create output directory')) {
+                New-Item -Path $OutputPath -ItemType Directory -Force | Out-Null
+                Write-Host "Created output directory: $OutputPath" -ForegroundColor Green
+            }
         }
         
         $result = [PSCustomObject]@{
@@ -121,6 +126,18 @@ function Export-MemoryDump {
             }
             return $true
         }
+
+        # Pre-create the dump target as an empty, ACL-locked file so the dump content
+        # is never written to a world-readable file (closes the create -> protect race:
+        # writers that open the existing file inherit the locked ACL instead of the
+        # permissive directory default)
+        function Initialize-LockedDumpFile {
+            param([Parameter(Mandatory = $true)][string]$Path)
+            if (-not (Test-Path $Path)) {
+                New-Item -Path $Path -ItemType File -Force | Out-Null
+            }
+            $null = Protect-DumpFile -Path $Path
+        }
     }
     
     process {
@@ -170,6 +187,7 @@ function Export-MemoryDump {
             $timestamp = Get-Date -Format "yyyyMMdd_HHmmss"
             $dumpFileName = "$($targetProcess.ProcessName)_$($targetProcess.Id)_${timestamp}.dmp"
             $dumpFilePath = Join-Path $OutputPath $dumpFileName
+            $dumpTarget = "Process '$($targetProcess.ProcessName)' (PID: $($targetProcess.Id))"
             
             # METHOD 1: Try ProcDump if available and requested
             if ($UseProcDump) {
@@ -202,18 +220,24 @@ function Export-MemoryDump {
                         $dumpFilePath
                     )
                     
-                    try {
-                        $procDumpResult = & $foundProcDump $procDumpArgs 2>&1
-                        
-                        if (Test-Path $dumpFilePath) {
-                            $result.Success = $true
-                            $result.Method = "ProcDump"
-                            $result.DumpFile = $dumpFilePath
-                            Write-Host "  Successfully created dump with ProcDump" -ForegroundColor Green
+                    if ($PSCmdlet.ShouldProcess($dumpTarget, 'Create memory dump')) {
+                        try {
+                            # Pre-create and ACL-lock the empty target so procdump writes
+                            # into an already-locked file
+                            Initialize-LockedDumpFile -Path $dumpFilePath
+                            
+                            $procDumpResult = & $foundProcDump $procDumpArgs 2>&1
+                            
+                            if (Test-Path $dumpFilePath) {
+                                $result.Success = $true
+                                $result.Method = "ProcDump"
+                                $result.DumpFile = $dumpFilePath
+                                Write-Host "  Successfully created dump with ProcDump" -ForegroundColor Green
+                            }
                         }
-                    }
-                    catch {
-                        Write-Warning "ProcDump failed: $_"
+                        catch {
+                            Write-Warning "ProcDump failed: $_"
+                        }
                     }
                 }
                 else {
@@ -222,7 +246,7 @@ function Export-MemoryDump {
             }
             
             # METHOD 2: Use MiniDumpWriteDump with proper handle
-            if (-not $result.Success) {
+            if (-not $result.Success -and $PSCmdlet.ShouldProcess($dumpTarget, 'Create memory dump')) {
                 Write-Host "`n[2/3] Attempting MiniDumpWriteDump method..." -ForegroundColor Cyan
                 
                 $processHandle = [IntPtr]::Zero
@@ -279,7 +303,10 @@ public class ProcessDump {
                     
                     Write-Host "  Process handle obtained successfully" -ForegroundColor Green
                     
-                    # Create dump file
+                    # Create dump file: pre-create and ACL-lock the empty target first
+                    # so the dump content is written into an already-locked file
+                    # (File::Create on an existing file preserves its security descriptor)
+                    Initialize-LockedDumpFile -Path $dumpFilePath
                     $fileStream = [System.IO.File]::Create($dumpFilePath)
                     
                     # Determine dump type flag
@@ -334,7 +361,7 @@ public class ProcessDump {
             }
             
             # METHOD 3: Use rundll32.exe comsvcs.dll method (LSASS specific)
-            if (-not $result.Success -and $DumpType -eq 'LSASS') {
+            if (-not $result.Success -and $DumpType -eq 'LSASS' -and $PSCmdlet.ShouldProcess($dumpTarget, 'Create memory dump (LSASS)')) {
                 Write-Host "`n[3/3] Attempting comsvcs.dll method (LSASS specific)..." -ForegroundColor Cyan
                 
                 try {
@@ -352,7 +379,10 @@ public class ProcessDump {
                             "full"
                         )
                         
-                        # Run elevated
+                        # Run elevated (the target file was pre-created and ACL-locked,
+                        # so the elevated writer inherits the locked ACL on write)
+                        Initialize-LockedDumpFile -Path $dumpFilePath
+                        
                         $psi = New-Object System.Diagnostics.ProcessStartInfo
                         $psi.FileName = "rundll32.exe"
                         $psi.Arguments = $arguments -join ' '

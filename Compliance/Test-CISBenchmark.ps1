@@ -28,6 +28,10 @@ function Test-CISBenchmark {
     )
     
     begin {
+        if ($Level -ne 1) {
+            Write-Warning "Level $Level requested; only Level 1 checks are currently implemented"
+            $Level = 1
+        }
         Write-Host "=== CIS BENCHMARK COMPLIANCE TEST ===" -ForegroundColor Cyan
         Write-Host "Start Time: $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')" -ForegroundColor Yellow
         Write-Host "CIS Level: $Level" -ForegroundColor Yellow
@@ -126,98 +130,127 @@ function Test-CISBenchmark {
                 Write-Host "`n[1/5] Testing Password Policy Controls..." -ForegroundColor Cyan
                 
                 try {
-                    # Export security policy
-                    $tempFile = "$env:TEMP\secpol_$(Get-Random).cfg"
-                    $null = secedit /export /cfg $tempFile /quiet
-                    Start-Sleep -Milliseconds 500
-                    
-                    if (Test-Path $tempFile) {
-                        $secpolContent = Get-Content $tempFile -Raw
-                        
-                        # CIS 1.1.1 - Password History
-                        $passwordHistory = Get-SecEditValue -Content $secpolContent -Setting "PasswordHistorySize"
-                        if ($passwordHistory) {
+                    # Export security policy. secedit is Windows-only; when it is
+                    # missing or the export fails, emit the controls as Manual instead
+                    # of silently dropping them (the per-setting 'if ($value)' guards
+                    # below used to skip controls with no warning).
+                    $seceditCmd = Get-Command 'secedit.exe' -ErrorAction SilentlyContinue
+                    if ($null -eq $seceditCmd) { $seceditCmd = Get-Command 'secedit' -ErrorAction SilentlyContinue }
+
+                    $secpolContent = $null
+                    if ($null -ne $seceditCmd) {
+                        $tempFile = Join-Path -Path ([System.IO.Path]::GetTempPath()) -ChildPath "secpol_$(Get-Random).cfg"
+                        try {
+                            $null = & $seceditCmd.Source /export /cfg $tempFile /quiet 2>&1
+                            Start-Sleep -Milliseconds 500
+                            if (Test-Path $tempFile) {
+                                $secpolContent = Get-Content $tempFile -Raw
+                            }
+                        }
+                        catch {
+                            Write-Warning "Could not export security policy: $_"
+                        }
+                        finally {
+                            if (Test-Path $tempFile -ErrorAction SilentlyContinue) {
+                                Remove-Item $tempFile -Force -ErrorAction SilentlyContinue
+                            }
+                        }
+                    }
+
+                    if ($null -eq $secpolContent) {
+                        Write-Warning "Could not export security policy; password policy controls require manual review"
+                        $manualSpecs = @(
+                            @{ ControlID = 'CIS-1.1.1'; ControlName = 'Enforce password history'; Expected = '24 or more passwords'; Severity = 'High'; Remediation = 'Set to 24 or more passwords remembered' }
+                            @{ ControlID = 'CIS-1.1.2'; ControlName = 'Maximum password age'; Expected = '365 or fewer days (but not 0)'; Severity = 'High'; Remediation = 'Set to 365 or fewer days' }
+                            @{ ControlID = 'CIS-1.1.3'; ControlName = 'Minimum password age'; Expected = '1 or more days'; Severity = 'Medium'; Remediation = 'Set to 1 or more days' }
+                            @{ ControlID = 'CIS-1.1.4'; ControlName = 'Minimum password length'; Expected = '14 or more characters'; Severity = 'High'; Remediation = 'Set to 14 or more characters' }
+                            @{ ControlID = 'CIS-1.1.5'; ControlName = 'Password must meet complexity requirements'; Expected = 'Enabled'; Severity = 'Critical'; Remediation = 'Enable password complexity requirements' }
+                        )
+                        foreach ($spec in $manualSpecs) {
                             $control = [PSCustomObject]@{
-                                ControlID = 'CIS-1.1.1'
-                                ControlName = 'Enforce password history'
+                                ControlID = $spec.ControlID
+                                ControlName = $spec.ControlName
                                 Category = 'PasswordPolicy'
-                                Expected = '24 or more passwords'
-                                Actual = "$passwordHistory passwords"
-                                Status = if ([int]$passwordHistory -ge 24) { 'Pass' } else { 'Fail' }
-                                Severity = 'High'
-                                Remediation = 'Set to 24 or more passwords remembered'
+                                Expected = $spec.Expected
+                                Actual = 'Unable to evaluate — secedit export unavailable'
+                                Status = 'Manual'
+                                Severity = $spec.Severity
+                                Remediation = $spec.Remediation
                             }
                             $results.Controls += $control
                         }
-                        
-                        # CIS 1.1.2 - Maximum password age
-                        $maxPasswordAge = Get-SecEditValue -Content $secpolContent -Setting "MaximumPasswordAge"
-                        if ($maxPasswordAge) {
-                            $control = [PSCustomObject]@{
-                                ControlID = 'CIS-1.1.2'
-                                ControlName = 'Maximum password age'
-                                Category = 'PasswordPolicy'
-                                Expected = '365 or fewer days (but not 0)'
-                                Actual = "$maxPasswordAge days"
-                                Status = if ([int]$maxPasswordAge -le 365 -and [int]$maxPasswordAge -gt 0) { 'Pass' } else { 'Fail' }
-                                Severity = 'High'
-                                Remediation = 'Set to 365 or fewer days'
-                            }
-                            $results.Controls += $control
-                        }
-                        
-                        # CIS 1.1.3 - Minimum password age
-                        $minPasswordAge = Get-SecEditValue -Content $secpolContent -Setting "MinimumPasswordAge"
-                        if ($minPasswordAge) {
-                            $control = [PSCustomObject]@{
-                                ControlID = 'CIS-1.1.3'
-                                ControlName = 'Minimum password age'
-                                Category = 'PasswordPolicy'
-                                Expected = '1 or more days'
-                                Actual = "$minPasswordAge days"
-                                Status = if ([int]$minPasswordAge -ge 1) { 'Pass' } else { 'Fail' }
-                                Severity = 'Medium'
-                                Remediation = 'Set to 1 or more days'
-                            }
-                            $results.Controls += $control
-                        }
-                        
-                        # CIS 1.1.4 - Minimum password length
-                        $minPasswordLength = Get-SecEditValue -Content $secpolContent -Setting "MinimumPasswordLength"
-                        if ($minPasswordLength) {
-                            $control = [PSCustomObject]@{
-                                ControlID = 'CIS-1.1.4'
-                                ControlName = 'Minimum password length'
-                                Category = 'PasswordPolicy'
-                                Expected = '14 or more characters'
-                                Actual = "$minPasswordLength characters"
-                                Status = if ([int]$minPasswordLength -ge 14) { 'Pass' } else { 'Fail' }
-                                Severity = 'High'
-                                Remediation = 'Set to 14 or more characters'
-                            }
-                            $results.Controls += $control
-                        }
-                        
-                        # CIS 1.1.5 - Password complexity
-                        $passwordComplexity = Get-SecEditValue -Content $secpolContent -Setting "PasswordComplexity"
-                        if ($passwordComplexity) {
-                            $control = [PSCustomObject]@{
-                                ControlID = 'CIS-1.1.5'
-                                ControlName = 'Password must meet complexity requirements'
-                                Category = 'PasswordPolicy'
-                                Expected = 'Enabled'
-                                Actual = if ($passwordComplexity -eq '1') { 'Enabled' } else { 'Disabled' }
-                                Status = if ($passwordComplexity -eq '1') { 'Pass' } else { 'Fail' }
-                                Severity = 'Critical'
-                                Remediation = 'Enable password complexity requirements'
-                            }
-                            $results.Controls += $control
-                        }
-                        
-                        Remove-Item $tempFile -Force -ErrorAction SilentlyContinue
                     }
                     else {
-                        Write-Warning "Could not export security policy"
+                        # CIS 1.1.1 - Password History
+                        $passwordHistory = Get-SecEditValue -Content $secpolContent -Setting "PasswordHistorySize"
+                        $control = [PSCustomObject]@{
+                            ControlID = 'CIS-1.1.1'
+                            ControlName = 'Enforce password history'
+                            Category = 'PasswordPolicy'
+                            Expected = '24 or more passwords'
+                            Actual = if ($null -ne $passwordHistory) { "$passwordHistory passwords" } else { 'Unable to evaluate — setting missing from secedit export' }
+                            Status = if ($null -eq $passwordHistory) { 'Manual' } elseif ([int]$passwordHistory -ge 24) { 'Pass' } else { 'Fail' }
+                            Severity = 'High'
+                            Remediation = 'Set to 24 or more passwords remembered'
+                        }
+                        $results.Controls += $control
+
+                        # CIS 1.1.2 - Maximum password age
+                        $maxPasswordAge = Get-SecEditValue -Content $secpolContent -Setting "MaximumPasswordAge"
+                        $control = [PSCustomObject]@{
+                            ControlID = 'CIS-1.1.2'
+                            ControlName = 'Maximum password age'
+                            Category = 'PasswordPolicy'
+                            Expected = '365 or fewer days (but not 0)'
+                            Actual = if ($null -ne $maxPasswordAge) { "$maxPasswordAge days" } else { 'Unable to evaluate — setting missing from secedit export' }
+                            Status = if ($null -eq $maxPasswordAge) { 'Manual' } elseif ([int]$maxPasswordAge -le 365 -and [int]$maxPasswordAge -gt 0) { 'Pass' } else { 'Fail' }
+                            Severity = 'High'
+                            Remediation = 'Set to 365 or fewer days'
+                        }
+                        $results.Controls += $control
+
+                        # CIS 1.1.3 - Minimum password age
+                        $minPasswordAge = Get-SecEditValue -Content $secpolContent -Setting "MinimumPasswordAge"
+                        $control = [PSCustomObject]@{
+                            ControlID = 'CIS-1.1.3'
+                            ControlName = 'Minimum password age'
+                            Category = 'PasswordPolicy'
+                            Expected = '1 or more days'
+                            Actual = if ($null -ne $minPasswordAge) { "$minPasswordAge days" } else { 'Unable to evaluate — setting missing from secedit export' }
+                            Status = if ($null -eq $minPasswordAge) { 'Manual' } elseif ([int]$minPasswordAge -ge 1) { 'Pass' } else { 'Fail' }
+                            Severity = 'Medium'
+                            Remediation = 'Set to 1 or more days'
+                        }
+                        $results.Controls += $control
+
+                        # CIS 1.1.4 - Minimum password length
+                        $minPasswordLength = Get-SecEditValue -Content $secpolContent -Setting "MinimumPasswordLength"
+                        $control = [PSCustomObject]@{
+                            ControlID = 'CIS-1.1.4'
+                            ControlName = 'Minimum password length'
+                            Category = 'PasswordPolicy'
+                            Expected = '14 or more characters'
+                            Actual = if ($null -ne $minPasswordLength) { "$minPasswordLength characters" } else { 'Unable to evaluate — setting missing from secedit export' }
+                            Status = if ($null -eq $minPasswordLength) { 'Manual' } elseif ([int]$minPasswordLength -ge 14) { 'Pass' } else { 'Fail' }
+                            Severity = 'High'
+                            Remediation = 'Set to 14 or more characters'
+                        }
+                        $results.Controls += $control
+
+                        # CIS 1.1.5 - Password complexity
+                        $passwordComplexity = Get-SecEditValue -Content $secpolContent -Setting "PasswordComplexity"
+                        $control = [PSCustomObject]@{
+                            ControlID = 'CIS-1.1.5'
+                            ControlName = 'Password must meet complexity requirements'
+                            Category = 'PasswordPolicy'
+                            Expected = 'Enabled'
+                            Actual = if ($null -eq $passwordComplexity) { 'Unable to evaluate — setting missing from secedit export' }
+                                     elseif ($passwordComplexity -eq '1') { 'Enabled' } else { 'Disabled' }
+                            Status = if ($null -eq $passwordComplexity) { 'Manual' } elseif ($passwordComplexity -eq '1') { 'Pass' } else { 'Fail' }
+                            Severity = 'Critical'
+                            Remediation = 'Enable password complexity requirements'
+                        }
+                        $results.Controls += $control
                     }
                 }
                 catch {
@@ -387,9 +420,31 @@ function Test-CISBenchmark {
                 Write-Host "`n[4/5] Testing Windows Firewall..." -ForegroundColor Cyan
                 
                 try {
-                    $firewallProfiles = Get-NetFirewallProfile -ErrorAction SilentlyContinue
-                    
-                    foreach ($profile in $firewallProfiles) {
+                    # Gate on Get-Command: CommandNotFoundException ignores
+                    # -ErrorAction SilentlyContinue; an empty result must not silently
+                    # produce zero CIS-9.x controls.
+                    $firewallCmdletAvailable = $null -ne (Get-Command Get-NetFirewallProfile -ErrorAction SilentlyContinue)
+                    $firewallProfiles = $null
+                    if ($firewallCmdletAvailable) {
+                        try { $firewallProfiles = @(Get-NetFirewallProfile -ErrorAction Stop) } catch { $firewallProfiles = $null }
+                    }
+
+                    if (-not $firewallCmdletAvailable -or @($firewallProfiles).Count -eq 0) {
+                        Write-Warning "Unable to retrieve firewall profiles; firewall controls require manual review"
+                        $control = [PSCustomObject]@{
+                            ControlID = 'CIS-9.1.1'
+                            ControlName = 'Windows Firewall: Firewall state'
+                            Category = 'WindowsFirewall'
+                            Expected = 'On'
+                            Actual = 'Unable to evaluate — Get-NetFirewallProfile unavailable or returned no profiles'
+                            Status = 'Manual'
+                            Severity = 'Critical'
+                            Remediation = 'Verify Windows Firewall is enabled for all profiles'
+                        }
+                        $results.Controls += $control
+                    }
+                    else {
+                        foreach ($profile in $firewallProfiles) {
                         # CIS 9.1.1 - Domain Profile Firewall State
                         $control = [PSCustomObject]@{
                             ControlID = "CIS-9.$($profile.Name).1"
@@ -415,6 +470,7 @@ function Test-CISBenchmark {
                             Remediation = "Set inbound connections to Block for $($profile.Name)"
                         }
                         $results.Controls += $control
+                        }
                     }
                 }
                 catch {

@@ -88,6 +88,16 @@ function Invoke-ForensicCollection {
             Add-Content -Path $logFile -Value $logMessage
             Write-Verbose $Message
         }
+
+        # Projects each row to a plain object with string fields escaped against
+        # CSV formula injection (Protect-CsvField) before Export-Csv
+        filter Protect-CsvRowFields {
+            $escaped = [ordered]@{}
+            foreach ($prop in $_.PSObject.Properties) {
+                $escaped[$prop.Name] = if ($prop.Value -is [string]) { Protect-CsvField $prop.Value } else { $prop.Value }
+            }
+            [PSCustomObject]$escaped
+        }
         
         Write-CollectionLog "Forensic collection initiated - Type: $CollectionType"
     }
@@ -107,11 +117,11 @@ function Invoke-ForensicCollection {
                 Get-ComputerInfo | ConvertTo-Json -Depth 5 | Out-File (Join-Path $sysInfoPath "ComputerInfo.json") -Encoding UTF8
                 
                 # Environment variables
-                Get-ChildItem Env: | Export-Csv (Join-Path $sysInfoPath "EnvironmentVariables.csv") -NoTypeInformation
-                
+                Get-ChildItem Env: | Protect-CsvRowFields | Export-Csv (Join-Path $sysInfoPath "EnvironmentVariables.csv") -NoTypeInformation
+
                 # Local users and groups
-                Get-LocalUser | Export-Csv (Join-Path $sysInfoPath "LocalUsers.csv") -NoTypeInformation
-                Get-LocalGroup | Export-Csv (Join-Path $sysInfoPath "LocalGroups.csv") -NoTypeInformation
+                Get-LocalUser | Protect-CsvRowFields | Export-Csv (Join-Path $sysInfoPath "LocalUsers.csv") -NoTypeInformation
+                Get-LocalGroup | Protect-CsvRowFields | Export-Csv (Join-Path $sysInfoPath "LocalGroups.csv") -NoTypeInformation
                 
                 $results.ArtifactsCollected += "System Information"
                 Write-CollectionLog "Collected system information"
@@ -128,6 +138,7 @@ function Invoke-ForensicCollection {
                 
                 # Process list with details
                 Get-Process | Select-Object Name, Id, Path, CommandLine, StartTime, CPU, WorkingSet64, Threads |
+                    Protect-CsvRowFields |
                     Export-Csv (Join-Path $procPath "Processes.csv") -NoTypeInformation
                 
                 # Process modules
@@ -139,15 +150,16 @@ function Invoke-ForensicCollection {
                                                    ModuleName, FileName, Size
                     } catch {}
                 }
-                $procModules | Export-Csv (Join-Path $procPath "ProcessModules.csv") -NoTypeInformation
-                
+                $procModules | Protect-CsvRowFields | Export-Csv (Join-Path $procPath "ProcessModules.csv") -NoTypeInformation
+
                 # Services
-                Get-Service | Export-Csv (Join-Path $procPath "Services.csv") -NoTypeInformation
+                Get-Service | Protect-CsvRowFields | Export-Csv (Join-Path $procPath "Services.csv") -NoTypeInformation
                 Get-CimInstance Win32_Service | Select-Object Name, DisplayName, PathName, StartMode, State, StartName |
+                    Protect-CsvRowFields |
                     Export-Csv (Join-Path $procPath "ServicesDetailed.csv") -NoTypeInformation
-                
+
                 # Scheduled tasks
-                Get-ScheduledTask | Export-Csv (Join-Path $procPath "ScheduledTasks.csv") -NoTypeInformation
+                Get-ScheduledTask | Protect-CsvRowFields | Export-Csv (Join-Path $procPath "ScheduledTasks.csv") -NoTypeInformation
                 
                 $results.ArtifactsCollected += "Process Information"
                 Write-CollectionLog "Collected process information"
@@ -163,27 +175,27 @@ function Invoke-ForensicCollection {
                 $netPath = Join-Path $collectionPath 'Network'
                 
                 # Network adapters
-                Get-NetAdapter | Export-Csv (Join-Path $netPath "NetworkAdapters.csv") -NoTypeInformation
-                Get-NetIPAddress | Export-Csv (Join-Path $netPath "IPAddresses.csv") -NoTypeInformation
-                Get-NetRoute | Export-Csv (Join-Path $netPath "Routes.csv") -NoTypeInformation
-                
+                Get-NetAdapter | Protect-CsvRowFields | Export-Csv (Join-Path $netPath "NetworkAdapters.csv") -NoTypeInformation
+                Get-NetIPAddress | Protect-CsvRowFields | Export-Csv (Join-Path $netPath "IPAddresses.csv") -NoTypeInformation
+                Get-NetRoute | Protect-CsvRowFields | Export-Csv (Join-Path $netPath "Routes.csv") -NoTypeInformation
+
                 # Active connections
-                Get-NetTCPConnection | Export-Csv (Join-Path $netPath "TCPConnections.csv") -NoTypeInformation
-                Get-NetUDPEndpoint | Export-Csv (Join-Path $netPath "UDPEndpoints.csv") -NoTypeInformation
-                
+                Get-NetTCPConnection | Protect-CsvRowFields | Export-Csv (Join-Path $netPath "TCPConnections.csv") -NoTypeInformation
+                Get-NetUDPEndpoint | Protect-CsvRowFields | Export-Csv (Join-Path $netPath "UDPEndpoints.csv") -NoTypeInformation
+
                 # DNS cache
-                Get-DnsClientCache | Export-Csv (Join-Path $netPath "DNSCache.csv") -NoTypeInformation
-                
+                Get-DnsClientCache | Protect-CsvRowFields | Export-Csv (Join-Path $netPath "DNSCache.csv") -NoTypeInformation
+
                 # Firewall rules
-                Get-NetFirewallRule | Export-Csv (Join-Path $netPath "FirewallRules.csv") -NoTypeInformation
-                Get-NetFirewallProfile | Export-Csv (Join-Path $netPath "FirewallProfiles.csv") -NoTypeInformation
-                
+                Get-NetFirewallRule | Protect-CsvRowFields | Export-Csv (Join-Path $netPath "FirewallRules.csv") -NoTypeInformation
+                Get-NetFirewallProfile | Protect-CsvRowFields | Export-Csv (Join-Path $netPath "FirewallProfiles.csv") -NoTypeInformation
+
                 # ARP cache
-                Get-NetNeighbor | Export-Csv (Join-Path $netPath "ARPCache.csv") -NoTypeInformation
-                
+                Get-NetNeighbor | Protect-CsvRowFields | Export-Csv (Join-Path $netPath "ARPCache.csv") -NoTypeInformation
+
                 # Network shares
-                Get-SmbShare | Export-Csv (Join-Path $netPath "Shares.csv") -NoTypeInformation
-                Get-SmbSession | Export-Csv (Join-Path $netPath "SMBSessions.csv") -NoTypeInformation
+                Get-SmbShare | Protect-CsvRowFields | Export-Csv (Join-Path $netPath "Shares.csv") -NoTypeInformation
+                Get-SmbSession | Protect-CsvRowFields | Export-Csv (Join-Path $netPath "SMBSessions.csv") -NoTypeInformation
                 
                 $results.ArtifactsCollected += "Network Information"
                 Write-CollectionLog "Collected network information"
@@ -202,21 +214,25 @@ function Invoke-ForensicCollection {
                     # Security events (last 7 days)
                     Get-WinEvent -FilterHashtable @{LogName='Security'; StartTime=(Get-Date).AddDays(-7)} -MaxEvents 10000 -ErrorAction SilentlyContinue |
                         Select-Object TimeCreated, Id, LevelDisplayName, Message |
+                        Protect-CsvRowFields |
                         Export-Csv (Join-Path $eventPath "Security_Recent.csv") -NoTypeInformation
-                    
+
                     # System events (last 7 days)
                     Get-WinEvent -FilterHashtable @{LogName='System'; StartTime=(Get-Date).AddDays(-7)} -MaxEvents 10000 -ErrorAction SilentlyContinue |
                         Select-Object TimeCreated, Id, LevelDisplayName, Message |
+                        Protect-CsvRowFields |
                         Export-Csv (Join-Path $eventPath "System_Recent.csv") -NoTypeInformation
-                    
+
                     # Application events (last 7 days)
                     Get-WinEvent -FilterHashtable @{LogName='Application'; StartTime=(Get-Date).AddDays(-7)} -MaxEvents 10000 -ErrorAction SilentlyContinue |
                         Select-Object TimeCreated, Id, LevelDisplayName, Message |
+                        Protect-CsvRowFields |
                         Export-Csv (Join-Path $eventPath "Application_Recent.csv") -NoTypeInformation
-                    
+
                     # PowerShell logs
                     Get-WinEvent -FilterHashtable @{LogName='Microsoft-Windows-PowerShell/Operational'; StartTime=(Get-Date).AddDays(-7)} -MaxEvents 5000 -ErrorAction SilentlyContinue |
                         Select-Object TimeCreated, Id, Message |
+                        Protect-CsvRowFields |
                         Export-Csv (Join-Path $eventPath "PowerShell_Recent.csv") -NoTypeInformation
                     
                     $results.ArtifactsCollected += "Event Logs"
@@ -250,18 +266,18 @@ function Invoke-ForensicCollection {
                             Get-ItemProperty -Path $key | Select-Object PSPath, PSChildName, *
                         }
                     }
-                    $runEntries | Export-Csv (Join-Path $regPath "RunKeys.csv") -NoTypeInformation
-                    
+                    $runEntries | Protect-CsvRowFields | Export-Csv (Join-Path $regPath "RunKeys.csv") -NoTypeInformation
+
                     # Installed software
                     $software = Get-ItemProperty HKLM:\Software\Microsoft\Windows\CurrentVersion\Uninstall\* |
                         Where-Object { $_.DisplayName } |
                         Select-Object DisplayName, Publisher, InstallDate, DisplayVersion
-                    $software | Export-Csv (Join-Path $regPath "InstalledSoftware.csv") -NoTypeInformation
-                    
+                    $software | Protect-CsvRowFields | Export-Csv (Join-Path $regPath "InstalledSoftware.csv") -NoTypeInformation
+
                     # USB history
                     $usb = Get-ItemProperty HKLM:\SYSTEM\CurrentControlSet\Enum\USBSTOR\* -ErrorAction SilentlyContinue |
                         Select-Object PSChildName, FriendlyName
-                    $usb | Export-Csv (Join-Path $regPath "USBHistory.csv") -NoTypeInformation
+                    $usb | Protect-CsvRowFields | Export-Csv (Join-Path $regPath "USBHistory.csv") -NoTypeInformation
                     
                     $results.ArtifactsCollected += "Registry Artifacts"
                     Write-CollectionLog "Collected registry artifacts"
@@ -290,21 +306,23 @@ function Invoke-ForensicCollection {
                                 Select-Object FullName, Name, Length, CreationTime, LastWriteTime
                         }
                     }
-                    $recentFiles | Export-Csv (Join-Path $fsPath "RecentTempFiles.csv") -NoTypeInformation
-                    
+                    $recentFiles | Protect-CsvRowFields | Export-Csv (Join-Path $fsPath "RecentTempFiles.csv") -NoTypeInformation
+
                     # Prefetch files
                     if (Test-Path "$env:SystemRoot\Prefetch") {
                         Get-ChildItem "$env:SystemRoot\Prefetch" -Filter *.pf |
                             Select-Object Name, Length, CreationTime, LastWriteTime, LastAccessTime |
+                            Protect-CsvRowFields |
                             Export-Csv (Join-Path $fsPath "Prefetch.csv") -NoTypeInformation
                     }
-                    
+
                     # Recent downloads
                     $downloadsPath = "$env:USERPROFILE\Downloads"
                     if (Test-Path $downloadsPath) {
                         Get-ChildItem $downloadsPath -File -Recurse -ErrorAction SilentlyContinue |
                             Where-Object { $_.LastWriteTime -gt (Get-Date).AddDays(-30) } |
                             Select-Object FullName, Name, Length, CreationTime, LastWriteTime |
+                            Protect-CsvRowFields |
                             Export-Csv (Join-Path $fsPath "RecentDownloads.csv") -NoTypeInformation
                     }
                     
@@ -419,6 +437,7 @@ if ($null -ne (Get-Variable -Name 'recentFiles' -ErrorAction SilentlyContinue) -
 
                 
                 $timeline | Sort-Object Timestamp -Descending |
+                    Protect-CsvRowFields |
                     Export-Csv (Join-Path $timelinePath "Timeline.csv") -NoTypeInformation
                 
                 $results.ArtifactsCollected += "Timeline"
@@ -445,7 +464,7 @@ if ($null -ne (Get-Variable -Name 'recentFiles' -ErrorAction SilentlyContinue) -
                     Size = $_.Length
                 }
             }
-            $hashManifest | Export-Csv (Join-Path $collectionPath "HashManifest.csv") -NoTypeInformation
+            $hashManifest | Protect-CsvRowFields | Export-Csv (Join-Path $collectionPath "HashManifest.csv") -NoTypeInformation
             
             Write-CollectionLog "Collection completed successfully"
             

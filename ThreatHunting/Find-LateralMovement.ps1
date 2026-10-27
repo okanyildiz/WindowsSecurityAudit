@@ -61,6 +61,14 @@ function Find-LateralMovement {
                 SuspiciousAuthentication = @()
                 SMBAccess = @()
             }
+            # Per-section truncation flags: set when a Get-WinEvent query returns
+            # exactly its -MaxEvents cap (meaning more matching events likely exist)
+            Truncated = @{
+                NetworkConnections = $false
+                RemoteExecution = $false
+                SuspiciousAuthentication = $false
+                SMBAccess = $false
+            }
             Summary = @{
                 TotalIndicators = 0
                 CriticalFindings = 0
@@ -149,11 +157,19 @@ function Find-LateralMovement {
                 
                 try {
                     # Check for PSRemoting activity (Event ID 4648 - Explicit credential logon)
-                    $remoteEvents = Get-WinEvent -FilterHashtable @{
+                    $maxRemoteEvents = 100
+                    $remoteEvents = @(Get-WinEvent -FilterHashtable @{
                         LogName = 'Security'
                         ID = 4648
                         StartTime = $startDate
-                    } -MaxEvents 100 -ErrorAction SilentlyContinue
+                    } -MaxEvents $maxRemoteEvents -ErrorAction SilentlyContinue)
+
+                    # Get-WinEvent returns exactly MaxEvents when more matching
+                    # events exist - flag the cap instead of silently truncating
+                    if ($remoteEvents.Count -ge $maxRemoteEvents) {
+                        $results.Truncated.RemoteExecution = $true
+                        Write-Warning "Remote execution check (Event ID 4648) hit the $maxRemoteEvents-event cap - results are likely TRUNCATED. Narrow -Days for complete coverage."
+                    }
                     
                     if ($remoteEvents) {
                         $groupedEvents = $remoteEvents | Group-Object -Property { 
@@ -201,11 +217,19 @@ function Find-LateralMovement {
                 
                 try {
                     # Event ID 4624 - Successful logon (Type 3 = Network, Type 10 = RemoteInteractive/RDP)
-                    $logonEvents = Get-WinEvent -FilterHashtable @{
+                    $maxLogonEvents = 500
+                    $logonEvents = @(Get-WinEvent -FilterHashtable @{
                         LogName = 'Security'
                         ID = 4624
                         StartTime = $startDate
-                    } -MaxEvents 500 -ErrorAction SilentlyContinue
+                    } -MaxEvents $maxLogonEvents -ErrorAction SilentlyContinue)
+
+                    # Get-WinEvent returns exactly MaxEvents when more matching
+                    # events exist - flag the cap instead of silently truncating
+                    if ($logonEvents.Count -ge $maxLogonEvents) {
+                        $results.Truncated.SuspiciousAuthentication = $true
+                        Write-Warning "Authentication check (Event ID 4624) hit the $maxLogonEvents-event cap - results are likely TRUNCATED. Narrow -Days for complete coverage."
+                    }
                     
                     if ($logonEvents) {
                         # Filter for Type 3 (Network) and Type 10 (RemoteInteractive)
@@ -273,11 +297,19 @@ function Find-LateralMovement {
                 
                 try {
                     # Event ID 5140 - Network share object accessed
-                    $shareEvents = Get-WinEvent -FilterHashtable @{
+                    $maxShareEvents = 200
+                    $shareEvents = @(Get-WinEvent -FilterHashtable @{
                         LogName = 'Security'
                         ID = 5140
                         StartTime = $startDate
-                    } -MaxEvents 200 -ErrorAction SilentlyContinue
+                    } -MaxEvents $maxShareEvents -ErrorAction SilentlyContinue)
+
+                    # Get-WinEvent returns exactly MaxEvents when more matching
+                    # events exist - flag the cap instead of silently truncating
+                    if ($shareEvents.Count -ge $maxShareEvents) {
+                        $results.Truncated.SMBAccess = $true
+                        Write-Warning "SMB share access check (Event ID 5140) hit the $maxShareEvents-event cap - results are likely TRUNCATED. Narrow -Days for complete coverage."
+                    }
                     
                     if ($shareEvents) {
                         # Split share access: admin/hidden shares (IPC$, ADMIN$, C$, ...)
@@ -399,6 +431,12 @@ function Find-LateralMovement {
         Write-Host "  High: $($results.Summary.HighFindings)" -ForegroundColor Yellow
         Write-Host "  Medium: $($results.Summary.MediumFindings)" -ForegroundColor Yellow
         Write-Host "  Low: $($results.Summary.LowFindings)" -ForegroundColor White
+
+        $truncatedSections = @($results.Truncated.GetEnumerator() | Where-Object { $_.Value } | ForEach-Object { $_.Key })
+        if ($truncatedSections.Count -gt 0) {
+            Write-Host "  TRUNCATED (event cap hit, partial data): $($truncatedSections -join ', ')" -ForegroundColor Red
+            $results.Recommendations += "Event log queries hit their -MaxEvents cap in: $($truncatedSections -join ', ') - narrow -Days and re-run for complete coverage"
+        }
         
         if ($results.Summary.TotalIndicators -gt 0) {
             Write-Host "`nIndicator Breakdown:" -ForegroundColor Cyan

@@ -1,11 +1,71 @@
+function Add-M365Finding {
+    <#
+    .SYNOPSIS
+        Records a single M365 posture finding and updates summary counters.
+        'NotEvaluated' findings are tracked separately and never enter the score.
+    #>
+    param(
+        [Parameter(Mandatory)]
+        $Results,
+
+        [Parameter(Mandatory)]
+        [string]$Name,
+
+        [Parameter(Mandatory)]
+        [string]$Category,
+
+        [Parameter(Mandatory)]
+        [string]$Severity,
+
+        [Parameter(Mandatory)]
+        [ValidateSet('Pass', 'Fail', 'Warning', 'NotEvaluated')]
+        [string]$Status,
+
+        [string]$Actual = "",
+        [string]$Expected = ""
+    )
+
+    $Results.SecurityFindings += [PSCustomObject]@{
+        Name     = $Name
+        Category = $Category
+        Status   = $Status
+        Severity = $Severity
+        Actual   = $Actual
+        Expected = $Expected
+    }
+
+    if ($Status -eq 'NotEvaluated') {
+        $Results.Summary.NotEvaluated++
+        return
+    }
+
+    $Results.Summary.TotalChecks++
+    switch ($Status) {
+        'Pass' { $Results.Summary.Passed++ }
+        'Fail' {
+            $Results.Summary.Failed++
+            if ($Severity -eq 'Critical') {
+                $Results.Summary.CriticalIssues++
+            }
+        }
+        'Warning' { $Results.Summary.Warnings++ }
+    }
+}
+
 function Test-M365SecurityPosture {
     <#
     .SYNOPSIS
         Assesses Microsoft 365 security configuration
     
     .DESCRIPTION
-        Performs comprehensive security assessment of Microsoft 365 including
-        Exchange Online, SharePoint, Teams, and Conditional Access
+        Performs a security assessment of Microsoft 365 against live tenant data
+        retrieved via Microsoft Graph (Conditional Access policies, security
+        defaults). Checks whose configuration is not exposed through Microsoft
+        Graph (Exchange Online, SharePoint, Teams workload settings) are reported
+        as NotEvaluated with the API required to assess them — results are never
+        fabricated. The compliance score is computed over evaluated checks only;
+        if no check could be evaluated, OverallScore is $null and OverallStatus
+        is 'NotEvaluated'.
     
     .PARAMETER CheckExchangeOnline
         Assess Exchange Online security
@@ -45,19 +105,24 @@ function Test-M365SecurityPosture {
         Write-Host "  M365 SECURITY POSTURE ASSESSMENT" -ForegroundColor Cyan
         Write-Host "========================================" -ForegroundColor Cyan
         
-        # Check connection
+        # Live tenant data requires a Microsoft Graph connection. Without one the
+        # function must not invent results: every check degrades to NotEvaluated.
+        $graphConnected = $false
+        $tenantId = 'NotConnected'
         try {
             $context = Get-MgContext -ErrorAction Stop
-            
-            if (-not $context) {
-                throw "Not connected to Microsoft Graph"
+            if ($context) {
+                $graphConnected = $true
+                if ($context.TenantId) { $tenantId = $context.TenantId }
+                Write-Host "Connected to tenant: $tenantId" -ForegroundColor Green
             }
-            
-            Write-Host "Connected to tenant: $($context.TenantId)" -ForegroundColor Green
         }
         catch {
-            Write-Error "Please connect to Microsoft Graph first: Connect-MgGraph -Scopes 'Directory.Read.All','Policy.Read.All'"
-            throw
+            Write-Verbose "Get-MgContext failed: $_"
+        }
+        
+        if (-not $graphConnected) {
+            Write-Warning "Not connected to Microsoft Graph. No tenant data will be queried and every check will be reported as NotEvaluated. Connect first: Connect-MgGraph -Scopes 'Directory.Read.All','Policy.Read.All'"
         }
         
         # If no specific checks selected, run all
@@ -72,67 +137,57 @@ function Test-M365SecurityPosture {
         $results = [PSCustomObject]@{
             AssessmentDate = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
             TenantInfo = @{
-                TenantId = $context.TenantId
+                TenantId = $tenantId
                 TenantName = "N/A"
             }
             SecurityFindings = @()
-            ComplianceScore = 0
+            ComplianceScore = $null
+            OverallScore = $null
+            OverallStatus = 'NotEvaluated'
+            EvaluatedCount = 0
+            NotEvaluatedCount = 0
             Summary = @{
                 TotalChecks = 0
                 Passed = 0
                 Failed = 0
                 Warnings = 0
                 CriticalIssues = 0
+                NotEvaluated = 0
             }
         }
     }
     
     process {
         try {
-            # Get organization info
-            try {
-                $org = Get-MgOrganization -ErrorAction Stop | Select-Object -First 1
-                if ($org) {
-                    $results.TenantInfo.TenantName = $org.DisplayName
+            $notConnectedReason = "Not evaluated — not connected to Microsoft Graph (run Connect-MgGraph -Scopes 'Directory.Read.All','Policy.Read.All')"
+            
+            # Get organization info (live query, non-fatal)
+            if ($graphConnected) {
+                try {
+                    $org = Get-MgOrganization -ErrorAction Stop | Select-Object -First 1
+                    if ($org) {
+                        $results.TenantInfo.TenantName = $org.DisplayName
+                    }
+                }
+                catch {
+                    Write-Warning "Could not retrieve organization details: $($_.Exception.Message)"
                 }
             }
-            catch {
-                Write-Warning "Could not retrieve organization details"
-            }
             
-            # Exchange Online checks
+            # Exchange Online checks. Exchange/Defender policy configuration is not
+            # exposed through the Microsoft Graph cmdlets used by this module, so
+            # these checks are honestly reported as NotEvaluated with the API that
+            # would be required — never fabricated.
             if ($CheckExchangeOnline) {
                 Write-Host "`nAssessing Exchange Online Security..." -ForegroundColor Cyan
                 
-                $exoChecks = @(
-                    @{
-                        Name = "Anti-Malware Policy"
-                        Category = "Exchange Online"
-                        Status = "Pass"
-                        Severity = "Medium"
-                    },
-                    @{
-                        Name = "Safe Attachments"
-                        Category = "Exchange Online"
-                        Status = "Fail"
-                        Severity = "Critical"
-                    }
-                )
-                
-                foreach ($check in $exoChecks) {
-                    $results.SecurityFindings += [PSCustomObject]$check
-                    $results.Summary.TotalChecks++
-                    
-                    switch ($check.Status) {
-                        'Pass' { $results.Summary.Passed++ }
-                        'Fail' { 
-                            $results.Summary.Failed++
-                            if ($check.Severity -eq 'Critical') {
-                                $results.Summary.CriticalIssues++
-                            }
-                        }
-                        'Warning' { $results.Summary.Warnings++ }
-                    }
+                if ($graphConnected) {
+                    Add-M365Finding -Results $results -Name "Anti-Malware Policy" -Category "Exchange Online" -Severity "Medium" -Status "NotEvaluated" -Actual "Not evaluated — requires Exchange Online PowerShell (Get-MalwareFilterPolicy); not exposed via Microsoft Graph" -Expected "Default anti-malware policy enabled"
+                    Add-M365Finding -Results $results -Name "Safe Attachments" -Category "Exchange Online" -Severity "Critical" -Status "NotEvaluated" -Actual "Not evaluated — requires Exchange Online PowerShell (Get-SafeAttachmentPolicy / Get-SafeAttachmentRule); not exposed via Microsoft Graph" -Expected "Safe Attachments policy covering all users"
+                }
+                else {
+                    Add-M365Finding -Results $results -Name "Anti-Malware Policy" -Category "Exchange Online" -Severity "Medium" -Status "NotEvaluated" -Actual $notConnectedReason
+                    Add-M365Finding -Results $results -Name "Safe Attachments" -Category "Exchange Online" -Severity "Critical" -Status "NotEvaluated" -Actual $notConnectedReason
                 }
             }
             
@@ -140,35 +195,13 @@ function Test-M365SecurityPosture {
             if ($CheckSharePoint) {
                 Write-Host "`nAssessing SharePoint/OneDrive Security..." -ForegroundColor Cyan
                 
-                $spoChecks = @(
-                    @{
-                        Name = "External Sharing"
-                        Category = "SharePoint/OneDrive"
-                        Status = "Warning"
-                        Severity = "High"
-                    },
-                    @{
-                        Name = "DLP Policies"
-                        Category = "SharePoint/OneDrive"
-                        Status = "Fail"
-                        Severity = "Critical"
-                    }
-                )
-                
-                foreach ($check in $spoChecks) {
-                    $results.SecurityFindings += [PSCustomObject]$check
-                    $results.Summary.TotalChecks++
-                    
-                    switch ($check.Status) {
-                        'Pass' { $results.Summary.Passed++ }
-                        'Fail' { 
-                            $results.Summary.Failed++
-                            if ($check.Severity -eq 'Critical') {
-                                $results.Summary.CriticalIssues++
-                            }
-                        }
-                        'Warning' { $results.Summary.Warnings++ }
-                    }
+                if ($graphConnected) {
+                    Add-M365Finding -Results $results -Name "External Sharing" -Category "SharePoint/OneDrive" -Severity "High" -Status "NotEvaluated" -Actual "Not evaluated — requires SharePoint Online Management Shell (Get-SPOTenant) or SharePoint admin API; not exposed via Microsoft Graph" -Expected "External sharing restricted to existing guests or disabled"
+                    Add-M365Finding -Results $results -Name "DLP Policies" -Category "SharePoint/OneDrive" -Severity "Critical" -Status "NotEvaluated" -Actual "Not evaluated — requires Purview compliance PowerShell (Get-DlpCompliancePolicy); not exposed via Microsoft Graph" -Expected "At least one DLP policy covering SharePoint/OneDrive locations"
+                }
+                else {
+                    Add-M365Finding -Results $results -Name "External Sharing" -Category "SharePoint/OneDrive" -Severity "High" -Status "NotEvaluated" -Actual $notConnectedReason
+                    Add-M365Finding -Results $results -Name "DLP Policies" -Category "SharePoint/OneDrive" -Severity "Critical" -Status "NotEvaluated" -Actual $notConnectedReason
                 }
             }
             
@@ -176,71 +209,83 @@ function Test-M365SecurityPosture {
             if ($CheckTeams) {
                 Write-Host "`nAssessing Microsoft Teams Security..." -ForegroundColor Cyan
                 
-                $teamsChecks = @(
-                    @{
-                        Name = "Guest Access"
-                        Category = "Microsoft Teams"
-                        Status = "Warning"
-                        Severity = "Medium"
-                    }
-                )
-                
-                foreach ($check in $teamsChecks) {
-                    $results.SecurityFindings += [PSCustomObject]$check
-                    $results.Summary.TotalChecks++
-                    
-                    switch ($check.Status) {
-                        'Pass' { $results.Summary.Passed++ }
-                        'Fail' { 
-                            $results.Summary.Failed++
-                            if ($check.Severity -eq 'Critical') {
-                                $results.Summary.CriticalIssues++
-                            }
-                        }
-                        'Warning' { $results.Summary.Warnings++ }
-                    }
+                if ($graphConnected) {
+                    Add-M365Finding -Results $results -Name "Guest Access" -Category "Microsoft Teams" -Severity "Medium" -Status "NotEvaluated" -Actual "Not evaluated — requires Microsoft Teams PowerShell (Get-CsTeamsClientConfiguration); not exposed via Microsoft Graph" -Expected "Guest access disabled or restricted per policy"
+                }
+                else {
+                    Add-M365Finding -Results $results -Name "Guest Access" -Category "Microsoft Teams" -Severity "Medium" -Status "NotEvaluated" -Actual $notConnectedReason
                 }
             }
             
-            # Conditional Access checks
+            # Conditional Access checks (live Microsoft Graph queries)
             if ($CheckConditionalAccess) {
                 Write-Host "`nAssessing Conditional Access..." -ForegroundColor Cyan
                 
-                try {
-                    $caPolicies = Get-MgIdentityConditionalAccessPolicy -All -ErrorAction Stop
-                    
-                    $enabledPolicies = @($caPolicies | Where-Object { $_.State -eq 'enabled' }).Count
-                    
-                    if ($enabledPolicies -gt 0) {
-                        $results.SecurityFindings += [PSCustomObject]@{
-                            Name = "Conditional Access Policies"
-                            Category = "Conditional Access"
-                            Status = "Pass"
-                            Severity = "High"
+                if ($graphConnected) {
+                    try {
+                        $caPolicies = @(Get-MgIdentityConditionalAccessPolicy -All -ErrorAction Stop)
+                        
+                        $enabledPolicies = @($caPolicies | Where-Object { $_.State -eq 'enabled' }).Count
+                        
+                        if ($enabledPolicies -gt 0) {
+                            Add-M365Finding -Results $results -Name "Conditional Access Policies" -Category "Conditional Access" -Severity "High" -Status "Pass" -Actual "$enabledPolicies of $(@($caPolicies).Count) Conditional Access policies enabled" -Expected "At least one enabled Conditional Access policy"
                         }
-                        $results.Summary.Passed++
+                        else {
+                            Add-M365Finding -Results $results -Name "Conditional Access Policies" -Category "Conditional Access" -Severity "Critical" -Status "Fail" -Actual "No enabled Conditional Access policies found ($( @($caPolicies).Count) total, none enabled)" -Expected "At least one enabled Conditional Access policy"
+                        }
                     }
-                    else {
-                        $results.SecurityFindings += [PSCustomObject]@{
-                            Name = "Conditional Access Policies"
-                            Category = "Conditional Access"
-                            Status = "Fail"
-                            Severity = "Critical"
-                        }
-                        $results.Summary.Failed++
-                        $results.Summary.CriticalIssues++
+                    catch {
+                        Write-Warning "Could not retrieve Conditional Access policies: $($_.Exception.Message)"
+                        Add-M365Finding -Results $results -Name "Conditional Access Policies" -Category "Conditional Access" -Severity "Critical" -Status "NotEvaluated" -Actual "Not evaluated — Conditional Access query failed: $($_.Exception.Message)"
                     }
                     
-                    $results.Summary.TotalChecks++
+                    try {
+                        $secDefaults = Get-MgPolicyIdentitySecurityDefaultEnforcementPolicy -ErrorAction Stop
+                        
+                        if ($secDefaults -and $secDefaults.IsEnabled) {
+                            Add-M365Finding -Results $results -Name "Security Defaults" -Category "Conditional Access" -Severity "High" -Status "Pass" -Actual "Security Defaults are enabled" -Expected "Enabled, unless Conditional Access policies are in use"
+                        }
+                        else {
+                            Add-M365Finding -Results $results -Name "Security Defaults" -Category "Conditional Access" -Severity "High" -Status "Warning" -Actual "Security Defaults are disabled" -Expected "Enabled, unless Conditional Access policies are in use"
+                        }
+                    }
+                    catch {
+                        Write-Warning "Could not retrieve Security Defaults policy: $($_.Exception.Message)"
+                        Add-M365Finding -Results $results -Name "Security Defaults" -Category "Conditional Access" -Severity "High" -Status "NotEvaluated" -Actual "Not evaluated — Security Defaults query failed: $($_.Exception.Message)"
+                    }
                 }
-                catch {
-                    Write-Warning "Could not retrieve Conditional Access policies"
+                else {
+                    Add-M365Finding -Results $results -Name "Conditional Access Policies" -Category "Conditional Access" -Severity "Critical" -Status "NotEvaluated" -Actual $notConnectedReason
+                    Add-M365Finding -Results $results -Name "Security Defaults" -Category "Conditional Access" -Severity "High" -Status "NotEvaluated" -Actual $notConnectedReason
                 }
             }
             
-            # Calculate compliance score
+            # Calculate compliance score over evaluated checks only
+            $results.EvaluatedCount = $results.Summary.TotalChecks
+            $results.NotEvaluatedCount = $results.Summary.NotEvaluated
+            
             if ($results.Summary.TotalChecks -gt 0) {
                 $results.ComplianceScore = [Math]::Round(($results.Summary.Passed / $results.Summary.TotalChecks) * 100, 1)
+                $results.OverallScore = $results.ComplianceScore
+                $results.OverallStatus = if ($results.Summary.Failed -gt 0) { 'AttentionRequired' }
+                                         elseif ($results.Summary.Warnings -gt 0) { 'Warning' }
+                                         else { 'Pass' }
+                
+                if ($results.Summary.NotEvaluated -gt 0) {
+                    Write-Warning "$($results.Summary.NotEvaluated) check(s) could not be evaluated and were excluded from the score. The score covers only the $($results.Summary.TotalChecks) evaluated check(s)."
+                }
+            }
+            else {
+                $results.ComplianceScore = $null
+                $results.OverallScore = $null
+                $results.OverallStatus = 'NotEvaluated'
+                
+                if (-not $graphConnected) {
+                    Write-Warning "No security checks could be evaluated because there is no Microsoft Graph connection. OverallScore is null — no compliance score was computed."
+                }
+                else {
+                    Write-Warning "No security checks could be evaluated (all queries failed). OverallScore is null — no compliance score was computed."
+                }
             }
             
             # Export if requested
@@ -284,15 +329,23 @@ function Test-M365SecurityPosture {
         Write-Host "  M365 ASSESSMENT COMPLETE" -ForegroundColor Green
         Write-Host "========================================" -ForegroundColor Green
         
-        $scoreColor = if ($results.ComplianceScore -ge 80) { 'Green' }
-                      elseif ($results.ComplianceScore -ge 60) { 'Yellow' }
-                      else { 'Red' }
+        if ($null -ne $results.ComplianceScore) {
+            $scoreColor = if ($results.ComplianceScore -ge 80) { 'Green' }
+                          elseif ($results.ComplianceScore -ge 60) { 'Yellow' }
+                          else { 'Red' }
+            
+            Write-Host "`nCompliance Score: $($results.ComplianceScore)% (over $($results.EvaluatedCount) evaluated check(s))" -ForegroundColor $scoreColor
+        }
+        else {
+            Write-Host "`nCompliance Score: N/A — no checks could be evaluated" -ForegroundColor Yellow
+        }
         
-        Write-Host "`nCompliance Score: $($results.ComplianceScore)%" -ForegroundColor $scoreColor
+        Write-Host "Overall Status: $($results.OverallStatus)" -ForegroundColor White
         Write-Host "Total Checks: $($results.Summary.TotalChecks)" -ForegroundColor White
         Write-Host "Passed: $($results.Summary.Passed)" -ForegroundColor Green
         Write-Host "Failed: $($results.Summary.Failed)" -ForegroundColor Red
         Write-Host "Critical Issues: $($results.Summary.CriticalIssues)" -ForegroundColor Red
+        Write-Host "Not Evaluated: $($results.Summary.NotEvaluated)" -ForegroundColor Yellow
         
         return $results
     }
@@ -301,9 +354,12 @@ function Test-M365SecurityPosture {
 function Generate-M365SecurityHTML {
     param($Results)
     
-    $scoreColor = if ($Results.ComplianceScore -ge 80) { '#107c10' } 
+    $scoreColor = if ($null -eq $Results.ComplianceScore) { '#605e5c' }
+                  elseif ($Results.ComplianceScore -ge 80) { '#107c10' } 
                   elseif ($Results.ComplianceScore -ge 60) { '#f7630c' } 
                   else { '#d13438' }
+    
+    $scoreDisplay = if ($null -eq $Results.ComplianceScore) { 'N/A' } else { "$($Results.ComplianceScore)%" }
     
     $html = @'
 <!DOCTYPE html>
@@ -323,6 +379,7 @@ function Generate-M365SecurityHTML {
         .pass { color: #107c10; font-weight: bold; }
         .fail { color: #d13438; font-weight: bold; }
         .warning { color: #f7630c; font-weight: bold; }
+        .noteval { color: #605e5c; font-weight: bold; }
         .score-box { text-align: center; padding: 30px; margin: 20px 0; border-radius: 10px; color: white; }
         .score-value { font-size: 48px; font-weight: bold; }
     </style>
@@ -334,15 +391,17 @@ function Generate-M365SecurityHTML {
     
     $html += @"
         <div class="score-box" style="background: $scoreColor;">
-            <div class="score-value">$($Results.ComplianceScore)%</div>
-            <div>Security Compliance Score</div>
+            <div class="score-value">$scoreDisplay</div>
+            <div>Security Compliance Score (evaluated checks only)</div>
         </div>
         
         <h2>Assessment Summary</h2>
-        <p><strong>Total Checks:</strong> $($Results.Summary.TotalChecks)</p>
+        <p><strong>Overall Status:</strong> $($Results.OverallStatus)</p>
+        <p><strong>Total Checks (evaluated):</strong> $($Results.Summary.TotalChecks)</p>
         <p><strong>Passed:</strong> $($Results.Summary.Passed)</p>
         <p><strong>Failed:</strong> $($Results.Summary.Failed)</p>
         <p><strong>Critical Issues:</strong> $($Results.Summary.CriticalIssues)</p>
+        <p><strong>Not Evaluated:</strong> $($Results.Summary.NotEvaluated)</p>
         
         <h2>Security Findings</h2>
         <table>
@@ -352,6 +411,7 @@ function Generate-M365SecurityHTML {
                     <th>Check Name</th>
                     <th>Severity</th>
                     <th>Status</th>
+                    <th>Details</th>
                 </tr>
             </thead>
             <tbody>
@@ -362,6 +422,7 @@ function Generate-M365SecurityHTML {
             'Pass' { 'pass' }
             'Fail' { 'fail' }
             'Warning' { 'warning' }
+            default { 'noteval' }
         }
         
         $html += @"
@@ -370,6 +431,7 @@ function Generate-M365SecurityHTML {
                     <td>$($finding.Name)</td>
                     <td>$($finding.Severity)</td>
                     <td class="$statusClass">$($finding.Status)</td>
+                    <td>$($finding.Actual)</td>
                 </tr>
 "@
     }

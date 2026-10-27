@@ -467,7 +467,10 @@
                 # Export CSV
                 if ($Format -in @('CSV', 'All')) {
                     $csvPath = Join-Path $OutputPath "$reportName.csv"
-                    $results.Artifacts | Select-Object Source, ExecutableName, FullPath, Timestamp, TimestampType | 
+                    $results.Artifacts | Select-Object Source,
+                        @{N='ExecutableName';E={Protect-CsvField $_.ExecutableName}},
+                        @{N='FullPath';E={Protect-CsvField $_.FullPath}},
+                        Timestamp, TimestampType |
                         Export-Csv $csvPath -NoTypeInformation -Encoding UTF8
                     Write-Host "  CSV report saved: $csvPath" -ForegroundColor Green
                 }

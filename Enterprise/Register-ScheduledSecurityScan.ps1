@@ -672,12 +672,15 @@ exit 0
                     Replace('__ALERT_DEDUP__', $safeAlertDedup).
                     Replace('__REALERT_AFTER_DAYS__', $safeRealertAfterDays)
 
-                $scanScript | Out-File $scriptPath -Encoding UTF8 -Force
-
                 # The script embeds the webhook URL (a shared secret) and runs as SYSTEM,
-                # so restrict it to Administrators and SYSTEM instead of the permissive
-                # ProgramData default
+                # so it must never exist world-readable: create the file EMPTY, restrict
+                # it to Administrators and SYSTEM, and only then write the content into
+                # the locked file (avoids the permissive ProgramData default between
+                # creation and lockdown)
                 if ($env:OS -eq 'Windows_NT') {
+                    if (-not (Test-Path $scriptPath)) {
+                        New-Item -Path $scriptPath -ItemType File -Force | Out-Null
+                    }
                     try {
                         $scriptAcl = Get-Acl -Path $scriptPath -ErrorAction Stop
                         $scriptAcl.SetAccessRuleProtection($true, $false)
@@ -701,6 +704,8 @@ exit 0
                         Write-Warning "Could not restrict permissions on '$scriptPath'; the file contains the webhook URL and may be readable by other local users: $_"
                     }
                 }
+
+                $scanScript | Out-File $scriptPath -Encoding UTF8 -Force
 
                 Write-Host "Scan script created: $scriptPath" -ForegroundColor Green
             }

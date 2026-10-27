@@ -186,6 +186,8 @@ function Get-SecurityMetrics {
             ComplianceScore = 0
             ThreatLevel = "Minimal"
             HealthStatus = "Healthy"
+            DataCompleteness = $null
+            FailedCollectors = @()
             
             # Findings aggregation
             Findings = @{
@@ -433,6 +435,7 @@ function Get-SecurityMetrics {
             $totalFunctions = 0
             $successfulFunctions = 0
             $failedFunctions = 0
+            $failedCollectors = @()
             
             # ============================================
             # CORE MODULE (4 functions)
@@ -466,6 +469,7 @@ function Get-SecurityMetrics {
                 } catch { 
                     $failedFunctions++
                     Write-Verbose "  Get-SecurityBaseline: $_"
+                    $failedCollectors += 'Get-SecurityBaseline'
                 }
                 
                 # Get-SystemInfo
@@ -487,6 +491,7 @@ function Get-SecurityMetrics {
                 } catch { 
                     $failedFunctions++
                     Write-Verbose "  Get-SystemInfo: $_"
+                    $failedCollectors += 'Get-SystemInfo'
                 }
                 
                 # Test-SystemIntegrity
@@ -519,6 +524,7 @@ function Get-SecurityMetrics {
                 } catch { 
                     $failedFunctions++
                     Write-Verbose "  Test-SystemIntegrity: $_"
+                    $failedCollectors += 'Test-SystemIntegrity'
                 }
                 
                 # Invoke-SecurityAssessment
@@ -540,6 +546,7 @@ function Get-SecurityMetrics {
                 } catch { 
                     $failedFunctions++
                     Write-Verbose "  Invoke-SecurityAssessment: $_"
+                    $failedCollectors += 'Invoke-SecurityAssessment'
                 }
                 
                 $script:metrics.Performance.ModuleTimes['Core'] = [Math]::Round(((Get-Date) - $coreStart).TotalSeconds, 2)
@@ -567,6 +574,7 @@ function Get-SecurityMetrics {
                 } catch { 
                     $failedFunctions++
                     Write-Verbose "  Find-PersistenceMechanisms: $_"
+                    $failedCollectors += 'Find-PersistenceMechanisms'
                 }
                 
                 # Find-SuspiciousProcesses
@@ -579,6 +587,7 @@ function Get-SecurityMetrics {
                 } catch { 
                     $failedFunctions++
                     Write-Verbose "  Find-SuspiciousProcesses: $_"
+                    $failedCollectors += 'Find-SuspiciousProcesses'
                 }
                 
                 # Find-SuspiciousAuthentication
@@ -597,6 +606,7 @@ function Get-SecurityMetrics {
                 } catch { 
                     $failedFunctions++
                     Write-Verbose "  Find-SuspiciousAuthentication: $_"
+                    $failedCollectors += 'Find-SuspiciousAuthentication'
                 }
                 
                 # Find-LateralMovement
@@ -613,6 +623,7 @@ function Get-SecurityMetrics {
                 } catch { 
                     $failedFunctions++
                     Write-Verbose "  Find-LateralMovement: $_"
+                    $failedCollectors += 'Find-LateralMovement'
                 }
                 
                 # Find-APTIndicators
@@ -629,6 +640,7 @@ function Get-SecurityMetrics {
                 } catch { 
                     $failedFunctions++
                     Write-Verbose "  Find-APTIndicators: $_"
+                    $failedCollectors += 'Find-APTIndicators'
                 }
                 
                 # Find-LivingOffLand
@@ -645,6 +657,7 @@ function Get-SecurityMetrics {
                 } catch { 
                     $failedFunctions++
                     Write-Verbose "  Find-LivingOffLand: $_"
+                    $failedCollectors += 'Find-LivingOffLand'
                 }
                 
                 # Find-DataExfiltration
@@ -661,6 +674,7 @@ function Get-SecurityMetrics {
                 } catch { 
                     $failedFunctions++
                     Write-Verbose "  Find-DataExfiltration: $_"
+                    $failedCollectors += 'Find-DataExfiltration'
                 }
                 
                 # Find-NetworkAnomalies
@@ -677,6 +691,7 @@ function Get-SecurityMetrics {
                 } catch { 
                     $failedFunctions++
                     Write-Verbose "  Find-NetworkAnomalies: $_"
+                    $failedCollectors += 'Find-NetworkAnomalies'
                 }
                 
                 # Calculate total threats
@@ -741,6 +756,7 @@ function Get-SecurityMetrics {
                 } catch { 
                     $failedFunctions++
                     Write-Verbose "  Get-EventLogAnalysis: $_"
+                    $failedCollectors += 'Get-EventLogAnalysis'
                 }
                 
                 # Get-RegistryAnalysis
@@ -759,6 +775,7 @@ function Get-SecurityMetrics {
                 } catch { 
                     $failedFunctions++
                     Write-Verbose "  Get-RegistryAnalysis: $_"
+                    $failedCollectors += 'Get-RegistryAnalysis'
                 }
                 
                 # Get-FileSystemAnalysis
@@ -779,6 +796,7 @@ function Get-SecurityMetrics {
                 } catch { 
                     $failedFunctions++
                     Write-Verbose "  Get-FileSystemAnalysis: $_"
+                    $failedCollectors += 'Get-FileSystemAnalysis'
                 }
                 
                 # Get-MemoryAnalysis
@@ -797,6 +815,7 @@ function Get-SecurityMetrics {
                 } catch { 
                     $failedFunctions++
                     Write-Verbose "  Get-MemoryAnalysis: $_"
+                    $failedCollectors += 'Get-MemoryAnalysis'
                 }
                 
                 # Get-ExposedServices
@@ -815,6 +834,7 @@ function Get-SecurityMetrics {
                 } catch { 
                     $failedFunctions++
                     Write-Verbose "  Get-ExposedServices: $_"
+                    $failedCollectors += 'Get-ExposedServices'
                 }
                 
                 # Get-SecurityMisconfigurations
@@ -827,6 +847,7 @@ function Get-SecurityMetrics {
                 } catch { 
                     $failedFunctions++
                     Write-Verbose "  Get-SecurityMisconfigurations: $_"
+                    $failedCollectors += 'Get-SecurityMisconfigurations'
                 }
                 
                 $script:metrics.Performance.ModuleTimes['Analysis'] = [Math]::Round(((Get-Date) - $analStart).TotalSeconds, 2)
@@ -883,6 +904,7 @@ function Get-SecurityMetrics {
                 } catch { 
                     $failedFunctions++
                     Write-Verbose "  Test-CISBenchmark: $_"
+                    $failedCollectors += 'Test-CISBenchmark'
                 }
                 
                 # Test-NISTCompliance
@@ -928,6 +950,7 @@ function Get-SecurityMetrics {
                 } catch { 
                     $failedFunctions++
                     Write-Verbose "  Test-NISTCompliance: $_"
+                    $failedCollectors += 'Test-NISTCompliance'
                 }
                 
                 # Test-PCI-DSS
@@ -969,6 +992,7 @@ function Get-SecurityMetrics {
                 } catch { 
                     $failedFunctions++
                     Write-Verbose "  Test-PCI-DSS: $_"
+                    $failedCollectors += 'Test-PCI-DSS'
                 }
                 
                 # Get-ComplianceReport
@@ -980,6 +1004,7 @@ function Get-SecurityMetrics {
                 } catch { 
                     $failedFunctions++
                     Write-Verbose "  Get-ComplianceReport: $_"
+                    $failedCollectors += 'Get-ComplianceReport'
                 }
                 
                 # Test-PatchCompliance
@@ -996,6 +1021,7 @@ function Get-SecurityMetrics {
                 } catch { 
                     $failedFunctions++
                     Write-Verbose "  Test-PatchCompliance: $_"
+                    $failedCollectors += 'Test-PatchCompliance'
                 }
                 
                 # Calculate overall compliance - NULL SAFE with @() cast
@@ -1059,6 +1085,7 @@ function Get-SecurityMetrics {
                     } catch { 
                         $failedFunctions++
                         Write-Verbose "  Get-ADPrivilegedAccounts: $_"
+                        $failedCollectors += 'Get-ADPrivilegedAccounts'
                     }
                     
                     # Find-ADVulnerabilities
@@ -1071,6 +1098,7 @@ function Get-SecurityMetrics {
                     } catch { 
                         $failedFunctions++
                         Write-Verbose "  Find-ADVulnerabilities: $_"
+                        $failedCollectors += 'Find-ADVulnerabilities'
                     }
                     
                     # Test-ADSecurityPosture
@@ -1082,6 +1110,7 @@ function Get-SecurityMetrics {
                     } catch { 
                         $failedFunctions++
                         Write-Verbose "  Test-ADSecurityPosture: $_"
+                        $failedCollectors += 'Test-ADSecurityPosture'
                     }
                     
                     # Find-ADBackdoors
@@ -1094,6 +1123,7 @@ function Get-SecurityMetrics {
                     } catch { 
                         $failedFunctions++
                         Write-Verbose "  Find-ADBackdoors: $_"
+                        $failedCollectors += 'Find-ADBackdoors'
                     }
                     
                     # Find-StaleADObjects
@@ -1106,6 +1136,7 @@ function Get-SecurityMetrics {
                     } catch { 
                         $failedFunctions++
                         Write-Verbose "  Find-StaleADObjects: $_"
+                        $failedCollectors += 'Find-StaleADObjects'
                     }
                     
                     # Get-ADPasswordPolicy
@@ -1126,6 +1157,7 @@ function Get-SecurityMetrics {
                     } catch { 
                         $failedFunctions++
                         Write-Verbose "  Get-ADPasswordPolicy: $_"
+                        $failedCollectors += 'Get-ADPasswordPolicy'
                     }
                     
                     $script:metrics.ActiveDirectory.LastADScanDate = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
@@ -1143,7 +1175,12 @@ function Get-SecurityMetrics {
                 Write-Host "`n[Cloud Security Module Metrics]" -ForegroundColor Cyan
                 $cloudStart = Get-Date
                 
-                $mgContext = Get-MgContext -ErrorAction SilentlyContinue
+                $mgContext = $null
+                try {
+                    $mgContext = Get-MgContext -ErrorAction Stop
+                } catch {
+                    Write-Verbose "  Get-MgContext unavailable: $_"
+                }
                 if ($mgContext) {
                     $script:metrics.Cloud.Enabled = $true
                     $script:metrics.Cloud.ConnectedTenant = if ($mgContext.PSObject.Properties['TenantId']) { $mgContext.TenantId } else { "Unknown" }
@@ -1158,6 +1195,7 @@ function Get-SecurityMetrics {
                     } catch { 
                         $failedFunctions++
                         Write-Verbose "  Get-AzureADRiskySignIns: $_"
+                        $failedCollectors += 'Get-AzureADRiskySignIns'
                     }
                     
                     # Test-M365SecurityPosture
@@ -1172,6 +1210,7 @@ function Get-SecurityMetrics {
                     } catch { 
                         $failedFunctions++
                         Write-Verbose "  Test-M365SecurityPosture: $_"
+                        $failedCollectors += 'Test-M365SecurityPosture'
                     }
                     
                     # Get-CloudComplianceStatus
@@ -1183,6 +1222,7 @@ function Get-SecurityMetrics {
                     } catch { 
                         $failedFunctions++
                         Write-Verbose "  Get-CloudComplianceStatus: $_"
+                        $failedCollectors += 'Get-CloudComplianceStatus'
                     }
                     
                     $script:metrics.Cloud.LastCloudScanDate = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
@@ -1234,6 +1274,7 @@ function Get-SecurityMetrics {
                 } catch { 
                     $failedFunctions++
                     Write-Verbose "  Get-VulnerabilityAssessment: $_"
+                    $failedCollectors += 'Get-VulnerabilityAssessment'
                 }
                 
                 # Find-EOLSoftware
@@ -1246,6 +1287,7 @@ function Get-SecurityMetrics {
                 } catch { 
                     $failedFunctions++
                     Write-Verbose "  Find-EOLSoftware: $_"
+                    $failedCollectors += 'Find-EOLSoftware'
                 }
                 
                 # Test-CertificateHealth
@@ -1270,6 +1312,7 @@ function Get-SecurityMetrics {
                 } catch { 
                     $failedFunctions++
                     Write-Verbose "  Test-CertificateHealth: $_"
+                    $failedCollectors += 'Test-CertificateHealth'
                 }
                 
                 $script:metrics.Vulnerability.LastVulnScanDate = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
@@ -1302,6 +1345,7 @@ function Get-SecurityMetrics {
                 } catch { 
                     $failedFunctions++
                     Write-Verbose "  Get-ThreatIntelligence: $_"
+                    $failedCollectors += 'Get-ThreatIntelligence'
                 }
                 
                 # Get-MITREAttackMapping
@@ -1322,6 +1366,7 @@ function Get-SecurityMetrics {
                 } catch { 
                     $failedFunctions++
                     Write-Verbose "  Get-MITREAttackMapping: $_"
+                    $failedCollectors += 'Get-MITREAttackMapping'
                 }
                 
                 $script:metrics.ThreatHunting.LastHuntDate = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
@@ -1350,6 +1395,7 @@ function Get-SecurityMetrics {
                 } catch { 
                     $failedFunctions++
                     Write-Verbose "  Get-ArtifactCollection: $_"
+                    $failedCollectors += 'Get-ArtifactCollection'
                 }
                 
                 # Get-ExecutionArtifacts
@@ -1374,6 +1420,7 @@ function Get-SecurityMetrics {
                 } catch { 
                     $failedFunctions++
                     Write-Verbose "  Get-ExecutionArtifacts: $_"
+                    $failedCollectors += 'Get-ExecutionArtifacts'
                 }
                 
                 # Get-USBHistory
@@ -1386,6 +1433,7 @@ function Get-SecurityMetrics {
                 } catch { 
                     $failedFunctions++
                     Write-Verbose "  Get-USBHistory: $_"
+                    $failedCollectors += 'Get-USBHistory'
                 }
                 
                 # Invoke-ForensicCollection, Export-MemoryDump, New-ForensicTimeline
@@ -1454,6 +1502,7 @@ function Get-SecurityMetrics {
                 } catch { 
                     $failedFunctions++
                     Write-Verbose "  Get-DefenderStatus: $_"
+                    $failedCollectors += 'Get-DefenderStatus'
                 }
                 
                 # Invoke-DefenderScan - skip for metrics
@@ -1469,6 +1518,7 @@ function Get-SecurityMetrics {
                 } catch { 
                     $failedFunctions++
                     Write-Verbose "  Update-DefenderConfiguration: $_"
+                    $failedCollectors += 'Update-DefenderConfiguration'
                 }
                 
                 $script:metrics.Performance.ModuleTimes['WindowsDefender'] = [Math]::Round(((Get-Date) - $defStart).TotalSeconds, 2)
@@ -1556,11 +1606,26 @@ if ($script:metrics.WindowsDefender.Enabled -and $signatureAge -gt 7) {
 
 $script:metrics.OverallSecurityScore = [Math]::Max(0, [Math]::Min(100, 100 - $penalty))
 
-Write-Host "  Overall Security Score: $($script:metrics.OverallSecurityScore)%" -ForegroundColor $(
-    if ($script:metrics.OverallSecurityScore -ge 80) { 'Green' }
+# Data completeness: the score is only as trustworthy as the collectors behind it
+$script:metrics.DataCompleteness = "$successfulFunctions of $totalFunctions collectors succeeded ($failedFunctions failed)"
+$script:metrics.FailedCollectors = @($failedCollectors)
+
+$majorityFailed = ($totalFunctions -gt 0) -and ($failedFunctions * 2 -gt $totalFunctions)
+if ($majorityFailed) {
+    Write-Warning "More than 50% of collectors failed ($failedFunctions of $totalFunctions): $($failedCollectors -join ', '). OverallSecurityScore is reported as null because the collected data is too incomplete to score reliably."
+    $script:metrics.OverallSecurityScore = $null
+}
+elseif ($failedFunctions -gt 0) {
+    Write-Warning "$failedFunctions of $totalFunctions collectors failed: $($failedCollectors -join ', '). The overall score is based on partial data (see DataCompleteness)."
+}
+
+Write-Host "  Overall Security Score: $(if ($null -ne $script:metrics.OverallSecurityScore) { "$($script:metrics.OverallSecurityScore)%" } else { 'N/A (insufficient data)' })" -ForegroundColor $(
+    if ($null -eq $script:metrics.OverallSecurityScore) { 'Yellow' }
+    elseif ($script:metrics.OverallSecurityScore -ge 80) { 'Green' }
     elseif ($script:metrics.OverallSecurityScore -ge 60) { 'Yellow' }
     else { 'Red' }
 )
+Write-Host "  Data Completeness: $($script:metrics.DataCompleteness)" -ForegroundColor $(if ($failedFunctions -eq 0) { 'Green' } else { 'Yellow' })
 
 # Determine risk level
 $script:metrics.RiskLevel = 
@@ -1603,11 +1668,17 @@ Write-Host "  Threat Level: $($script:metrics.ThreatLevel)" -ForegroundColor $(
 
 # Health status
 $script:metrics.HealthStatus = 
-    if ($script:metrics.OverallSecurityScore -ge 90 -and $script:metrics.ThreatLevel -eq 'Minimal') { "Excellent" }
+    if ($null -eq $script:metrics.OverallSecurityScore) { "Unknown" }
+    elseif ($script:metrics.OverallSecurityScore -ge 90 -and $script:metrics.ThreatLevel -eq 'Minimal') { "Excellent" }
     elseif ($script:metrics.OverallSecurityScore -ge 80 -and $script:metrics.ThreatLevel -in @('Minimal', 'Low')) { "Good" }
     elseif ($script:metrics.OverallSecurityScore -ge 60) { "Fair" }
     elseif ($script:metrics.OverallSecurityScore -ge 40) { "Poor" }
     else { "Critical" }
+
+# Any collector failure reduces confidence: health can never be 'Excellent' on partial data
+if ($failedFunctions -gt 0 -and $script:metrics.HealthStatus -eq 'Excellent') {
+    $script:metrics.HealthStatus = 'Good'
+}
 
 Write-Host "  Health Status: $($script:metrics.HealthStatus)" -ForegroundColor $(
     switch ($script:metrics.HealthStatus) {
@@ -1888,7 +1959,7 @@ $script:metrics.Recommendations.Total =
         Write-Host "  Function Success Rate: $($script:metrics.Performance.SuccessRate)%" -ForegroundColor White
         
         Write-Host "`nKey Metrics:" -ForegroundColor Cyan
-        Write-Host "  Security Score: $($script:metrics.OverallSecurityScore)%" -ForegroundColor White
+        Write-Host "  Security Score: $(if ($null -ne $script:metrics.OverallSecurityScore) { "$($script:metrics.OverallSecurityScore)%" } else { 'N/A (insufficient data)' })" -ForegroundColor White
         Write-Host "  Health Status: $($script:metrics.HealthStatus)" -ForegroundColor White
         Write-Host "  Risk Level: $($script:metrics.RiskLevel)" -ForegroundColor White
         Write-Host "  Threat Level: $($script:metrics.ThreatLevel)" -ForegroundColor White
