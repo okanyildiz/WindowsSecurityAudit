@@ -64,7 +64,7 @@ jobs:
         # tests, helper scripts, CHANGELOG.md, etc.).
         shell: pwsh
         run: |
-          $staging = Join-Path $env:RUNNER_TEMP 'module-staging'
+          $staging = Join-Path $env:RUNNER_TEMP 'module-staging\WindowsSecurityAudit'
           New-Item -Path $staging -ItemType Directory -Force | Out-Null
           $items = @(
             'WindowsSecurityAudit.psd1',
@@ -94,6 +94,6 @@ jobs:
             Write-Host "::notice::PSGALLERY_API_KEY secret is not configured - skipping gallery publish. Tests and manifest validation passed."
             exit 0
           }
-          $staging = Join-Path $env:RUNNER_TEMP 'module-staging'
+          $staging = Join-Path $env:RUNNER_TEMP 'module-staging\WindowsSecurityAudit'
           Publish-Module -Path $staging -NuGetApiKey $env:PSGALLERY_API_KEY -ErrorAction Stop
           Write-Host "Published WindowsSecurityAudit to the PowerShell Gallery."
