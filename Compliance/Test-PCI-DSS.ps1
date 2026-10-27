@@ -1,4 +1,4 @@
-function Test-PCI-DSS {
+﻿function Test-PCI-DSS {
     <#
     .SYNOPSIS
         Tests system compliance against PCI-DSS requirements

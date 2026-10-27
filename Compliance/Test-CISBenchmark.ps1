@@ -1,4 +1,4 @@
-function Test-CISBenchmark {
+﻿function Test-CISBenchmark {
     <#
     .SYNOPSIS
         Tests system compliance against CIS Benchmark controls

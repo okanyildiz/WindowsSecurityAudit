@@ -1,4 +1,4 @@
-#Requires -Modules @{ ModuleName = 'Pester'; ModuleVersion = '5.0.0' }
+﻿#Requires -Modules @{ ModuleName = 'Pester'; ModuleVersion = '5.0.0' }
 
 <#
 .SYNOPSIS
@@ -593,5 +593,26 @@ Describe 'Private helper contract and degradation' {
                 $policy.ForceLogoffHours | Should -BeNullOrEmpty
             }
         }
+    }
+}
+
+Describe 'PS 5.1 encoding safety (BOM guard)' {
+    # Windows PowerShell 5.1 reads BOM-less files as ANSI: any non-ASCII content
+    # (em dashes, accented chars) corrupts parsing. Every script with non-ASCII
+    # bytes must be UTF-8 with BOM.
+    It 'every .ps1/.psm1/.psd1 with non-ASCII content is UTF-8 with BOM' {
+        $offenders = @(
+            Get-ChildItem -Path $script:ModuleRoot -Include '*.ps1','*.psm1','*.psd1' -Recurse -File |
+                Where-Object { $_.FullName -notmatch '[\\/]\.git[\\/]' } |
+                Where-Object {
+                    $bytes = [System.IO.File]::ReadAllBytes($_.FullName)
+                    $hasBom = ($bytes.Length -ge 3 -and $bytes[0] -eq 0xEF -and $bytes[1] -eq 0xBB -and $bytes[2] -eq 0xBF)
+                    $hasNonAscii = $false
+                    foreach ($byte in $bytes) { if ($byte -gt 0x7F) { $hasNonAscii = $true; break } }
+                    $hasNonAscii -and -not $hasBom
+                } |
+                ForEach-Object { $_.FullName.Substring($script:ModuleRoot.Length) }
+        )
+        $offenders.Count | Should -Be 0 -Because ("PS 5.1 misreads BOM-less non-ASCII files as ANSI: {0}" -f ($offenders -join ', '))
     }
 }

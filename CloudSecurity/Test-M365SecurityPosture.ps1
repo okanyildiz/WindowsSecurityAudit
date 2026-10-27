@@ -1,4 +1,4 @@
-function Add-M365Finding {
+﻿function Add-M365Finding {
     <#
     .SYNOPSIS
         Records a single M365 posture finding and updates summary counters.

@@ -1,4 +1,4 @@
-function Test-NISTCompliance {
+﻿function Test-NISTCompliance {
     <#
     .SYNOPSIS
         Tests system compliance against NIST 800-53 security controls
