@@ -78,13 +78,13 @@
         'Test-M365SecurityPosture',
         'Test-NISTCompliance',
         'Test-PatchCompliance',
-        'Test-PCI-DSS',
+        'Test-PciDssCompliance',
         'Test-SystemIntegrity',
         'Update-DefenderConfiguration'
     )
     CmdletsToExport = @()
     VariablesToExport = @()
-    AliasesToExport = @()
+    AliasesToExport = @('Test-PCI-DSS')
     PrivateData = @{
         PSData = @{
             Tags = @('Security', 'Audit', 'DFIR', 'ThreatHunting', 'Compliance', 'MITRE', 'IncidentResponse', 'Vulnerability', 'Windows', 'BlueTeam')

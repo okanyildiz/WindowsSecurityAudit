@@ -1,4 +1,4 @@
-﻿function Test-PCI-DSS {
+﻿function Test-PciDssCompliance {
     <#
     .SYNOPSIS
         Tests system compliance against PCI-DSS requirements
@@ -10,10 +10,12 @@
     .PARAMETER RequirementFilter
         Specific requirement to test: All, Network, Data, AccessControl, Monitoring, Testing
     .EXAMPLE
-        Test-PCI-DSS
-        Test-PCI-DSS -Version '4.0' -RequirementFilter Network
+        Test-PciDssCompliance
+        Test-PciDssCompliance -Version '4.0' -RequirementFilter Network
     .OUTPUTS
         PSCustomObject with PCI-DSS compliance results
+    .NOTES
+        Test-PCI-DSS is kept as a backward-compatible alias.
     #>
     
     [CmdletBinding()]

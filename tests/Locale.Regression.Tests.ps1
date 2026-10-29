@@ -94,7 +94,7 @@ BeforeAll {
     $script:EnFixture = Join-Path -Path $script:FixturePath -ChildPath 'auditpol-backup-en.csv'
     $script:DeFixture = Join-Path -Path $script:FixturePath -ChildPath 'auditpol-backup-de.csv'
 
-    Import-Module -Name $script:ModulePath -Force -DisableNameChecking
+    Import-Module -Name $script:ModulePath -Force
 
     # Invocation-context guard for 'net accounts' reads (leading = | ; { ( & or
     # line start). Hardening/Set-SecurityBaseline.ps1 is allowed (legit /set writes).

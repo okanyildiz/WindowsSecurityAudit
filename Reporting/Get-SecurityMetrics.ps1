@@ -953,10 +953,10 @@ function Get-SecurityMetrics {
                     $failedCollectors += 'Test-NISTCompliance'
                 }
                 
-                # Test-PCI-DSS
+                # Test-PciDssCompliance
                 try {
                     $totalFunctions++
-                    $pci = Test-PCI-DSS -ErrorAction Stop
+                    $pci = Test-PciDssCompliance -ErrorAction Stop
                     if ($pci) {
                         # Score
                         if ($pci.PSObject.Properties['ComplianceScore']) {
@@ -991,8 +991,8 @@ function Get-SecurityMetrics {
                     }
                 } catch { 
                     $failedFunctions++
-                    Write-Verbose "  Test-PCI-DSS: $_"
-                    $failedCollectors += 'Test-PCI-DSS'
+                    Write-Verbose "  Test-PciDssCompliance: $_"
+                    $failedCollectors += 'Test-PciDssCompliance'
                 }
                 
                 # Get-ComplianceReport

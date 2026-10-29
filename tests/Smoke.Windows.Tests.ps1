@@ -177,10 +177,14 @@ Describe 'WindowsSecurityAudit real-Windows smoke tests' -Tag @('Smoke', 'Window
         Assert-ResultShape -Object $result -Names @('TestDate', 'ComputerName', 'NISTRevision', 'ControlFamily', 'Controls', 'Summary', 'Recommendations')
     }
 
-    It 'Test-PCI-DSS -Version 4.0 returns requirements and summary' {
-        $result = Test-PCI-DSS -Version '4.0'
+    It 'Test-PciDssCompliance -Version 4.0 returns requirements and summary' {
+        $result = Test-PciDssCompliance -Version '4.0'
         Assert-ResultShape -Object $result -Names @('TestDate', 'ComputerName', 'PCIDSSVersion', 'RequirementFilter', 'Requirements', 'Summary', 'Recommendations')
         $result.PCIDSSVersion | Should -Be '4.0'
+    }
+
+    It 'Test-PCI-DSS works as a backward-compatible alias' {
+        (Get-Command Test-PCI-DSS).CommandType | Should -Be 'Alias'
     }
 
     # -------------------------------------------------------------- Analysis

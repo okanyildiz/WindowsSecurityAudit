@@ -983,7 +983,7 @@ try {
                 # PCI-DSS Compliance (v4.0)
                 try {
                     Write-Host "  Running PCI-DSS Compliance (v4.0)..." -ForegroundColor Yellow
-                    $pciResult = Test-PCI-DSS -Version '4.0'
+                    $pciResult = Test-PciDssCompliance -Version '4.0'
                     if ($null -ne $pciResult) {
                         $pciPercentage = $null
                         if ($pciResult.PSObject.Properties['Summary'] -and $null -ne $pciResult.Summary) {

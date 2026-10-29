@@ -68,7 +68,7 @@ BeforeAll {
         }
     )
 
-    Import-Module -Name $script:ModulePath -Force -DisableNameChecking
+    Import-Module -Name $script:ModulePath -Force
     $script:ExportedFunctions = @(Get-Command -Module $script:ModuleName -CommandType Function)
 
     function Get-ScriptFileAst {
@@ -86,8 +86,14 @@ AfterAll {
 
 Describe 'Module import and exported functions' {
     It 'imports without throwing' {
-        { Import-Module -Name $script:ModulePath -Force -DisableNameChecking -ErrorAction Stop } |
+        { Import-Module -Name $script:ModulePath -Force -ErrorAction Stop } |
             Should -Not -Throw
+    }
+
+    It 'imports without the restricted-characters warning' {
+        $warnings = @()
+        Import-Module $script:ModulePath -Force -WarningVariable +warnings -WarningAction SilentlyContinue
+        @($warnings | Where-Object { "$_" -match 'restricted characters' }).Count | Should -Be 0
     }
 
     It 'exports one function per .ps1 file in the category folders' {

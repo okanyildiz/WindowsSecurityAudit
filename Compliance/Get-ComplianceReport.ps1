@@ -149,7 +149,7 @@ function Get-ComplianceReport {
                 Write-Host "`n[3/3] Running PCI-DSS compliance test..." -ForegroundColor Cyan
                 
                 try {
-                    $pciResult = Test-PCI-DSS -Version '4.0'
+                    $pciResult = Test-PciDssCompliance -Version '4.0'
                     
                     $frameworkSummary = [PSCustomObject]@{
                         Framework = 'PCI-DSS v4.0'

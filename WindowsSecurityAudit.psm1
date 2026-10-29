@@ -54,7 +54,14 @@ foreach ($import in @($Public + $Private)) {
 }
 
 # Export only the public functions that loaded successfully
-Export-ModuleMember -Function $script:LoadedPublic.BaseName
+# Backward-compatible alias for the pre-1.6.2 name. A hyphenated FUNCTION name
+# triggers the 'restricted characters' import warning; an alias does not.
+$aliasesToExport = @()
+if (@($script:LoadedPublic.BaseName) -contains 'Test-PciDssCompliance') {
+    Set-Alias -Name 'Test-PCI-DSS' -Value 'Test-PciDssCompliance' -Scope Script
+    $aliasesToExport += 'Test-PCI-DSS'
+}
+Export-ModuleMember -Function $script:LoadedPublic.BaseName -Alias $aliasesToExport
 
 if ($script:FailedImports.Count -gt 0) {
     $failedNames = $script:FailedImports.FullName -join ', '

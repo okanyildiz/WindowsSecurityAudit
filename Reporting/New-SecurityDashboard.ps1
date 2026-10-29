@@ -523,15 +523,15 @@ function New-SecurityDashboard {
                 }
                 
                 try { 
-                    $c = Test-PCI-DSS -ErrorAction Stop
+                    $c = Test-PciDssCompliance -ErrorAction Stop
                     if (-not $c.PSObject.Properties['ComplianceScore'] -and $c.PSObject.Properties['Summary'] -and $c.Summary) {
                         $c | Add-Member -NotePropertyName ComplianceScore -NotePropertyValue $c.Summary.CompliancePercentage
                     }
                     $script:dashboardData.Compliance.PCIDSS = $c
                     $functionCount++
-                    Write-Host "  [21/54] Test-PCI-DSS: $($c.ComplianceScore)%" -ForegroundColor Green 
+                    Write-Host "  [21/54] Test-PciDssCompliance: $($c.ComplianceScore)%" -ForegroundColor Green 
                 } catch { 
-                    Write-Warning "  Test-PCI-DSS failed: $_"
+                    Write-Warning "  Test-PciDssCompliance failed: $_"
                     $script:dashboardData.Compliance.PCIDSS = @{ ComplianceScore = $null; Status = "Error" }
                 }
                 

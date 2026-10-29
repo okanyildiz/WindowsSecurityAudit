@@ -1,4 +1,4 @@
-# 🛡️ Windows Security Audit PowerShell Module
+﻿# 🛡️ Windows Security Audit PowerShell Module
 
 <div align="center">
 
@@ -203,7 +203,7 @@ WindowsSecurityAudit/
 │   ├── Get-ComplianceReport.ps1
 │   ├── Test-CISBenchmark.ps1
 │   ├── Test-NISTCompliance.ps1
-│   └── Test-PCI-DSS.ps1
+│   └── Test-PciDssCompliance.ps1
 │
 ├── 📁 Core/                            # Core Security (5 functions)
 │   ├── Compare-SecurityBaseline.ps1
@@ -629,9 +629,11 @@ The Compliance module automates security framework validation and generates audi
 |----------|---------|---------------------|------------------|
 | **`Test-CISBenchmark`** | Validates CIS-style security controls | • CIS-inspired Level 1 (basic) checks<br>• 16 automated checks<br>• Windows 10/11/Server<br>• Text remediation guidance per check (not scripts)<br>• Detailed scoring | Automated pass/fail results<br>Evidence collection |
 | **`Test-NISTCompliance`** | Assesses selected NIST 800-53 controls | • 17 controls across 5 families<br>• Access Control (AC)<br>• Audit & Accountability (AU)<br>• Identification & Authentication (IA)<br>• System & Communications Protection (SC)<br>• Configuration Management (CM) | Control validation<br>Gap analysis<br>Maturity scoring |
-| **`Test-PCI-DSS`** | Validates PCI-DSS requirements | • 18 requirement checks (PCI-DSS 4.0)<br>• Network security controls<br>• Access control<br>• Encryption validation<br>• Log monitoring<br>• Vulnerability management | Requirement mapping<br>Evidence generation<br>SAQ support |
+| **`Test-PciDssCompliance`** | Validates PCI-DSS requirements | • 18 requirement checks (PCI-DSS 4.0)<br>• Network security controls<br>• Access control<br>• Encryption validation<br>• Log monitoring<br>• Vulnerability management | Requirement mapping<br>Evidence generation<br>SAQ support |
 | **`Get-ComplianceReport`** | Generates comprehensive compliance reports | • Multi-framework dashboard<br>• Executive summaries<br>• Technical evidence<br>• Gap analysis<br>• Remediation roadmap<br>• Trend analysis | Professional reports<br>Audit-ready format<br>Action plans |
 | **`Export-ComplianceEvidence`** | Collects and packages audit evidence | • Configuration exports (secedit, auditpol, firewall rules, registry, gpresult)<br>• Log extraction (event logs, failed logons, PowerShell logs)<br>• Text status captures (Defender/firewall/BitLocker) — not graphical screenshots<br>• System inventory (software, users, groups, services, updates)<br>• Chain of custody documentation<br>• SHA-256 integrity hashing of the configuration exports and the final ZIP bundle | Complete evidence<br>Timestamp verification<br>Integrity hashing |
+
+`Test-PCI-DSS` still works as an alias.
 
 ---
 
