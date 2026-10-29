@@ -356,14 +356,15 @@ Describe 'WindowsSecurityAudit real-Windows smoke tests' -Tag @('Smoke', 'Window
         }
 
         $result = Invoke-SecurityRemediation -AssessmentPath $assessmentJson -GenerateRollback -WhatIf -RollbackDirectory $TestDrive
-        Assert-ResultShape -Object $result -Names @('RemediationDate', 'MaxSeverity', 'WhatIf', 'FindingsProcessed', 'Remediated', 'ManualReview', 'Failed', 'RollbackPath')
+        Assert-ResultShape -Object $result -Names @('RemediationDate', 'MaxSeverity', 'WhatIf', 'FindingsProcessed', 'Remediated', 'ManualReview', 'Failed', 'RollbackPath', 'RollbackPreview')
         $result.WhatIf | Should -BeTrue
-        # WhatIf: nothing may be applied; since v1.6.1 a rollback PREVIEW script is
-        # generated (README contract: preview fixes with a rollback script, no changes)
+        # Madde-4 WhatIf contract: nothing may be applied and NOTHING may be written
+        # to disk - no rollback file under TestDrive, RollbackPath stays null, and the
+        # would-be script content is returned in RollbackPreview instead
         @($result.Remediated).Count | Should -Be 0
-        $result.RollbackPath | Should -Not -BeNullOrEmpty
-        $result.RollbackPath | Should -Exist
-        (Get-Content -Path $result.RollbackPath -Raw) | Should -Match 'WHATIF PREVIEW'
+        $result.RollbackPath | Should -BeNullOrEmpty
+        @(Get-ChildItem -Path $TestDrive -Filter 'SecurityRemediation_Rollback_*.ps1' -Recurse -ErrorAction SilentlyContinue).Count | Should -Be 0
+        $result.RollbackPreview | Should -Match 'WHATIF PREVIEW'
     }
 
     It 'Update-DefenderConfiguration honors -WhatIf without changing the system' {

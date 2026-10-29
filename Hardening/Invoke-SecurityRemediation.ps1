@@ -28,7 +28,9 @@ function Invoke-SecurityRemediation {
         Invoke-SecurityAssessment -OutputPath "C:\Assessments" | Invoke-SecurityRemediation -GenerateRollback -Confirm
         Pipe an assessment object directly into remediation with confirmation prompts
     .OUTPUTS
-        PSCustomObject with FindingsProcessed, Remediated, ManualReview, Failed, and RollbackPath
+        PSCustomObject with FindingsProcessed, Remediated, ManualReview, Failed, RollbackPath,
+        and RollbackPreview (under -WhatIf the rollback script content is returned in
+        RollbackPreview instead of being written to disk)
     #>
 
     [CmdletBinding(SupportsShouldProcess, ConfirmImpact = 'High', DefaultParameterSetName = 'File')]
@@ -96,6 +98,7 @@ function Invoke-SecurityRemediation {
             ManualReview          = @()
             Failed                = @()
             RollbackPath          = $null
+            RollbackPreview       = $null
         }
 
         $rollbackScriptLines = @()
@@ -500,28 +503,24 @@ function Invoke-SecurityRemediation {
                     }
                     $header += ""
 
-                    # The rollback script is an output artifact (like a report),
-                    # so it is written even under -WhatIf - that is the documented
-                    # 'preview fixes with a rollback script, no changes' behavior.
-                    # ShouldProcess still gates the write on real (non-WhatIf) runs.
-                    if ($WhatIfPreference -or $PSCmdlet.ShouldProcess($rollbackFile, "Write rollback script")) {
-                        # -WhatIf:$false: New-Item/Set-Content support ShouldProcess and
-                        # would inherit $WhatIfPreference, silently skipping the write -
-                        # the rollback script is an output artifact and must really be written
+                    $rollbackContent = ($header + $rollbackScriptLines) -join [Environment]::NewLine
+
+                    if ($WhatIfPreference) {
+                        # WhatIf contract: NEVER write to disk. The full rollback
+                        # script content is returned on the result object instead.
+                        $results.RollbackPreview = $rollbackContent
+                        Write-Host "`n[ROLLBACK] WhatIf: would write rollback script to $rollbackFile (content returned in RollbackPreview)" -ForegroundColor Magenta
+                    }
+                    elseif ($PSCmdlet.ShouldProcess($rollbackFile, "Write rollback script")) {
                         if (-not (Test-Path -Path $RollbackDirectory)) {
-                            New-Item -Path $RollbackDirectory -ItemType Directory -Force -WhatIf:$false | Out-Null
+                            New-Item -Path $RollbackDirectory -ItemType Directory -Force | Out-Null
                         }
-                        Set-Content -Path $rollbackFile -Value (($header + $rollbackScriptLines) -join [Environment]::NewLine) -Encoding UTF8 -ErrorAction Stop -WhatIf:$false
+                        Set-Content -Path $rollbackFile -Value $rollbackContent -Encoding UTF8 -ErrorAction Stop
                         $results.RollbackPath = $rollbackFile
-                        if ($WhatIfPreference) {
-                            Write-Host "`n[ROLLBACK] WhatIf preview rollback script written: $rollbackFile" -ForegroundColor Magenta
-                        }
-                        else {
-                            Write-Host "`n[ROLLBACK] Rollback script written: $rollbackFile" -ForegroundColor Green
-                        }
+                        Write-Host "`n[ROLLBACK] Rollback script written: $rollbackFile" -ForegroundColor Green
                     }
                     else {
-                        Write-Host "`n[ROLLBACK] WhatIf: would write rollback script to $rollbackFile" -ForegroundColor Magenta
+                        Write-Host "`n[ROLLBACK] Rollback script write declined (ShouldProcess)" -ForegroundColor Yellow
                     }
                 }
                 catch {

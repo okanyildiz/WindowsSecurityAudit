@@ -40,6 +40,7 @@ function Test-SystemIntegrity {
             CorruptedFiles = @()
             RepairAttempted = $false
             RepairSuccessful = $false
+            RepairGuidance = $null
             WindowsUpdateServices = @()  # Added this property
         }
     }
@@ -89,8 +90,11 @@ function Test-SystemIntegrity {
                 $results.CorruptedFiles = $cannotRepairLines
 
                 if ($RepairFiles) {
-                    Write-Host "Attempting to repair corrupt files..." -ForegroundColor Yellow
-                    $results.RepairAttempted = $true
+                    # SFC already repaired everything it could during /scannow; the
+                    # remaining 'Cannot repair' files need a DISM RestoreHealth pass
+                    # first. Report honest guidance instead of faking a repair attempt.
+                    $results.RepairGuidance = 'SFC already repairs what it can during /scannow. For the files listed in CorruptedFiles run: DISM /Online /Cleanup-Image /RestoreHealth, then sfc /scannow again.'
+                    Write-Warning $results.RepairGuidance
                 }
             }
             elseif ($cbsLogAvailable -and $cbsTimestampsParseable) {
@@ -150,6 +154,7 @@ function Test-SystemIntegrity {
                         Write-Host "Attempting DISM repair..." -ForegroundColor Yellow
                         $null = & dism /Online /Cleanup-Image /RestoreHealth 2>&1 | Out-String
                         $dismRepairExitCode = $LASTEXITCODE
+                        $results.RepairAttempted = $true
 
                         if ($dismRepairExitCode -eq 0) {
                             $results.RepairSuccessful = $true
