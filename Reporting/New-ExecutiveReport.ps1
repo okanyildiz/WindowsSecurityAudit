@@ -53,7 +53,8 @@ function New-ExecutiveReport {
     
     .PARAMETER IncludeCharts
         Include visual charts and graphs in the report
-        Requires PowerShell charting capabilities
+        NOTE: Accepted but not implemented yet. The report contains no charts;
+        the switch is only recorded as Charts.Enabled in the report data.
     
     .PARAMETER Confidential
         Mark the report as confidential and add watermarks
@@ -62,6 +63,8 @@ function New-ExecutiveReport {
         Target audience for the report (affects detail level and language)
         Valid values: Executive, Technical, Mixed
         Default: Executive
+        NOTE: The value is recorded in the report metadata only; report content
+        is currently the same for all audiences.
     
     .PARAMETER CustomLogo
         Path to a custom logo image file to include in the report header
@@ -187,6 +190,13 @@ function New-ExecutiveReport {
         Write-Host "Output Path: $OutputPath" -ForegroundColor Gray
         Write-Host "Output Format: $OutputFormat" -ForegroundColor Gray
         Write-Host "Audience: $Audience" -ForegroundColor Gray
+        
+        if ($IncludeCharts) {
+            Write-Warning "-IncludeCharts is accepted but not implemented yet: the report contains no charts (Charts.Enabled is recorded only)."
+        }
+        if ($Audience -ne 'Executive') {
+            Write-Warning "-Audience '$Audience' is recorded in the report metadata only; report content is currently the same for all audiences."
+        }
         
         # Prepare custom logo as base64 data URI (falls back to text header)
         $logoDataUri = $null
