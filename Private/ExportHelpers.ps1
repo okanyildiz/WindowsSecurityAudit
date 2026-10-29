@@ -29,6 +29,20 @@ function Protect-CsvField {
     return $text
 }
 
+function ConvertTo-CsvSafeObject {
+    [CmdletBinding()]
+    param([Parameter(ValueFromPipeline = $true)][AllowNull()][object]$InputObject)
+    process {
+        if ($null -eq $InputObject) { return }
+        $row = [ordered]@{}
+        foreach ($property in $InputObject.PSObject.Properties) {
+            $value = $property.Value
+            $row[$property.Name] = if ($value -is [string]) { Protect-CsvField $value } else { $value }
+        }
+        [PSCustomObject]$row
+    }
+}
+
 function ConvertTo-HtmlEncoded {
     [CmdletBinding()]
     [OutputType([string])]

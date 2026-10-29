@@ -445,7 +445,7 @@ function Get-MultiSystemAudit {
         
         # Export system summary
         $auditResults.SystemAudits | Select-Object ComputerName, Status, SecurityScore, SecurityLevel, @{N='FindingsCount';E={$_.Findings.Count}} |
-            Export-Csv (Join-Path $OutputPath "SystemSummary.csv") -NoTypeInformation
+            ConvertTo-CsvSafeObject | Export-Csv (Join-Path $OutputPath "SystemSummary.csv") -NoTypeInformation
         
         # Export all findings
         $allFindings = @($auditResults.SystemAudits | ForEach-Object {
@@ -454,7 +454,7 @@ function Get-MultiSystemAudit {
         })
         
         if ($allFindings.Count -gt 0) {
-            $allFindings | Export-Csv (Join-Path $OutputPath "AllFindings.csv") -NoTypeInformation
+            $allFindings | ConvertTo-CsvSafeObject | Export-Csv (Join-Path $OutputPath "AllFindings.csv") -NoTypeInformation
         }
         
         # Generate HTML report if requested

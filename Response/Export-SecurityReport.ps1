@@ -284,7 +284,7 @@ if ($highSeverityProcs.Count -gt 0) {
             if ($Format -in @('CSV', 'All')) {
                 Write-Host "Generating CSV reports..." -ForegroundColor Yellow
                 $csvPath = Join-Path $OutputPath "${reportBaseName}_Findings.csv"
-                $reportData.Findings | Export-Csv $csvPath -NoTypeInformation
+                $reportData.Findings | ConvertTo-CsvSafeObject | Export-Csv $csvPath -NoTypeInformation
                 $generatedFiles += $csvPath
             }
             

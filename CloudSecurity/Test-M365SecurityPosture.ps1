@@ -306,7 +306,7 @@ function Test-M365SecurityPosture {
                 
                 if ($Format -in @('CSV', 'All')) {
                     $csvPath = Join-Path $ExportPath "M365Security_$timestamp.csv"
-                    $results.SecurityFindings | Export-Csv $csvPath -NoTypeInformation
+                    $results.SecurityFindings | ConvertTo-CsvSafeObject | Export-Csv $csvPath -NoTypeInformation
                     Write-Host "Exported CSV: $csvPath" -ForegroundColor Green
                 }
                 

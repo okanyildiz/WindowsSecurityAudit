@@ -906,7 +906,7 @@ function Invoke-EnterpriseSecurityScan {
 
             # Create CSV summary
             $results.SystemResults | Select-Object ComputerName, Status, SecurityScore, @{N='FindingsCount';E={$_.Findings.Count}} |
-                Export-Csv (Join-Path $OutputPath "EnterpriseScan_Summary.csv") -NoTypeInformation
+                ConvertTo-CsvSafeObject | Export-Csv (Join-Path $OutputPath "EnterpriseScan_Summary.csv") -NoTypeInformation
 
             # Export detailed findings
             $allFindings = @($results.SystemResults | ForEach-Object {
@@ -915,7 +915,7 @@ function Invoke-EnterpriseSecurityScan {
             })
 
             if ($allFindings.Count -gt 0) {
-                $allFindings | Export-Csv (Join-Path $OutputPath "EnterpriseScan_Findings.csv") -NoTypeInformation
+                $allFindings | ConvertTo-CsvSafeObject | Export-Csv (Join-Path $OutputPath "EnterpriseScan_Findings.csv") -NoTypeInformation
             }
 
             Write-Host "`nResults saved to: $OutputPath" -ForegroundColor Cyan

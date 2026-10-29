@@ -129,7 +129,7 @@ function Export-ComplianceEvidence {
                     Write-Host "  Exporting firewall rules..." -ForegroundColor Gray
                     $fwPath = Join-Path $directories.Configuration "FirewallRules.csv"
                     Get-NetFirewallRule | Select-Object Name, DisplayName, Enabled, Direction, Action, Profile | 
-                        Export-Csv $fwPath -NoTypeInformation
+                        ConvertTo-CsvSafeObject | Export-Csv $fwPath -NoTypeInformation
                     
                     $manifest.CollectedFiles += "01_Configuration\FirewallRules.csv"
                     $hash = (Get-FileHash $fwPath -Algorithm SHA256).Hash
@@ -224,7 +224,7 @@ function Export-ComplianceEvidence {
                     if ($failedLogons) {
                         $logonPath = Join-Path $directories.Logs "FailedLogons.csv"
                         $failedLogons | Select-Object TimeCreated, Id, Message | 
-                            Export-Csv $logonPath -NoTypeInformation
+                            ConvertTo-CsvSafeObject | Export-Csv $logonPath -NoTypeInformation
                         $manifest.CollectedFiles += "02_Logs\FailedLogons.csv"
                     }
                     
@@ -238,7 +238,7 @@ function Export-ComplianceEvidence {
                     if ($psLogs) {
                         $psPath = Join-Path $directories.Logs "PowerShellLogs.csv"
                         $psLogs | Select-Object TimeCreated, Id, LevelDisplayName, Message | 
-                            Export-Csv $psPath -NoTypeInformation
+                            ConvertTo-CsvSafeObject | Export-Csv $psPath -NoTypeInformation
                         $manifest.CollectedFiles += "02_Logs\PowerShellLogs.csv"
                     }
                     
@@ -305,14 +305,14 @@ function Export-ComplianceEvidence {
                     Get-ItemProperty HKLM:\Software\Microsoft\Windows\CurrentVersion\Uninstall\* | 
                         Select-Object DisplayName, DisplayVersion, Publisher, InstallDate | 
                         Where-Object { $_.DisplayName } | 
-                        Export-Csv $softwarePath -NoTypeInformation
+                        ConvertTo-CsvSafeObject | Export-Csv $softwarePath -NoTypeInformation
                     $manifest.CollectedFiles += "04_SystemInfo\InstalledSoftware.csv"
                     
                     # Local Users
                     Write-Host "  Collecting local users information..." -ForegroundColor Gray
                     $usersPath = Join-Path $directories.SystemInfo "LocalUsers.csv"
                     Get-LocalUser | Select-Object Name, Enabled, LastLogon, PasswordLastSet, PasswordExpires | 
-                        Export-Csv $usersPath -NoTypeInformation
+                        ConvertTo-CsvSafeObject | Export-Csv $usersPath -NoTypeInformation
                     $manifest.CollectedFiles += "04_SystemInfo\LocalUsers.csv"
                     
                     # Local Groups - FIXED: Proper error handling with foreach
@@ -339,7 +339,7 @@ function Export-ComplianceEvidence {
                     }
                     
                     if ($groupData.Count -gt 0) {
-                        $groupData | Export-Csv $groupsPath -NoTypeInformation
+                        $groupData | ConvertTo-CsvSafeObject | Export-Csv $groupsPath -NoTypeInformation
                         $manifest.CollectedFiles += "04_SystemInfo\LocalGroups.csv"
                     }
                     
@@ -353,7 +353,7 @@ function Export-ComplianceEvidence {
                     Write-Host "  Collecting services list..." -ForegroundColor Gray
                     $servicesPath = Join-Path $directories.SystemInfo "Services.csv"
                     Get-Service | Select-Object Name, DisplayName, Status, StartType | 
-                        Export-Csv $servicesPath -NoTypeInformation
+                        ConvertTo-CsvSafeObject | Export-Csv $servicesPath -NoTypeInformation
                     $manifest.CollectedFiles += "04_SystemInfo\Services.csv"
                     
                     # Windows Updates
@@ -374,7 +374,7 @@ function Export-ComplianceEvidence {
                                     4 { 'Failed' }
                                     5 { 'Aborted' }
                                 }
-                            }} | Export-Csv $updatesPath -NoTypeInformation
+                            }} | ConvertTo-CsvSafeObject | Export-Csv $updatesPath -NoTypeInformation
                             $manifest.CollectedFiles += "04_SystemInfo\WindowsUpdates.csv"
                         }
                     }

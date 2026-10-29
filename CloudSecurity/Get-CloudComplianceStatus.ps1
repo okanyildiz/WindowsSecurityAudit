@@ -175,7 +175,7 @@ function Get-CloudComplianceStatus {
 
                 if ($Format -in @('CSV', 'All')) {
                     $csvPath = Join-Path $ExportPath "Compliance_${Framework}_$timestamp.csv"
-                    $results.Controls | Export-Csv $csvPath -NoTypeInformation
+                    $results.Controls | ConvertTo-CsvSafeObject | Export-Csv $csvPath -NoTypeInformation
                     Write-Host "Exported CSV: $csvPath" -ForegroundColor Green
                 }
 

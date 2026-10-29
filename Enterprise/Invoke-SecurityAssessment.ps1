@@ -1155,7 +1155,7 @@ foreach ($categoryName in $assessment.Categories.Keys) {
         
         # Export findings
         if ($assessment.Findings.Count -gt 0) {
-            $assessment.Findings | Export-Csv (Join-Path $OutputPath "SecurityFindings.csv") -NoTypeInformation
+            $assessment.Findings | ConvertTo-CsvSafeObject | Export-Csv (Join-Path $OutputPath "SecurityFindings.csv") -NoTypeInformation
         }
         
         # Export recommendations

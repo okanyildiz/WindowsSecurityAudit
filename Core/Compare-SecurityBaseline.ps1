@@ -312,7 +312,7 @@ function Compare-SecurityBaseline {
                 $csvFile = Join-Path -Path $OutputPath -ChildPath "CompareChanges_$timestamp.csv"
 
                 $result | ConvertTo-Json -Depth 10 | Out-File -FilePath $jsonFile -Encoding UTF8
-                $changes | Export-Csv -Path $csvFile -NoTypeInformation -Encoding UTF8
+                $changes | ConvertTo-CsvSafeObject | Export-Csv -Path $csvFile -NoTypeInformation -Encoding UTF8
 
                 Write-Host "Results exported to: $jsonFile" -ForegroundColor Green
                 Write-Host "Changes exported to: $csvFile" -ForegroundColor Green
