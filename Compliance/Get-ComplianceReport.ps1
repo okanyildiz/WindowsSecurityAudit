@@ -84,19 +84,24 @@ function Get-ComplianceReport {
                         Passed = $cisResult.Summary.Passed
                         Failed = $cisResult.Summary.Failed
                         NotApplicable = $cisResult.Summary.NotApplicable
+                        Manual = $cisResult.Summary.Manual
+                        NotEvaluated = $cisResult.Summary.NotEvaluated
+                        CoveragePercentage = $cisResult.Summary.CoveragePercentage
                         CriticalGaps = @($cisResult.Controls | Where-Object { $_.Status -eq 'Fail' -and $_.Severity -eq 'Critical' }).Count
                         HighGaps = @($cisResult.Controls | Where-Object { $_.Status -eq 'Fail' -and $_.Severity -eq 'High' }).Count
                         MediumGaps = @($cisResult.Controls | Where-Object { $_.Status -eq 'Fail' -and $_.Severity -eq 'Medium' }).Count
                         Controls = $cisResult.Controls
-                        Status = if ($cisResult.Summary.CompliancePercentage -ge 80) { 'Pass' } 
-                                 elseif ($cisResult.Summary.CompliancePercentage -ge 60) { 'Marginal' } 
+                        Status = if ($null -eq $cisResult.Summary.CompliancePercentage) { 'N/A' }
+                                 elseif ($cisResult.Summary.CompliancePercentage -ge 80) { 'Pass' }
+                                 elseif ($cisResult.Summary.CompliancePercentage -ge 60) { 'Marginal' }
                                  else { 'Fail' }
                     }
                     
                     $report.Frameworks += $frameworkSummary
                     $frameworkResults += $cisResult
                     
-                    Write-Host "  CIS Compliance: $($cisResult.Summary.CompliancePercentage)%" -ForegroundColor $(
+                    $cisComplianceDisplay = if ($null -eq $cisResult.Summary.CompliancePercentage) { 'N/A' } else { "$($cisResult.Summary.CompliancePercentage)%" }
+                    Write-Host "  CIS Compliance: $cisComplianceDisplay" -ForegroundColor $(
                         if ($cisResult.Summary.CompliancePercentage -ge 80) { 'Green' } 
                         elseif ($cisResult.Summary.CompliancePercentage -ge 60) { 'Yellow' } 
                         else { 'Red' }
@@ -121,19 +126,24 @@ function Get-ComplianceReport {
                         Passed = $nistResult.Summary.Compliant
                         Failed = $nistResult.Summary.NonCompliant
                         NotApplicable = $nistResult.Summary.NotApplicable
+                        Manual = $nistResult.Summary.Manual
+                        NotEvaluated = $nistResult.Summary.NotEvaluated
+                        CoveragePercentage = $nistResult.Summary.CoveragePercentage
                         CriticalGaps = @($nistResult.Controls | Where-Object { $_.Status -eq 'NonCompliant' -and $_.Impact -eq 'Critical' }).Count
                         HighGaps = @($nistResult.Controls | Where-Object { $_.Status -eq 'NonCompliant' -and $_.Impact -eq 'High' }).Count
                         MediumGaps = @($nistResult.Controls | Where-Object { $_.Status -eq 'NonCompliant' -and $_.Impact -eq 'Medium' }).Count
                         Controls = $nistResult.Controls
-                        Status = if ($nistResult.Summary.CompliancePercentage -ge 80) { 'Pass' } 
-                                 elseif ($nistResult.Summary.CompliancePercentage -ge 60) { 'Marginal' } 
+                        Status = if ($null -eq $nistResult.Summary.CompliancePercentage) { 'N/A' }
+                                 elseif ($nistResult.Summary.CompliancePercentage -ge 80) { 'Pass' }
+                                 elseif ($nistResult.Summary.CompliancePercentage -ge 60) { 'Marginal' }
                                  else { 'Fail' }
                     }
                     
                     $report.Frameworks += $frameworkSummary
                     $frameworkResults += $nistResult
                     
-                    Write-Host "  NIST Compliance: $($nistResult.Summary.CompliancePercentage)%" -ForegroundColor $(
+                    $nistComplianceDisplay = if ($null -eq $nistResult.Summary.CompliancePercentage) { 'N/A' } else { "$($nistResult.Summary.CompliancePercentage)%" }
+                    Write-Host "  NIST Compliance: $nistComplianceDisplay" -ForegroundColor $(
                         if ($nistResult.Summary.CompliancePercentage -ge 80) { 'Green' } 
                         elseif ($nistResult.Summary.CompliancePercentage -ge 60) { 'Yellow' } 
                         else { 'Red' }
@@ -158,19 +168,24 @@ function Get-ComplianceReport {
                         Passed = $pciResult.Summary.InPlace
                         Failed = $pciResult.Summary.NotInPlace
                         NotApplicable = $pciResult.Summary.NotApplicable
+                        Manual = $pciResult.Summary.Manual
+                        NotEvaluated = $pciResult.Summary.NotEvaluated
+                        CoveragePercentage = $pciResult.Summary.CoveragePercentage
                         CriticalGaps = @($pciResult.Requirements | Where-Object { $_.Status -eq 'NotInPlace' -and $_.Priority -eq 'Critical' }).Count
                         HighGaps = @($pciResult.Requirements | Where-Object { $_.Status -eq 'NotInPlace' -and $_.Priority -eq 'High' }).Count
                         MediumGaps = @($pciResult.Requirements | Where-Object { $_.Status -eq 'NotInPlace' -and $_.Priority -eq 'Medium' }).Count
                         Controls = $pciResult.Requirements
-                        Status = if ($pciResult.Summary.CompliancePercentage -eq 100) { 'Pass' } 
-                                 elseif ($pciResult.Summary.CompliancePercentage -ge 80) { 'Marginal' } 
+                        Status = if ($null -eq $pciResult.Summary.CompliancePercentage) { 'N/A' }
+                                 elseif ($pciResult.Summary.CompliancePercentage -eq 100) { 'Pass' }
+                                 elseif ($pciResult.Summary.CompliancePercentage -ge 80) { 'Marginal' }
                                  else { 'Fail' }
                     }
                     
                     $report.Frameworks += $frameworkSummary
                     $frameworkResults += $pciResult
                     
-                    Write-Host "  PCI-DSS Compliance: $($pciResult.Summary.CompliancePercentage)%" -ForegroundColor $(
+                    $pciComplianceDisplay = if ($null -eq $pciResult.Summary.CompliancePercentage) { 'N/A' } else { "$($pciResult.Summary.CompliancePercentage)%" }
+                    Write-Host "  PCI-DSS Compliance: $pciComplianceDisplay" -ForegroundColor $(
                         if ($pciResult.Summary.CompliancePercentage -eq 100) { 'Green' } 
                         elseif ($pciResult.Summary.CompliancePercentage -ge 80) { 'Yellow' } 
                         else { 'Red' }
@@ -374,7 +389,7 @@ function Get-ComplianceReport {
                 # Export CSV (Summary)
                 if ($Format -in @('CSV', 'All')) {
                     $csvPath = Join-Path $OutputPath "$reportName.csv"
-                    $report.Frameworks | Export-Csv $csvPath -NoTypeInformation
+                    $report.Frameworks | ConvertTo-CsvSafeObject | Export-Csv $csvPath -NoTypeInformation
                     Write-Host "  CSV report saved: $csvPath" -ForegroundColor Green
                 }
                 
@@ -411,7 +426,8 @@ function Get-ComplianceReport {
         
         Write-Host "`nFramework Results:" -ForegroundColor Cyan
         foreach ($framework in $report.Frameworks) {
-            Write-Host "  $($framework.Framework): $($framework.CompliancePercentage)% [$($framework.Status)]" -ForegroundColor $(
+            $frameworkComplianceDisplay = if ($null -eq $framework.CompliancePercentage) { 'N/A' } else { "$($framework.CompliancePercentage)%" }
+            Write-Host "  $($framework.Framework): $frameworkComplianceDisplay [$($framework.Status)]" -ForegroundColor $(
                 if ($framework.Status -eq 'Pass') { 'Green' }
                 elseif ($framework.Status -eq 'Marginal') { 'Yellow' }
                 else { 'Red' }

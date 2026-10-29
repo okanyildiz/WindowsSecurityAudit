@@ -51,7 +51,11 @@
                 NonCompliant = 0
                 PartiallyCompliant = 0
                 NotApplicable = 0
+                Manual = 0
+                NotEvaluated = 0
+                EvaluatedControls = 0
                 CompliancePercentage = 0
+                CoveragePercentage = 0
             }
             Recommendations = @()
         }
@@ -113,7 +117,7 @@
                         Description = 'Guest and default Administrator accounts should be disabled'
                         Expected = 'Guest and Administrator accounts disabled'
                         Actual = "Guest: $(if(-not $guestKnown){'Unknown'}elseif($guestDisabled){'Disabled'}else{'Enabled'}), Admin: $(if(-not $adminKnown){'Unknown'}elseif($adminDisabled){'Disabled'}else{'Enabled'})"
-                        Status = if (-not $guestKnown -or -not $adminKnown) { 'NotApplicable' }
+                        Status = if (-not $guestKnown -or -not $adminKnown) { 'NotEvaluated' }
                                  elseif ($guestDisabled -and $adminDisabled) { 'Compliant' }
                                  elseif ($guestDisabled -or $adminDisabled) { 'PartiallyCompliant' }
                                  else { 'NonCompliant' }
@@ -138,7 +142,7 @@
                         Actual = if ($null -eq $lockoutThreshold) { 'Unable to determine' }
                                  elseif ($lockoutThreshold -eq 0) { 'Lockout disabled (0)' }
                                  else { "$lockoutThreshold attempts" }
-                        Status = if ($null -eq $lockoutThreshold) { 'NotApplicable' }
+                        Status = if ($null -eq $lockoutThreshold) { 'NotEvaluated' }
                                  elseif ($lockoutThreshold -ge 1 -and $lockoutThreshold -le 10) { 'Compliant' }
                                  else { 'NonCompliant' }
                         Impact = 'High'
@@ -213,7 +217,7 @@
                         Expected = 'Audit policies configured'
                         Actual = if ($null -eq $logonAuditValue) { 'Unable to determine' }
                                  elseif ($logonAuditValue -ge 1 -and $logonAuditValue -le 3) { "Configured" } else { "Not configured" }
-                        Status = if ($null -eq $logonAuditValue) { 'NotApplicable' }
+                        Status = if ($null -eq $logonAuditValue) { 'NotEvaluated' }
                                  elseif ($logonAuditValue -ge 1 -and $logonAuditValue -le 3) { 'Compliant' } else { 'NonCompliant' }
                         Impact = 'High'
                         Remediation = 'Enable audit policies for security events'
@@ -236,7 +240,7 @@
                         Expected = 'Security log size >= 100MB'
                         Actual = if (-not $winEventAvailable) { 'Unable to evaluate — Get-WinEvent unavailable' }
                                  else { "$([math]::Round($eventLogSize/1MB)) MB" }
-                        Status = if (-not $winEventAvailable) { 'NotApplicable' }
+                        Status = if (-not $winEventAvailable) { 'NotEvaluated' }
                                  elseif ($eventLogSize -ge 100MB) { 'Compliant' } else { 'NonCompliant' }
                         Impact = 'Medium'
                         Remediation = 'Increase Security event log size to at least 100MB'
@@ -258,7 +262,7 @@
                                 Description = 'Audit logs must be protected from unauthorized access'
                                 Expected = 'Security log protected from normal users'
                                 Actual = 'Unable to read ACL'
-                                Status = 'NotApplicable'
+                                Status = 'NotEvaluated'
                                 Impact = 'High'
                                 Remediation = 'Restrict Security event log access to administrators only'
                             }
@@ -298,7 +302,7 @@
                         Expected = 'Process creation auditing enabled'
                         Actual = if ($null -eq $processAuditEntry -or $null -eq $processAuditEntry.Value) { 'Unable to determine' }
                                  elseif ($processAuditEntry.Success) { "Enabled" } else { "Disabled" }
-                        Status = if ($null -eq $processAuditEntry -or $null -eq $processAuditEntry.Value) { 'NotApplicable' }
+                        Status = if ($null -eq $processAuditEntry -or $null -eq $processAuditEntry.Value) { 'NotEvaluated' }
                                  elseif ($processAuditEntry.Success) { 'Compliant' } else { 'NonCompliant' }
                         Impact = 'Medium'
                         Remediation = 'Enable process creation auditing'
@@ -327,7 +331,7 @@
                         Expected = 'Minimum password length >= 14 characters'
                         Actual = if ($null -eq $minPasswordLength) { 'Unable to determine' }
                                  else { "$minPasswordLength characters" }
-                        Status = if ($null -eq $minPasswordLength) { 'NotApplicable' }
+                        Status = if ($null -eq $minPasswordLength) { 'NotEvaluated' }
                                  elseif ($minPasswordLength -ge 14) { 'Compliant' } else { 'NonCompliant' }
                         Impact = 'High'
                         Remediation = 'Set minimum password length to 14 characters'
@@ -345,7 +349,7 @@
                         Expected = 'Maximum password age <= 60 days'
                         Actual = if ($null -eq $maxAgeDays) { 'Unable to determine' }
                                  elseif ($maxAgeDays -eq -1) { 'Never expires' } else { "$maxAgeDays days" }
-                        Status = if ($null -eq $maxAgeDays) { 'NotApplicable' }
+                        Status = if ($null -eq $maxAgeDays) { 'NotEvaluated' }
                                  elseif ($maxAgeDays -gt 0 -and $maxAgeDays -le 60) { 'Compliant' } else { 'NonCompliant' }
                         Impact = 'High'
                         Remediation = 'Set maximum password age to 60 days or less'
@@ -399,7 +403,8 @@
                         Actual = if (-not $firewallCmdletAvailable) { 'Unable to evaluate — Get-NetFirewallProfile unavailable' }
                                  elseif ($null -eq $firewallProfiles) { "Unable to retrieve firewall profiles" }
                                  elseif ($allFirewallsEnabled) { "All enabled" } else { "Some disabled" }
-                        Status = if (-not $firewallCmdletAvailable) { 'NotApplicable' }
+                        Status = if (-not $firewallCmdletAvailable) { 'NotEvaluated' }
+                                 elseif ($null -eq $firewallProfiles) { 'NotEvaluated' }
                                  elseif ($allFirewallsEnabled) { 'Compliant' } else { 'NonCompliant' }
                         Impact = 'Critical'
                         Remediation = 'Enable Windows Firewall for all profiles'
@@ -442,7 +447,7 @@
                         Expected = 'BitLocker enabled'
                         Actual = if (-not $bitlockerAvailable) { 'Unable to evaluate — Get-BitLockerVolume unavailable' }
                                  elseif ($bitlockerEnabled) { "Enabled" } else { "Disabled" }
-                        Status = if (-not $bitlockerAvailable) { 'NotApplicable' }
+                        Status = if (-not $bitlockerAvailable) { 'NotEvaluated' }
                                  elseif ($bitlockerEnabled) { 'Compliant' } else { 'NonCompliant' }
                         Impact = 'High'
                         Remediation = 'Enable BitLocker encryption'
@@ -478,7 +483,7 @@
                         Expected = 'Windows Defender enabled'
                         Actual = if (-not $mpStatusAvailable) { 'Unable to evaluate — Get-MpComputerStatus unavailable' }
                                  elseif ($defenderEnabled) { "Enabled" } else { "Disabled" }
-                        Status = if (-not $mpStatusAvailable) { 'NotApplicable' }
+                        Status = if (-not $mpStatusAvailable) { 'NotEvaluated' }
                                  elseif ($defenderEnabled) { 'Compliant' } else { 'NonCompliant' }
                         Impact = 'Critical'
                         Remediation = 'Enable Windows Defender antivirus'
@@ -505,7 +510,7 @@
                         Expected = 'No unnecessary services running'
                         Actual = if (-not $serviceCmdletAvailable) { 'Unable to evaluate — Get-Service unavailable' }
                                  elseif ($unnecessaryServices.Count -eq 0) { "Clean" } else { "$($unnecessaryServices.Count) unnecessary services" }
-                        Status = if (-not $serviceCmdletAvailable) { 'NotApplicable' }
+                        Status = if (-not $serviceCmdletAvailable) { 'NotEvaluated' }
                                  elseif ($unnecessaryServices.Count -eq 0) { 'Compliant' } else { 'NonCompliant' }
                         Impact = 'Medium'
                         Remediation = 'Disable unnecessary services (Telnet, SNMP, SSDP)'
@@ -520,7 +525,7 @@
                         Description = 'Maintain accurate inventory of system components'
                         Expected = 'Inventory maintained'
                         Actual = 'Manual verification required'
-                        Status = 'NotApplicable'
+                        Status = 'Manual'
                         Impact = 'Low'
                         Remediation = 'Implement automated inventory management'
                     }
@@ -537,11 +542,27 @@
             $results.Summary.NonCompliant = @($results.Controls | Where-Object { $_.Status -eq 'NonCompliant' }).Count
             $results.Summary.PartiallyCompliant = @($results.Controls | Where-Object { $_.Status -eq 'PartiallyCompliant' }).Count
             $results.Summary.NotApplicable = @($results.Controls | Where-Object { $_.Status -eq 'NotApplicable' }).Count
-            
-            $testableControls = $results.Summary.TotalControls - $results.Summary.NotApplicable
-            if ($testableControls -gt 0) {
+            $results.Summary.Manual = @($results.Controls | Where-Object { $_.Status -eq 'Manual' }).Count
+            $results.Summary.NotEvaluated = @($results.Controls | Where-Object { $_.Status -eq 'NotEvaluated' }).Count
+
+            # NotEvaluated stays in the denominator and never counts as compliant;
+            # only NotApplicable and Manual leave the denominator.
+            $scopedControls = $results.Summary.TotalControls - $results.Summary.NotApplicable - $results.Summary.Manual
+            $evaluatedControls = $scopedControls - $results.Summary.NotEvaluated
+            $results.Summary.EvaluatedControls = $evaluatedControls
+            if ($scopedControls -gt 0) {
                 $compliantCount = $results.Summary.Compliant + ($results.Summary.PartiallyCompliant * 0.5)
-                $results.Summary.CompliancePercentage = [math]::Round(($compliantCount / $testableControls) * 100, 2)
+                $results.Summary.CompliancePercentage = [math]::Round(($compliantCount / $scopedControls) * 100, 2)
+                $results.Summary.CoveragePercentage = [math]::Round(($evaluatedControls / $scopedControls) * 100, 2)
+            }
+            else {
+                $results.Summary.CompliancePercentage = $null
+                $results.Summary.CoveragePercentage = $null
+            }
+
+            if ($results.Summary.NotEvaluated -gt 0) {
+                $notEvaluatedIds = @($results.Controls | Where-Object { $_.Status -eq 'NotEvaluated' } | ForEach-Object { $_.ControlID }) -join ', '
+                Write-Warning "$($results.Summary.NotEvaluated) control(s) could not be evaluated and are counted as not compliant: $notEvaluatedIds"
             }
             
             # Generate recommendations - FIX: All wrapped in @()
@@ -555,6 +576,10 @@
             
             if ($highFailed.Count -gt 0) {
                 $results.Recommendations += "HIGH: $($highFailed.Count) high-impact control(s) non-compliant"
+            }
+
+            foreach ($notEvaluatedControl in @($results.Controls | Where-Object { $_.Status -eq 'NotEvaluated' })) {
+                $results.Recommendations += "Could not evaluate $($notEvaluatedControl.ControlID): run elevated or install the required feature/module"
             }
             
             if ($results.Summary.CompliancePercentage -lt 80) {
@@ -572,19 +597,24 @@
     }
     
     end {
+        $complianceDisplay = if ($null -eq $results.Summary.CompliancePercentage) { 'N/A' } else { "$($results.Summary.CompliancePercentage)%" }
+        $coverageDisplay = if ($null -eq $results.Summary.CoveragePercentage) { 'N/A' } else { "$($results.Summary.CoveragePercentage)%" }
+
         Write-Host "`n=== COMPLIANCE TEST COMPLETE ===" -ForegroundColor $(
             if ($results.Summary.CompliancePercentage -ge 80) { 'Green' }
             elseif ($results.Summary.CompliancePercentage -ge 60) { 'Yellow' }
             else { 'Red' }
         )
-        
+
         Write-Host "`nCompliance Summary:" -ForegroundColor Cyan
         Write-Host "  Total Controls Tested: $($results.Summary.TotalControls)" -ForegroundColor White
         Write-Host "  Compliant: $($results.Summary.Compliant)" -ForegroundColor Green
         Write-Host "  Non-Compliant: $($results.Summary.NonCompliant)" -ForegroundColor Red
         Write-Host "  Partially Compliant: $($results.Summary.PartiallyCompliant)" -ForegroundColor Yellow
         Write-Host "  Not Applicable: $($results.Summary.NotApplicable)" -ForegroundColor Gray
-        Write-Host "  Compliance: $($results.Summary.CompliancePercentage)%" -ForegroundColor $(
+        Write-Host "  Manual: $($results.Summary.Manual)" -ForegroundColor Yellow
+        Write-Host "  Not Evaluated: $($results.Summary.NotEvaluated)" -ForegroundColor Yellow
+        Write-Host "  Compliance: $complianceDisplay (coverage $coverageDisplay, $($results.Summary.NotEvaluated) not evaluated)" -ForegroundColor $(
             if ($results.Summary.CompliancePercentage -ge 80) { 'Green' }
             elseif ($results.Summary.CompliancePercentage -ge 60) { 'Yellow' }
             else { 'Red' }

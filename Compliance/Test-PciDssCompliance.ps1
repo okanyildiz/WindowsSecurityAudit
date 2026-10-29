@@ -50,7 +50,11 @@
                 InPlace = 0
                 NotInPlace = 0
                 NotApplicable = 0
+                Manual = 0
+                NotEvaluated = 0
+                EvaluatedControls = 0
                 CompliancePercentage = 0
+                CoveragePercentage = 0
             }
             Recommendations = @()
         }
@@ -117,7 +121,8 @@
                         Actual = if (-not $firewallCmdletAvailable) { 'Unable to evaluate — Get-NetFirewallProfile unavailable' }
                                  elseif ($null -eq $firewallProfiles) { "Unable to retrieve firewall profiles" }
                                  elseif ($allFirewallsEnabled) { "All enabled" } else { "Some disabled" }
-                        Status = if (-not $firewallCmdletAvailable) { 'NotApplicable' }
+                        Status = if (-not $firewallCmdletAvailable) { 'NotEvaluated' }
+                                 elseif ($null -eq $firewallProfiles) { 'NotEvaluated' }
                                  elseif ($allFirewallsEnabled) { 'InPlace' } else { 'NotInPlace' }
                         Priority = 'Critical'
                         Remediation = 'Enable all Windows Firewall profiles (Domain, Private, Public)'
@@ -136,8 +141,9 @@
                         Actual = if (-not $firewallCmdletAvailable) { 'Unable to evaluate — Get-NetFirewallProfile unavailable' }
                                  elseif ($null -eq $firewallProfiles) { "Unable to retrieve firewall profiles" }
                                  elseif ($defaultInboundBlock.Count -eq 0) { "All blocked" } else { "$($defaultInboundBlock.Count) profiles allow" }
-                        Status = if (-not $firewallCmdletAvailable) { 'NotApplicable' }
-                                 elseif (($null -ne $firewallProfiles) -and $defaultInboundBlock.Count -eq 0) { 'InPlace' } else { 'NotInPlace' }
+                        Status = if (-not $firewallCmdletAvailable) { 'NotEvaluated' }
+                                 elseif ($null -eq $firewallProfiles) { 'NotEvaluated' }
+                                 elseif ($defaultInboundBlock.Count -eq 0) { 'InPlace' } else { 'NotInPlace' }
                         Priority = 'High'
                         Remediation = 'Set default inbound action to Block for all profiles'
                     }
@@ -154,7 +160,8 @@
                         Expected = 'Public profile enabled and blocking inbound'
                         Actual = if (-not $firewallCmdletAvailable) { 'Unable to evaluate — Get-NetFirewallProfile unavailable' }
                                  elseif ($publicProfile) { "Enabled: $($publicProfile.Enabled), Inbound: $($publicProfile.DefaultInboundAction)" } else { "Public profile not found" }
-                        Status = if (-not $firewallCmdletAvailable) { 'NotApplicable' }
+                        Status = if (-not $firewallCmdletAvailable) { 'NotEvaluated' }
+                                 elseif ($null -eq $firewallProfiles) { 'NotEvaluated' }
                                  elseif ($publicProfile -and $publicProfile.Enabled -and $publicProfile.DefaultInboundAction -eq 'Block') { 'InPlace' } else { 'NotInPlace' }
                         Priority = 'High'
                         Remediation = 'Enable Public profile with default inbound block'
@@ -179,7 +186,7 @@
                         Description = 'Sensitive authentication data must not be stored'
                         Expected = 'No card data stored (manual verification)'
                         Actual = 'Manual verification required'
-                        Status = 'NotApplicable'
+                        Status = 'Manual'
                         Priority = 'Critical'
                         Remediation = 'Ensure no full track data, CVV2, or PIN blocks are stored'
                     }
@@ -203,7 +210,7 @@
                         Expected = 'Disk encryption enabled (BitLocker)'
                         Actual = if (-not $bitlockerAvailable) { 'Unable to evaluate — Get-BitLockerVolume unavailable' }
                                  elseif ($bitlockerEnabled) { "Enabled" } else { "Disabled" }
-                        Status = if (-not $bitlockerAvailable) { 'NotApplicable' }
+                        Status = if (-not $bitlockerAvailable) { 'NotEvaluated' }
                                  elseif ($bitlockerEnabled) { 'InPlace' } else { 'NotInPlace' }
                         Priority = 'Critical'
                         Remediation = 'Enable BitLocker or third-party disk encryption'
@@ -218,7 +225,7 @@
                         Description = 'Cryptographic keys must be managed securely'
                         Expected = 'Key management procedures documented'
                         Actual = 'Manual verification required'
-                        Status = 'NotApplicable'
+                        Status = 'Manual'
                         Priority = 'High'
                         Remediation = 'Document and implement key management procedures'
                     }
@@ -247,7 +254,7 @@
                         Expected = 'Guest account disabled'
                         Actual = if (-not $guestKnown) { 'Unable to determine (insufficient privileges or unsupported platform)' }
                                  elseif ($guestDisabled) { "Disabled" } else { "Enabled" }
-                        Status = if (-not $guestKnown) { 'NotApplicable' }
+                        Status = if (-not $guestKnown) { 'NotEvaluated' }
                                  elseif ($guestDisabled) { 'InPlace' } else { 'NotInPlace' }
                         Priority = 'High'
                         Remediation = 'Disable Guest and other unnecessary accounts'
@@ -266,7 +273,7 @@
                         Expected = 'Minimum 12 characters (or 8 if MFA)'
                         Actual = if ($null -eq $minPasswordLength) { 'Unable to determine (insufficient privileges or unsupported platform)' }
                                  else { "$minPasswordLength characters" }
-                        Status = if ($null -eq $minPasswordLength) { 'NotApplicable' }
+                        Status = if ($null -eq $minPasswordLength) { 'NotEvaluated' }
                                  elseif ($minPasswordLength -ge 12) { 'InPlace' } else { 'NotInPlace' }
                         Priority = 'Critical'
                         Remediation = 'Set minimum password length to 12 characters'
@@ -284,7 +291,7 @@
                         Expected = '90 days or less'
                         Actual = if ($null -eq $maxAgeDays) { 'Unable to determine (insufficient privileges or unsupported platform)' }
                                  elseif ($maxAgeDays -eq -1) { 'Never expires' } else { "$maxAgeDays days" }
-                        Status = if ($null -eq $maxAgeDays) { 'NotApplicable' }
+                        Status = if ($null -eq $maxAgeDays) { 'NotEvaluated' }
                                  elseif ($maxAgeDays -gt 0 -and $maxAgeDays -le 90) { 'InPlace' } else { 'NotInPlace' }
                         Priority = 'High'
                         Remediation = 'Set maximum password age to 90 days'
@@ -299,7 +306,7 @@
                         Description = 'MFA required for all access to CDE'
                         Expected = 'MFA enabled for administrators'
                         Actual = 'Manual verification required'
-                        Status = 'NotApplicable'
+                        Status = 'Manual'
                         Priority = 'Critical'
                         Remediation = 'Implement MFA (Windows Hello, Smart Card, or third-party)'
                     }
@@ -332,7 +339,7 @@
                         Expected = 'Logon auditing: Success and Failure'
                         Actual = if ($null -eq $logonAuditValue) { 'Unable to determine (insufficient privileges or unsupported platform)' }
                                  elseif ($logonAuditValue -eq 3) { "Enabled" } else { "Not configured" }
-                        Status = if ($null -eq $logonAuditValue) { 'NotApplicable' }
+                        Status = if ($null -eq $logonAuditValue) { 'NotEvaluated' }
                                  elseif ($logonAuditValue -eq 3) { 'InPlace' } else { 'NotInPlace' }
                         Priority = 'Critical'
                         Remediation = 'Enable audit policy for Logon events'
@@ -356,7 +363,7 @@
                         Expected = 'File system auditing enabled'
                         Actual = if ($null -eq $objectAuditValue) { 'Unable to determine (insufficient privileges or unsupported platform)' }
                                  elseif ($objectAuditValue -ge 1 -and $objectAuditValue -le 3) { "Enabled" } else { "Not configured" }
-                        Status = if ($null -eq $objectAuditValue) { 'NotApplicable' }
+                        Status = if ($null -eq $objectAuditValue) { 'NotEvaluated' }
                                  elseif ($objectAuditValue -ge 1 -and $objectAuditValue -le 3) { 'InPlace' } else { 'NotInPlace' }
                         Priority = 'High'
                         Remediation = 'Enable file system object access auditing'
@@ -379,7 +386,7 @@
                         Expected = 'Security log >= 100MB'
                         Actual = if (-not $winEventAvailable) { 'Unable to evaluate — Get-WinEvent unavailable' }
                                  else { "$([math]::Round($eventLogSize/1MB)) MB" }
-                        Status = if (-not $winEventAvailable) { 'NotApplicable' }
+                        Status = if (-not $winEventAvailable) { 'NotEvaluated' }
                                  elseif ($eventLogSize -ge 100MB) { 'InPlace' } else { 'NotInPlace' }
                         Priority = 'High'
                         Remediation = 'Increase Security log size to at least 100MB'
@@ -403,7 +410,7 @@
                         Expected = 'Windows Time service running'
                         Actual = if (-not $serviceCmdletAvailable) { 'Unable to evaluate — Get-Service unavailable' }
                                  elseif ($w32timeService) { $w32timeService.Status } else { "Not found" }
-                        Status = if (-not $serviceCmdletAvailable) { 'NotApplicable' }
+                        Status = if (-not $serviceCmdletAvailable) { 'NotEvaluated' }
                                  elseif ($w32timeService -and $w32timeService.Status -eq 'Running') { 'InPlace' } else { 'NotInPlace' }
                         Priority = 'Medium'
                         Remediation = 'Ensure Windows Time service is running and configured'
@@ -438,7 +445,7 @@
                         Expected = 'Antivirus enabled'
                         Actual = if (-not $mpStatusAvailable) { 'Unable to evaluate — Get-MpComputerStatus unavailable' }
                                  elseif ($defenderEnabled) { "Windows Defender enabled" } else { "Disabled" }
-                        Status = if (-not $mpStatusAvailable) { 'NotApplicable' }
+                        Status = if (-not $mpStatusAvailable) { 'NotEvaluated' }
                                  elseif ($defenderEnabled) { 'InPlace' } else { 'NotInPlace' }
                         Priority = 'Critical'
                         Remediation = 'Enable Windows Defender or approved antivirus'
@@ -453,7 +460,7 @@
                         Description = 'Implement file integrity monitoring'
                         Expected = 'FIM solution deployed'
                         Actual = 'Manual verification required'
-                        Status = 'NotApplicable'
+                        Status = 'Manual'
                         Priority = 'High'
                         Remediation = 'Implement file integrity monitoring (FIM) solution'
                     }
@@ -477,7 +484,7 @@
                         Description = 'Establish security policy'
                         Expected = 'Security policy documented and reviewed annually'
                         Actual = 'Manual verification required'
-                        Status = 'NotApplicable'
+                        Status = 'Manual'
                         Priority = 'High'
                         Remediation = 'Document and maintain information security policy'
                     }
@@ -491,7 +498,7 @@
                         Description = 'Implement incident response plan'
                         Expected = 'Incident response plan documented and tested'
                         Actual = 'Manual verification required'
-                        Status = 'NotApplicable'
+                        Status = 'Manual'
                         Priority = 'Critical'
                         Remediation = 'Create and test incident response procedures'
                     }
@@ -507,12 +514,30 @@
             $results.Summary.InPlace = @($results.Requirements | Where-Object { $_.Status -eq 'InPlace' }).Count
             $results.Summary.NotInPlace = @($results.Requirements | Where-Object { $_.Status -eq 'NotInPlace' }).Count
             $results.Summary.NotApplicable = @($results.Requirements | Where-Object { $_.Status -eq 'NotApplicable' }).Count
-            
-            $testableRequirements = $results.Summary.TotalRequirements - $results.Summary.NotApplicable
-            if ($testableRequirements -gt 0) {
+            $results.Summary.Manual = @($results.Requirements | Where-Object { $_.Status -eq 'Manual' }).Count
+            $results.Summary.NotEvaluated = @($results.Requirements | Where-Object { $_.Status -eq 'NotEvaluated' }).Count
+
+            # NotEvaluated stays in the denominator and never counts as compliant;
+            # only NotApplicable and Manual leave the denominator.
+            $scopedRequirements = $results.Summary.TotalRequirements - $results.Summary.NotApplicable - $results.Summary.Manual
+            $evaluatedRequirements = $scopedRequirements - $results.Summary.NotEvaluated
+            $results.Summary.EvaluatedControls = $evaluatedRequirements
+            if ($scopedRequirements -gt 0) {
                 $results.Summary.CompliancePercentage = [math]::Round(
-                    ($results.Summary.InPlace / $testableRequirements) * 100, 2
+                    ($results.Summary.InPlace / $scopedRequirements) * 100, 2
                 )
+                $results.Summary.CoveragePercentage = [math]::Round(
+                    ($evaluatedRequirements / $scopedRequirements) * 100, 2
+                )
+            }
+            else {
+                $results.Summary.CompliancePercentage = $null
+                $results.Summary.CoveragePercentage = $null
+            }
+
+            if ($results.Summary.NotEvaluated -gt 0) {
+                $notEvaluatedIds = @($results.Requirements | Where-Object { $_.Status -eq 'NotEvaluated' } | ForEach-Object { $_.RequirementID }) -join ', '
+                Write-Warning "$($results.Summary.NotEvaluated) control(s) could not be evaluated and are counted as not compliant: $notEvaluatedIds"
             }
             
             # Generate recommendations
@@ -526,6 +551,10 @@
             
             if ($highNotInPlace.Count -gt 0) {
                 $results.Recommendations += "HIGH: $($highNotInPlace.Count) high-priority requirement(s) not in place"
+            }
+
+            foreach ($notEvaluatedReq in @($results.Requirements | Where-Object { $_.Status -eq 'NotEvaluated' })) {
+                $results.Recommendations += "Could not evaluate $($notEvaluatedReq.RequirementID): run elevated or install the required feature/module"
             }
             
             if ($results.Summary.CompliancePercentage -lt 100) {
@@ -543,18 +572,23 @@
     }
     
     end {
+        $complianceDisplay = if ($null -eq $results.Summary.CompliancePercentage) { 'N/A' } else { "$($results.Summary.CompliancePercentage)%" }
+        $coverageDisplay = if ($null -eq $results.Summary.CoveragePercentage) { 'N/A' } else { "$($results.Summary.CoveragePercentage)%" }
+
         Write-Host "`n=== COMPLIANCE TEST COMPLETE ===" -ForegroundColor $(
             if ($results.Summary.CompliancePercentage -eq 100) { 'Green' }
             elseif ($results.Summary.CompliancePercentage -ge 80) { 'Yellow' }
             else { 'Red' }
         )
-        
+
         Write-Host "`nCompliance Summary:" -ForegroundColor Cyan
         Write-Host "  Total Requirements Tested: $($results.Summary.TotalRequirements)" -ForegroundColor White
         Write-Host "  In Place: $($results.Summary.InPlace)" -ForegroundColor Green
         Write-Host "  Not In Place: $($results.Summary.NotInPlace)" -ForegroundColor Red
         Write-Host "  Not Applicable: $($results.Summary.NotApplicable)" -ForegroundColor Gray
-        Write-Host "  Compliance: $($results.Summary.CompliancePercentage)%" -ForegroundColor $(
+        Write-Host "  Manual: $($results.Summary.Manual)" -ForegroundColor Yellow
+        Write-Host "  Not Evaluated: $($results.Summary.NotEvaluated)" -ForegroundColor Yellow
+        Write-Host "  Compliance: $complianceDisplay (coverage $coverageDisplay, $($results.Summary.NotEvaluated) not evaluated)" -ForegroundColor $(
             if ($results.Summary.CompliancePercentage -eq 100) { 'Green' }
             elseif ($results.Summary.CompliancePercentage -ge 80) { 'Yellow' }
             else { 'Red' }

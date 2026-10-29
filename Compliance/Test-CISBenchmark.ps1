@@ -48,7 +48,11 @@
                 Passed = 0
                 Failed = 0
                 NotApplicable = 0
+                Manual = 0
+                NotEvaluated = 0
+                EvaluatedControls = 0
                 CompliancePercentage = 0
+                CoveragePercentage = 0
             }
             Recommendations = @()
         }
@@ -131,9 +135,9 @@
                 
                 try {
                     # Export security policy. secedit is Windows-only; when it is
-                    # missing or the export fails, emit the controls as Manual instead
-                    # of silently dropping them (the per-setting 'if ($value)' guards
-                    # below used to skip controls with no warning).
+                    # missing or the export fails, emit the controls as NotEvaluated
+                    # instead of silently dropping them (the per-setting 'if ($value)'
+                    # guards below used to skip controls with no warning).
                     $seceditCmd = Get-Command 'secedit.exe' -ErrorAction SilentlyContinue
                     if ($null -eq $seceditCmd) { $seceditCmd = Get-Command 'secedit' -ErrorAction SilentlyContinue }
 
@@ -173,7 +177,7 @@
                                 Category = 'PasswordPolicy'
                                 Expected = $spec.Expected
                                 Actual = 'Unable to evaluate — secedit export unavailable'
-                                Status = 'Manual'
+                                Status = 'NotEvaluated'
                                 Severity = $spec.Severity
                                 Remediation = $spec.Remediation
                             }
@@ -189,7 +193,7 @@
                             Category = 'PasswordPolicy'
                             Expected = '24 or more passwords'
                             Actual = if ($null -ne $passwordHistory) { "$passwordHistory passwords" } else { 'Unable to evaluate — setting missing from secedit export' }
-                            Status = if ($null -eq $passwordHistory) { 'Manual' } elseif ([int]$passwordHistory -ge 24) { 'Pass' } else { 'Fail' }
+                            Status = if ($null -eq $passwordHistory) { 'NotEvaluated' } elseif ([int]$passwordHistory -ge 24) { 'Pass' } else { 'Fail' }
                             Severity = 'High'
                             Remediation = 'Set to 24 or more passwords remembered'
                         }
@@ -203,7 +207,7 @@
                             Category = 'PasswordPolicy'
                             Expected = '365 or fewer days (but not 0)'
                             Actual = if ($null -ne $maxPasswordAge) { "$maxPasswordAge days" } else { 'Unable to evaluate — setting missing from secedit export' }
-                            Status = if ($null -eq $maxPasswordAge) { 'Manual' } elseif ([int]$maxPasswordAge -le 365 -and [int]$maxPasswordAge -gt 0) { 'Pass' } else { 'Fail' }
+                            Status = if ($null -eq $maxPasswordAge) { 'NotEvaluated' } elseif ([int]$maxPasswordAge -le 365 -and [int]$maxPasswordAge -gt 0) { 'Pass' } else { 'Fail' }
                             Severity = 'High'
                             Remediation = 'Set to 365 or fewer days'
                         }
@@ -217,7 +221,7 @@
                             Category = 'PasswordPolicy'
                             Expected = '1 or more days'
                             Actual = if ($null -ne $minPasswordAge) { "$minPasswordAge days" } else { 'Unable to evaluate — setting missing from secedit export' }
-                            Status = if ($null -eq $minPasswordAge) { 'Manual' } elseif ([int]$minPasswordAge -ge 1) { 'Pass' } else { 'Fail' }
+                            Status = if ($null -eq $minPasswordAge) { 'NotEvaluated' } elseif ([int]$minPasswordAge -ge 1) { 'Pass' } else { 'Fail' }
                             Severity = 'Medium'
                             Remediation = 'Set to 1 or more days'
                         }
@@ -231,7 +235,7 @@
                             Category = 'PasswordPolicy'
                             Expected = '14 or more characters'
                             Actual = if ($null -ne $minPasswordLength) { "$minPasswordLength characters" } else { 'Unable to evaluate — setting missing from secedit export' }
-                            Status = if ($null -eq $minPasswordLength) { 'Manual' } elseif ([int]$minPasswordLength -ge 14) { 'Pass' } else { 'Fail' }
+                            Status = if ($null -eq $minPasswordLength) { 'NotEvaluated' } elseif ([int]$minPasswordLength -ge 14) { 'Pass' } else { 'Fail' }
                             Severity = 'High'
                             Remediation = 'Set to 14 or more characters'
                         }
@@ -246,7 +250,7 @@
                             Expected = 'Enabled'
                             Actual = if ($null -eq $passwordComplexity) { 'Unable to evaluate — setting missing from secedit export' }
                                      elseif ($passwordComplexity -eq '1') { 'Enabled' } else { 'Disabled' }
-                            Status = if ($null -eq $passwordComplexity) { 'Manual' } elseif ($passwordComplexity -eq '1') { 'Pass' } else { 'Fail' }
+                            Status = if ($null -eq $passwordComplexity) { 'NotEvaluated' } elseif ($passwordComplexity -eq '1') { 'Pass' } else { 'Fail' }
                             Severity = 'Critical'
                             Remediation = 'Enable password complexity requirements'
                         }
@@ -281,7 +285,7 @@
                                  elseif ($credentialValidation.Success -and $credentialValidation.Failure) { 'Success and Failure' }
                                  elseif ($credentialValidation.Success) { 'Success' }
                                  elseif ($credentialValidation.Failure) { 'Failure' } else { 'No Auditing' }
-                        Status = if ($null -eq $credentialValidation -or $null -eq $credentialValidation.Value) { 'Manual' }
+                        Status = if ($null -eq $credentialValidation -or $null -eq $credentialValidation.Value) { 'NotEvaluated' }
                                  elseif ($credentialValidation.Value -eq 3) { 'Pass' } else { 'Fail' }
                         Severity = 'High'
                         Remediation = 'Configure to audit Success and Failure'
@@ -305,7 +309,7 @@
                                  elseif ($appGroupManagement.Success -and $appGroupManagement.Failure) { 'Success and Failure' }
                                  elseif ($appGroupManagement.Success) { 'Success' }
                                  elseif ($appGroupManagement.Failure) { 'Failure' } else { 'No Auditing' }
-                        Status = if ($null -eq $appGroupManagement -or $null -eq $appGroupManagement.Value) { 'Manual' }
+                        Status = if ($null -eq $appGroupManagement -or $null -eq $appGroupManagement.Value) { 'NotEvaluated' }
                                  elseif ($appGroupManagement.Value -eq 3) { 'Pass' } else { 'Fail' }
                         Severity = 'Medium'
                         Remediation = 'Configure to audit Success and Failure'
@@ -327,7 +331,7 @@
                         Expected = 'Success'
                         Actual = if ($null -eq $accountLockout -or $null -eq $accountLockout.Value) { 'Unable to determine' }
                                  elseif ($accountLockout.Value -ge 1 -and $accountLockout.Value -le 3) { 'Configured' } else { 'Not Configured' }
-                        Status = if ($null -eq $accountLockout -or $null -eq $accountLockout.Value) { 'Manual' }
+                        Status = if ($null -eq $accountLockout -or $null -eq $accountLockout.Value) { 'NotEvaluated' }
                                  elseif ($accountLockout.Value -ge 1 -and $accountLockout.Value -le 3) { 'Pass' } else { 'Fail' }
                         Severity = 'Medium'
                         Remediation = 'Configure to audit Success'
@@ -354,7 +358,7 @@
                         Expected = 'Disabled'
                         Actual = if (-not $adminKnown) { 'Unable to determine' }
                                  elseif ($adminUser.Enabled) { 'Enabled' } else { 'Disabled' }
-                        Status = if (-not $adminKnown) { 'Manual' }
+                        Status = if (-not $adminKnown) { 'NotEvaluated' }
                                  elseif ($adminUser.Enabled) { 'Fail' } else { 'Pass' }
                         Severity = 'High'
                         Remediation = 'Disable the built-in Administrator account'
@@ -371,7 +375,7 @@
                         Expected = 'Disabled'
                         Actual = if (-not $guestKnown) { 'Unable to determine' }
                                  elseif ($guestUser.Enabled) { 'Enabled' } else { 'Disabled' }
-                        Status = if (-not $guestKnown) { 'Manual' }
+                        Status = if (-not $guestKnown) { 'NotEvaluated' }
                                  elseif ($guestUser.Enabled) { 'Fail' } else { 'Pass' }
                         Severity = 'High'
                         Remediation = 'Disable the Guest account'
@@ -437,7 +441,7 @@
                             Category = 'WindowsFirewall'
                             Expected = 'On'
                             Actual = 'Unable to evaluate — Get-NetFirewallProfile unavailable or returned no profiles'
-                            Status = 'Manual'
+                            Status = 'NotEvaluated'
                             Severity = 'Critical'
                             Remediation = 'Verify Windows Firewall is enabled for all profiles'
                         }
@@ -518,15 +522,31 @@
             $results.Summary.TotalControls = $results.Controls.Count
             $results.Summary.Passed = @($results.Controls | Where-Object { $_.Status -eq 'Pass' }).Count
             $results.Summary.Failed = @($results.Controls | Where-Object { $_.Status -eq 'Fail' }).Count
-            $results.Summary.NotApplicable = @($results.Controls | Where-Object { $_.Status -eq 'Manual' }).Count
-            
-            if ($results.Summary.TotalControls -gt 0) {
-                $testableControls = $results.Summary.TotalControls - $results.Summary.NotApplicable
-                if ($testableControls -gt 0) {
-                    $results.Summary.CompliancePercentage = [math]::Round(
-                        ($results.Summary.Passed / $testableControls) * 100, 2
-                    )
-                }
+            $results.Summary.NotApplicable = @($results.Controls | Where-Object { $_.Status -eq 'NotApplicable' }).Count
+            $results.Summary.Manual = @($results.Controls | Where-Object { $_.Status -eq 'Manual' }).Count
+            $results.Summary.NotEvaluated = @($results.Controls | Where-Object { $_.Status -eq 'NotEvaluated' }).Count
+
+            # NotEvaluated stays in the denominator and never counts as compliant;
+            # only NotApplicable and Manual leave the denominator.
+            $scopedControls = $results.Summary.TotalControls - $results.Summary.NotApplicable - $results.Summary.Manual
+            $evaluatedControls = $scopedControls - $results.Summary.NotEvaluated
+            $results.Summary.EvaluatedControls = $evaluatedControls
+            if ($scopedControls -gt 0) {
+                $results.Summary.CompliancePercentage = [math]::Round(
+                    ($results.Summary.Passed / $scopedControls) * 100, 2
+                )
+                $results.Summary.CoveragePercentage = [math]::Round(
+                    ($evaluatedControls / $scopedControls) * 100, 2
+                )
+            }
+            else {
+                $results.Summary.CompliancePercentage = $null
+                $results.Summary.CoveragePercentage = $null
+            }
+
+            if ($results.Summary.NotEvaluated -gt 0) {
+                $notEvaluatedIds = @($results.Controls | Where-Object { $_.Status -eq 'NotEvaluated' } | ForEach-Object { $_.ControlID }) -join ', '
+                Write-Warning "$($results.Summary.NotEvaluated) control(s) could not be evaluated and are counted as not compliant: $notEvaluatedIds"
             }
             
             # Generate recommendations - FIX: Use @() to ensure array
@@ -540,6 +560,10 @@
             
             if ($failedHigh.Count -gt 0) {
                 $results.Recommendations += "HIGH: $($failedHigh.Count) high-severity control(s) failed"
+            }
+
+            foreach ($notEvaluatedControl in @($results.Controls | Where-Object { $_.Status -eq 'NotEvaluated' })) {
+                $results.Recommendations += "Could not evaluate $($notEvaluatedControl.ControlID): run elevated or install the required feature/module"
             }
             
             if ($results.Summary.CompliancePercentage -lt 70) {
@@ -557,18 +581,23 @@
     }
     
     end {
+        $complianceDisplay = if ($null -eq $results.Summary.CompliancePercentage) { 'N/A' } else { "$($results.Summary.CompliancePercentage)%" }
+        $coverageDisplay = if ($null -eq $results.Summary.CoveragePercentage) { 'N/A' } else { "$($results.Summary.CoveragePercentage)%" }
+
         Write-Host "`n=== COMPLIANCE TEST COMPLETE ===" -ForegroundColor $(
             if ($results.Summary.CompliancePercentage -ge 80) { 'Green' }
             elseif ($results.Summary.CompliancePercentage -ge 60) { 'Yellow' }
             else { 'Red' }
         )
-        
+
         Write-Host "`nCompliance Summary:" -ForegroundColor Cyan
         Write-Host "  Total Controls Tested: $($results.Summary.TotalControls)" -ForegroundColor White
         Write-Host "  Passed: $($results.Summary.Passed)" -ForegroundColor Green
         Write-Host "  Failed: $($results.Summary.Failed)" -ForegroundColor Red
-        Write-Host "  Manual Review: $($results.Summary.NotApplicable)" -ForegroundColor Yellow
-        Write-Host "  Compliance: $($results.Summary.CompliancePercentage)%" -ForegroundColor $(
+        Write-Host "  Not Applicable: $($results.Summary.NotApplicable)" -ForegroundColor Gray
+        Write-Host "  Manual Review: $($results.Summary.Manual)" -ForegroundColor Yellow
+        Write-Host "  Not Evaluated: $($results.Summary.NotEvaluated)" -ForegroundColor Yellow
+        Write-Host "  Compliance: $complianceDisplay (coverage $coverageDisplay, $($results.Summary.NotEvaluated) not evaluated)" -ForegroundColor $(
             if ($results.Summary.CompliancePercentage -ge 80) { 'Green' }
             elseif ($results.Summary.CompliancePercentage -ge 60) { 'Yellow' }
             else { 'Red' }
