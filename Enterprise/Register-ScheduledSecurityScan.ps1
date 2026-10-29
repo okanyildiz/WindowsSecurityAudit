@@ -656,7 +656,20 @@ exit 0
             try {
                 Write-Host "`nCreating scan script..." -ForegroundColor Cyan
 
-                if (-not (Test-Path $OutputPath)) {
+                if (Test-Path $OutputPath) {
+                    # A pre-existing output folder must be owned by SYSTEM/Administrators:
+                    # its owner retains WRITE_DAC even when removed from the ACL and could
+                    # reopen write access to tamper with the SYSTEM-run scan script
+                    if ($env:OS -eq 'Windows_NT') {
+                        if (-not (Test-AdminOnlyOwnership -Path $OutputPath)) {
+                            throw "OutputPath '$OutputPath' is not owned by SYSTEM/Administrators; refusing to place a SYSTEM-run script there. Remove it or choose another -OutputPath."
+                        }
+                    }
+                    else {
+                        Write-Verbose "Non-Windows host: skipping output folder ownership check for '$OutputPath'."
+                    }
+                }
+                else {
                     New-Item -Path $OutputPath -ItemType Directory -Force | Out-Null
                 }
 
@@ -678,9 +691,12 @@ exit 0
                 # the locked file (avoids the permissive ProgramData default between
                 # creation and lockdown)
                 if ($env:OS -eq 'Windows_NT') {
-                    if (-not (Test-Path $scriptPath)) {
-                        New-Item -Path $scriptPath -ItemType File -Force | Out-Null
+                    # A pre-existing script file may be owned by a non-admin who keeps
+                    # WRITE_DAC on it; delete and recreate so ownership starts clean
+                    if (Test-Path $scriptPath) {
+                        Remove-Item -Path $scriptPath -Force -ErrorAction Stop
                     }
+                    New-Item -Path $scriptPath -ItemType File -Force | Out-Null
                     try {
                         $scriptAcl = Get-Acl -Path $scriptPath -ErrorAction Stop
                         $scriptAcl.SetAccessRuleProtection($true, $false)
@@ -698,11 +714,20 @@ exit 0
                                 [System.Security.AccessControl.AccessControlType]::Allow)
                             $scriptAcl.AddAccessRule($accessRule)
                         }
+                        $scriptAcl.SetOwner([System.Security.Principal.SecurityIdentifier]'S-1-5-32-544')
                         Set-Acl -Path $scriptPath -AclObject $scriptAcl -ErrorAction Stop
+                        if (-not (Test-AdminOnlyOwnership -Path $scriptPath) -or -not (Test-NoNonAdminWriteAccess -Path $scriptPath)) {
+                            throw "Post-lockdown verification failed for '$scriptPath': owner or write access is not restricted to SYSTEM/Administrators."
+                        }
                     }
                     catch {
-                        Write-Warning "Could not restrict permissions on '$scriptPath'; the file contains the webhook URL and may be readable by other local users: $_"
+                        # Fail closed: without a verified admin-only ACL the secret-bearing
+                        # script must not be written and the task must not be registered
+                        throw "Could not restrict permissions on '$scriptPath'; refusing to write the scan script because it embeds the webhook URL and runs as SYSTEM: $_"
                     }
+                }
+                else {
+                    Write-Verbose "Non-Windows host: skipping ACL lockdown and ownership verification for '$scriptPath'."
                 }
 
                 $scanScript | Out-File $scriptPath -Encoding UTF8 -Force
@@ -822,4 +847,27 @@ exit 0
             return $scanResult
         }
     }
+}
+
+# Non-exported helpers (module-internal; only the file basename is exported)
+
+function Test-AdminOnlyOwnership {
+    param([Parameter(Mandatory)][string]$Path)
+    $acl = Get-Acl -Path $Path -ErrorAction Stop
+    $allowedOwners = @('S-1-5-18', 'S-1-5-32-544', [System.Security.Principal.WindowsIdentity]::GetCurrent().User.Value)
+    $ownerSid = $acl.GetOwner([System.Security.Principal.SecurityIdentifier]).Value
+    return ($allowedOwners -contains $ownerSid)
+}
+
+function Test-NoNonAdminWriteAccess {
+    param([Parameter(Mandatory)][string]$Path)
+    $acl = Get-Acl -Path $Path -ErrorAction Stop
+    $adminSids = @('S-1-5-18', 'S-1-5-32-544')
+    $fsr = [System.Security.AccessControl.FileSystemRights]
+    $writeMask = [int64]($fsr::WriteData -bor $fsr::AppendData -bor $fsr::WriteAttributes -bor $fsr::WriteExtendedAttributes -bor $fsr::Delete -bor $fsr::DeleteSubdirectoriesAndFiles -bor $fsr::ChangePermissions -bor $fsr::TakeOwnership) -bor 0x40000000 -bor 0x10000000
+    $rules = @($acl.GetAccessRules($true, $true, [System.Security.Principal.SecurityIdentifier]))
+    $foreign = @($rules | Where-Object {
+        $_.AccessControlType -eq 'Allow' -and $adminSids -notcontains $_.IdentityReference.Value -and (([int64]$_.FileSystemRights -band $writeMask) -ne 0)
+    })
+    return ($foreign.Count -eq 0)
 }
