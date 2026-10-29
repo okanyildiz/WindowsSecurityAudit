@@ -710,3 +710,32 @@ Describe 'v1.5 Features' {
         }
     }
 }
+
+Describe 'ConvertTo-CsvSafeObject (CSV formula-injection escaping)' {
+    # ConvertTo-CsvSafeObject is a module-private helper (Private/ExportHelpers.ps1),
+    # so it is exercised through InModuleScope
+    It 'prefixes formula-leading string properties with a single quote' {
+        InModuleScope -ModuleName $script:ModuleName -ScriptBlock {
+            $row = [PSCustomObject]@{ Name = '=1+1' } | ConvertTo-CsvSafeObject
+            $row.Name | Should -Be "'=1+1"
+        }
+    }
+
+    It 'passes number and DateTime properties through unchanged' {
+        InModuleScope -ModuleName $script:ModuleName -ScriptBlock {
+            $when = Get-Date
+            $row = [PSCustomObject]@{ Count = 42; When = $when } | ConvertTo-CsvSafeObject
+            $row.Count | Should -Be 42
+            $row.Count | Should -BeOfType [int]
+            $row.When | Should -Be $when
+            $row.When | Should -BeOfType [datetime]
+        }
+    }
+
+    It 'emits no row for null input' {
+        InModuleScope -ModuleName $script:ModuleName -ScriptBlock {
+            $rows = @($null | ConvertTo-CsvSafeObject)
+            $rows.Count | Should -Be 0
+        }
+    }
+}
