@@ -10,7 +10,7 @@
 [![Functions](https://img.shields.io/badge/Functions-72-brightgreen.svg)](https://github.com/okanyildiz/WindowsSecurityAudit)
 [![Modules](https://img.shields.io/badge/Modules-14-blue.svg)](https://github.com/okanyildiz/WindowsSecurityAudit)
 [![CI](https://github.com/okanyildiz/WindowsSecurityAudit/actions/workflows/ci.yml/badge.svg)](https://github.com/okanyildiz/WindowsSecurityAudit/actions/workflows/ci.yml)
-[![Tests](https://img.shields.io/badge/Tests-520-brightgreen.svg)](https://github.com/okanyildiz/WindowsSecurityAudit/tree/main/tests)
+[![Tests](https://img.shields.io/badge/Tests-CI_Gated-brightgreen.svg)](https://github.com/okanyildiz/WindowsSecurityAudit/tree/main/tests)
 
 [![GitHub stars](https://img.shields.io/github/stars/okanyildiz/WindowsSecurityAudit)](https://github.com/okanyildiz/WindowsSecurityAudit/stargazers)
 [![GitHub forks](https://img.shields.io/github/forks/okanyildiz/WindowsSecurityAudit)](https://github.com/okanyildiz/WindowsSecurityAudit/network/members)
@@ -18,7 +18,7 @@
 
 **Enterprise-Grade Windows Security Auditing & Threat Detection Toolkit**
 
-**🧱 Dependency-Free Core • 🌍 Locale-Invariant Auditing • 🧪 520-Test CI Suite • 📜 MIT Licensed**
+**🧱 Dependency-Free Core • 🌍 Locale-Invariant Core Checks • 🧪 CI-Gated Test Suite • 📜 MIT Licensed**
 
 [Features](#-full-feature-overview) • [Why](#-why-windows-security-audit-module) • [Installation](#-installation) • [Quick Start](#-quick-start) • [Release Highlights](#-release-highlights) • [Support](#-support--contact)
 
@@ -70,7 +70,7 @@ If you find this tool valuable for your security operations, consider supporting
 
 In today's rapidly evolving threat landscape, organizations face unprecedented challenges in maintaining robust security postures across their Windows infrastructure. Traditional security tools often fall short, requiring multiple expensive licenses, complex integrations, and specialized expertise. The **Windows Security Audit Module** addresses this by offering enterprise-grade security capabilities through a unified, open-source PowerShell framework.
 
-The toolkit bundles **72 functions across 14 specialized modules** covering the audit lifecycle end-to-end: baseline scoring, threat detection, forensic collection, hardening, compliance validation, vulnerability assessment and reporting. Capabilities that usually require stitching together several single-purpose tools ship here as one cohesive, MIT-licensed module — with a 520-test Pester suite running in CI on both PowerShell 7 and Windows PowerShell 5.1, and locale-invariant checks that return correct results on non-English Windows systems.
+The toolkit bundles **72 functions across 14 specialized modules** covering the audit lifecycle end-to-end: baseline scoring, threat detection, forensic collection, hardening, compliance validation, vulnerability assessment and reporting. Capabilities that usually require stitching together several single-purpose tools ship here as one cohesive, MIT-licensed module — with a CI-gated Pester test suite on both PowerShell 7 and Windows PowerShell 5.1, and locale-invariant core checks that return correct results on non-English Windows systems (see [Known Limitations](#-known-limitations)).
 
 ### 🎯 The Vision
 
@@ -93,8 +93,8 @@ A single, cohesive PowerShell module that consolidates essential security functi
 
 ### ✅ What You Can Verify
 
-- **🌍 Locale-invariant auditing**: checks use APIs, GUIDs and SIDs instead of parsing localized console output — correct results on Turkish, German, French and any other Windows display language
-- **🧪 Tested**: 520 Pester tests, gated in CI by PSScriptAnalyzer and module-import checks on both PowerShell 7 (`pwsh`) and Windows PowerShell 5.1
+- **🌍 Locale-invariant core checks**: compliance, audit-policy, account and ACL checks use APIs, GUIDs and SIDs instead of parsing localized console output — correct results on Turkish, German, French and other non-English Windows (exception: `Get-FileSystemJournal`, see [Known Limitations](#-known-limitations))
+- **🧪 Tested**: CI-gated Pester suite plus PSScriptAnalyzer and module-import checks on both PowerShell 7 (`pwsh`) and Windows PowerShell 5.1
 - **🧱 Dependency-free core**: baseline, detection, forensics, hardening and compliance checks run on a stock Windows install
 - **📜 MIT licensed**: free for commercial use, full source available
 
@@ -149,13 +149,13 @@ A single, cohesive PowerShell module that consolidates essential security functi
 </tr>
 <tr>
 <td><strong>Non-English Windows</strong></td>
-<td>✅ Fully locale-invariant (API/GUID/SID)</td>
+<td>✅ Locale-invariant core checks (API/GUID/SID; see [Known Limitations](#-known-limitations))</td>
 <td>✅ Varies</td>
 <td>❌ Often parses English-only output</td>
 </tr>
 <tr>
 <td><strong>Support</strong></td>
-<td>✅ Community + Pro</td>
+<td>✅ Community</td>
 <td>✅ Vendor Support</td>
 <td>⚠️ Community Only</td>
 </tr>
@@ -261,10 +261,10 @@ WindowsSecurityAudit/
 │   ├── Invoke-IncidentResponse.ps1
 │   └── Send-SiemEvent.ps1
 │
-├── 📁 tests/                           # Pester tests (520 tests)
-│   ├── WindowsSecurityAudit.Tests.ps1  # Public API surface (427 tests)
-│   ├── Smoke.Windows.Tests.ps1         # Real-Windows execution smoke tests (48)
-│   ├── Locale.Regression.Tests.ps1     # EN/DE fixture equivalence + no-text-readers guard (45)
+├── 📁 tests/                           # Pester tests (523)
+│   ├── WindowsSecurityAudit.Tests.ps1  # Public API surface (428 tests)
+│   ├── Smoke.Windows.Tests.ps1         # Real-Windows execution smoke tests (49)
+│   ├── Locale.Regression.Tests.ps1     # EN/DE fixture equivalence + no-text-readers guard (46)
 │   └── fixtures/                       # auditpol EN/DE (cp1252) CSV fixtures
 │
 ├── 📁 ThreatHunting/                   # Threat Hunting (7 functions)
@@ -299,7 +299,7 @@ WindowsSecurityAudit/
 ### Minimum Requirements
 - **Operating System**: Windows 10 1809+ / Windows Server 2016+
 - **PowerShell**: Version 5.1 (Windows PowerShell) or PowerShell 7+
-- **Display Language**: Any — all checks are locale-invariant since v1.6.0 (API/GUID/SID-based; correct results on Turkish, German, French and every other Windows UI language)
+- **Display Language**: Any — core checks are locale-invariant since v1.6.0 (API/GUID/SID-based; correct results on non-English Windows; `Get-FileSystemJournal` excepted — see [Known Limitations](#-known-limitations))
 - **Memory**: 4GB RAM (8GB recommended for enterprise scanning)
 - **Storage**: 1GB for module + 10GB for reports and logs
 - **Processor**: 2 cores minimum (4+ cores recommended)
@@ -454,7 +454,7 @@ Get-VulnerabilityAssessment -ExactCVEMatch -NVDApiKey $key
 # Import a STIX 2.x bundle fully offline, or pull from MISP/TAXII
 Get-ThreatIntelligence -CheckNetwork -StixFilePath "C:\intel\bundle.json"
 
-# Assess, then preview automated fixes with a rollback script (no changes yet)
+# Assess, then preview automated fixes with a rollback script (no changes; rollback script content is returned in RollbackPreview)
 Invoke-SecurityAssessment -OutputPath "C:\Assessments"
 Invoke-SecurityRemediation -AssessmentPath "C:\Assessments\SecurityAssessment.json" -GenerateRollback -WhatIf
 ```
@@ -517,9 +517,9 @@ The Core module serves as the foundation of the entire security assessment frame
 | Function | Purpose | Key Features | Output Type |
 |----------|---------|--------------|-------------|
 | **`Get-SecurityBaseline`** | Evaluates overall security posture against industry best practices | • Windows Defender real-time protection status<br>• Firewall profile configuration (Domain/Private/Public)<br>• UAC elevation settings<br>• BitLocker encryption status<br>• Windows Update compliance<br>• Generates an aggregate 0-100 security score | PSCustomObject with scores, status, and recommendations |
-| **`Get-SystemInfo`** | Collects comprehensive system information for security context | • Hardware specifications (CPU, RAM, Disks)<br>• Operating system version and patches<br>• Installed software inventory<br>• Network adapter configuration<br>• Domain membership and policies<br>• Running services and drivers | Detailed system profile for analysis |
-| **`Test-SystemIntegrity`** | Verifies Windows system file integrity and health | • SFC (System File Checker) execution<br>• DISM component store validation<br>• Windows image health check<br>• Corrupted file detection<br>• Automatic repair recommendations<br>• Boot configuration verification | Integrity report with repair actions |
-| **`Get-EventIdDescription`** | Provides security context for Windows Event IDs | • Maps Event IDs to security implications<br>• MITRE ATT&CK technique correlation<br>• Severity classification (Critical/High/Medium/Low)<br>• Investigation guidance<br>• False positive indicators<br>• Response recommendations | Event analysis with threat context |
+| **`Get-SystemInfo`** | Collects comprehensive system information for security context | • Hardware specifications (CPU, RAM, Disks)<br>• Operating system version and patches<br>• Installed software inventory<br>• Network adapter configuration<br>• Domain membership and policies | Detailed system profile for analysis |
+| **`Test-SystemIntegrity`** | Verifies Windows system file integrity and health | • SFC (System File Checker) execution<br>• DISM component store validation<br>• Windows image health check<br>• Corrupted file detection<br>• Repair guidance for files SFC could not fix; `-RepairFiles` runs DISM RestoreHealth when the component store is repairable | Integrity report with repair actions |
+| **`Get-EventIdDescription`** | Provides security context for Windows Event IDs | • Maps Event IDs to security implications<br>• MITRE ATT&CK technique correlation<br>• Severity classification (Critical/High/Medium/Low)<br>• Investigation guidance<br>• Response recommendations | Event analysis with threat context |
 | **`Compare-SecurityBaseline`** | Compares two security states and reports configuration drift | • Baseline vs. current state diffing<br>• Live capture when no current file given<br>• Improved/Degraded/New/Removed classification<br>• Volatile timestamp filtering<br>• Overall trend calculation<br>• JSON + CSV drift export | Drift report with trend summary |
 
 ---
@@ -549,7 +549,7 @@ The Analysis module performs deep forensic examination of system components to u
 | **`Get-EventLogAnalysis`** | Analyzes Windows event logs for security insights | • Security/System/Application log analysis<br>• Failed logon and audit-event highlighting (4625, 1102, 4697, ...)<br>• Event ID context and counts<br>• Application error patterns | Authentication failures<br>Audit events<br>System anomalies<br>Application errors |
 | **`Get-RegistryAnalysis`** | Examines registry for security-relevant settings | • Security policy settings (LSA, WDigest, UAC)<br>• Autorun entry review (`-IncludeAutoRun`)<br>• Service key review (suspicious/unquoted paths)<br>• Registry permission checks (`-CheckPermissions`) | Weakened security settings<br>Persistence entries<br>Risky service configs |
 | **`Get-MemoryAnalysis`** | Heuristic process inspection via process metadata (no raw memory reads) | • Loaded-module inventory with suspicious name/location patterns<br>• Main-module path mismatch (process-hollowing heuristic)<br>• Working-set/virtual-memory ratio anomalies (injection heuristic)<br>• Remote-thread start-address heuristics<br>• `-IncludeStrings` only notes that string extraction needs external tools (e.g. Sysinternals Strings) | Injection/hollowing heuristics<br>Suspicious modules<br>Unusual memory characteristics |
-| **`Get-FileSystemAnalysis`** | Comprehensive file system security analysis | • Alternate Data Stream detection<br>• Hidden file discovery<br>• Suspicious extensions<br>• Recent file modifications<br>• Ransomware indicators<br>• Permission auditing | Hidden malware<br>Data staging<br>Exfiltration prep<br>Ransomware signs |
+| **`Get-FileSystemAnalysis`** | Comprehensive file system security analysis | • Alternate Data Stream detection<br>• Hidden file discovery<br>• Suspicious extensions<br>• Recent file modifications | Hidden malware<br>Data staging<br>Exfiltration prep |
 
 ---
 
@@ -574,8 +574,8 @@ The Enterprise module enables security operations at scale, providing centralize
 | Function | Purpose | Enterprise Features | Scalability |
 |----------|---------|---------------------|-------------|
 | **`Invoke-EnterpriseSecurityScan`** | Performs security scanning across multiple systems | • Parallel execution (up to 50 threads)<br>• Credential management<br>• Progress tracking<br>• Error handling<br>• Resource throttling<br>• Centralized logging | Parallel multi-system scans<br>Per-host timeouts & probes<br>CSV target lists |
-| **`Get-MultiSystemAudit`** | Consolidated auditing across system groups | • Role-based scanning (DC, File, Web)<br>• Compliance aggregation<br>• Risk scoring<br>• Baseline comparison<br>• Trend analysis<br>• Executive dashboards | Server groups<br>Department systems<br>Geographic regions |
-| **`Invoke-SecurityAssessment`** | Comprehensive security evaluation orchestration | • All module coordination<br>• Risk prioritization<br>• Attack path analysis<br>• Business impact assessment<br>• Remediation roadmap<br>• KPI/KRI metrics | Complete assessment<br>Risk matrices<br>Action plans |
+| **`Get-MultiSystemAudit`** | Consolidated auditing across system groups | • Risk scoring<br>• Executive dashboards | Server groups<br>Department systems<br>Geographic regions |
+| **`Invoke-SecurityAssessment`** | Comprehensive security evaluation orchestration | • Optional CIS/NIST/PCI run via `-IncludeCompliance`<br>• Risk prioritization | Complete assessment<br>Risk matrices<br>Action plans |
 | **`Register-ScheduledSecurityScan`** | Automated recurring scans with alerting | • Daily/Weekly/Monthly schedules<br>• Runs as SYSTEM via Scheduled Tasks<br>• Teams/Slack webhook alerts<br>• Email alerts on Critical findings<br>• Run history and error logging<br>• WhatIf/Confirm support | Scheduled task<br>Alert notifications<br>Run summaries |
 
 ---
@@ -612,11 +612,11 @@ The Threat Hunting module provides proactive threat detection capabilities using
 | Function | Purpose | Hunting Techniques | Detection Coverage |
 |----------|---------|-------------------|-------------------|
 | **`Find-APTIndicators`** | Heuristic sweep for APT-style indicators | • Roughly 20-35 scored heuristic checks across 4 surfaces: services, scheduled tasks, registry persistence, network connections<br>• Whitelist filtering to suppress known-good software<br>• Severity scoring with Critical/High/Medium thresholds and an overall risk level<br>• No MITRE ATT&CK technique IDs attached | Heuristic indicator sweep<br>Scored findings<br>Risk-level summary |
-| **`Find-DataExfiltration`** | Detects data theft attempts | • Large file transfers (byte counting, `-ThresholdMB`)<br>• Compression before transfer<br>• Cloud upload monitoring (known cloud service endpoints)<br>• Data staging detection | Data staging<br>Large transfers<br>Cloud uploads |
+| **`Find-DataExfiltration`** | Detects data theft attempts | • Active outbound connection review (first 10 established non-loopback connections; common browser/collaboration apps skipped)<br>• Large archive/file detection above `-ThresholdMB`<br>• Compression before transfer<br>• Cloud upload monitoring (known cloud service endpoints)<br>• Data staging detection | Data staging<br>Large transfers<br>Cloud uploads |
 | **`Find-LateralMovement`** | Tracks attacker movement between systems | • RDP session analysis (4624 Type 10)<br>• SMB connection/share-access monitoring (445, 5140/5145)<br>• PSRemoting/WinRM activity (5985/5986, 4648 explicit credentials)<br>• Network logon review (4624 Type 3) | Network propagation<br>Suspicious remote sessions |
 | **`Find-LivingOffLand`** | Detects abuse of legitimate tools | • 15-entry curated LOLBin database (certutil, mshta, rundll32, wmic, bitsadmin, regsvr32, ...; note: powershell.exe is not an entry)<br>• Command-line matching against known abuse patterns per binary | Fileless attacks<br>Evasion techniques<br>Stealth persistence |
-| **`Get-MITREAttackMapping`** | Maps findings to ATT&CK framework | • Technique classification<br>• Tactic identification<br>• Kill chain mapping<br>• Detection gap analysis<br>• Priority scoring<br>• Coverage reporting | Framework alignment<br>Gap identification<br>Defense planning |
-| **`Get-ThreatIntelligence`** | Analyzes threat intelligence indicators | • IOC matching<br>• Live threat feeds (URLhaus, Feodo Tracker, AbuseIPDB)<br>• Feed caching with freshness fallback<br>• Reputation checking<br>• Hash validation<br>• Domain analysis<br>• IP geolocation | Known threats<br>Emerging campaigns<br>Zero-day indicators |
+| **`Get-MITREAttackMapping`** | Maps findings to ATT&CK framework | • Technique classification<br>• Tactic identification<br>• Priority scoring<br>• Coverage reporting | Framework alignment<br>Gap identification<br>Defense planning |
+| **`Get-ThreatIntelligence`** | Analyzes threat intelligence indicators | • IOC matching<br>• Live threat feeds (URLhaus, Feodo Tracker, AbuseIPDB)<br>• Feed caching with freshness fallback<br>• Reputation checking<br>• Hash validation<br>• Domain analysis | Known threats<br>Emerging campaigns<br>Zero-day indicators |
 | **`Export-AttackNavigatorLayer`** | Exports findings as a MITRE ATT&CK Navigator layer | • Navigator layer JSON v4.x<br>• Severity-based scoring and colors<br>• Detection count aggregation<br>• Evidence embedded in comments<br>• Pipeline input from hunting functions<br>• Output validation | ATT&CK Navigator<br>visualization |
 
 ---
@@ -630,10 +630,12 @@ The Compliance module automates security framework validation and generates audi
 | **`Test-CISBenchmark`** | Validates CIS-style security controls | • CIS-inspired Level 1 (basic) checks<br>• 16 automated checks<br>• Windows 10/11/Server<br>• Text remediation guidance per check (not scripts)<br>• Detailed scoring | Automated pass/fail results<br>Evidence collection |
 | **`Test-NISTCompliance`** | Assesses selected NIST 800-53 controls | • 17 controls across 5 families<br>• Access Control (AC)<br>• Audit & Accountability (AU)<br>• Identification & Authentication (IA)<br>• System & Communications Protection (SC)<br>• Configuration Management (CM) | Control validation<br>Gap analysis<br>Maturity scoring |
 | **`Test-PciDssCompliance`** | Validates PCI-DSS requirements | • 18 requirement checks (PCI-DSS 4.0)<br>• Network security controls<br>• Access control<br>• Encryption validation<br>• Log monitoring<br>• Vulnerability management | Requirement mapping<br>Evidence generation<br>SAQ support |
-| **`Get-ComplianceReport`** | Generates comprehensive compliance reports | • Multi-framework dashboard<br>• Executive summaries<br>• Technical evidence<br>• Gap analysis<br>• Remediation roadmap<br>• Trend analysis | Professional reports<br>Audit-ready format<br>Action plans |
+| **`Get-ComplianceReport`** | Generates comprehensive compliance reports | • Multi-framework dashboard<br>• Executive summaries<br>• Technical evidence<br>• Gap analysis | Professional reports<br>Audit-ready format<br>Action plans |
 | **`Export-ComplianceEvidence`** | Collects and packages audit evidence | • Configuration exports (secedit, auditpol, firewall rules, registry, gpresult)<br>• Log extraction (event logs, failed logons, PowerShell logs)<br>• Text status captures (Defender/firewall/BitLocker) — not graphical screenshots<br>• System inventory (software, users, groups, services, updates)<br>• Chain of custody documentation<br>• SHA-256 integrity hashing of the configuration exports and the final ZIP bundle | Complete evidence<br>Timestamp verification<br>Integrity hashing |
 
 `Test-PCI-DSS` still works as an alias.
+
+NotEvaluated controls count against the compliance percentage; Manual controls are excluded and listed separately; see CoveragePercentage.
 
 ---
 
@@ -645,10 +647,10 @@ The Active Directory module provides specialized security assessment for AD envi
 |----------|---------|-----------------|------------|
 | **`Find-ADVulnerabilities`** | AD vulnerability scanning | • Kerberoasting targets (accounts with SPNs)<br>• ASREP roasting accounts (pre-auth not required)<br>• Weak ACLs and permissions | Account compromise<br>Privilege escalation |
 | **`Find-ADBackdoors`** | Detects persistence in Active Directory | • AdminSDHolder modifications<br>• DCSync permissions (replication ACLs)<br>• SID history abuse<br>• Dangerous delegations (unconstrained, constrained with protocol transition) | Domain persistence<br>Privileged access<br>Stealth backdoors |
-| **`Find-StaleADObjects`** | Identifies unused AD objects for cleanup | • Inactive user accounts<br>• Stale computer objects<br>• Empty security groups<br>• Orphaned objects<br>• Disabled accounts<br>• Service account audit | Attack surface reduction<br>Compliance cleanup<br>Performance improvement |
+| **`Find-StaleADObjects`** | Identifies unused AD objects for cleanup | • Inactive user accounts<br>• Stale computer objects<br>• Empty security groups | Attack surface reduction<br>Compliance cleanup<br>Performance improvement |
 | **`Test-ADSecurityPosture`** | Evaluates overall AD security health | • Password policy strength<br>• Account lockout policy<br>• Domain controller review<br>• Optional trust inventory (`-IncludeTrusts`)<br>• Optional unlinked-GPO detection (`-IncludeGPO`) | Domain hardening<br>Best practices<br>Security maturity |
 | **`Get-ADPasswordPolicy`** | Analyzes password security settings | • Default domain policy<br>• Fine-grained policies<br>• Complexity requirements<br>• History enforcement<br>• Lockout thresholds<br>• Expiration settings | Weak passwords<br>Brute force risk<br>Compliance gaps |
-| **`Get-ADPrivilegedAccounts`** | Maps privileged access | • Domain/Enterprise Admins<br>• Custom admin groups<br>• Service accounts<br>• Delegation rights<br>• Schema admins<br>• Backup operators | Privilege creep<br>Excessive rights<br>Account security |
+| **`Get-ADPrivilegedAccounts`** | Maps privileged access | • Domain/Enterprise Admins<br>• Schema admins<br>• Backup operators | Privilege creep<br>Excessive rights<br>Account security |
 
 ---
 
@@ -676,11 +678,11 @@ The Forensics module provides digital forensic capabilities for incident investi
 | Function | Purpose | Forensic Capabilities | Evidence Types |
 |----------|---------|----------------------|----------------|
 | **`Export-MemoryDump`** | Captures process memory for analysis | • Per-process memory dumps (not a full physical RAM capture)<br>• Sysinternals ProcDump when available (`-UseProcDump`)<br>• MiniDumpWriteDump (dbghelp) fallback<br>• Optional compression | Process memory dumps<br>Dump metadata |
-| **`Get-ArtifactCollection`** | Collects forensic artifacts | • Browser artifacts (Chrome and Edge Default profiles only)<br>• Download history<br>• Temporary files<br>• Thumbnail cache<br>• Per-file SHA256 computed at acquisition<br>• Raw registry hive capture via `reg save`<br>• AcquisitionLog manifest block | User activity<br>File access<br>Internet activity |
+| **`Get-ArtifactCollection`** | Collects forensic artifacts | • Browser artifacts (Chrome and Edge Default profiles only)<br>• Download history<br>• Per-file SHA256 computed at acquisition<br>• Raw registry hive capture via `reg save`<br>• AcquisitionLog manifest block | User activity<br>File access<br>Internet activity |
 | **`Get-UserActivityArtifacts`** | Collects per-user activity artifacts for DFIR | • Recycle Bin `$I` parsing (v2 + best-effort v1 headers; path, size, deletion FILETIME)<br>• Recent/Desktop LNK resolution via WScript.Shell COM (unresolved off-Windows)<br>• JumpList enumeration (AutomaticDestinations; embedded targets not parsed)<br>• ActivitiesCache.db raw copy (no SQLite parsing)<br>• Optional CSV export (`-OutputPath`) | Deleted files<br>Opened documents<br>App usage evidence<br>Timeline databases |
 | **`Get-ExecutionArtifacts`** | Traces program execution | • Prefetch analysis<br>• ShimCache: raw binary data collected but NOT parsed (use ShimCacheParser for full decoding)<br>• UserAssist decoding<br>• RecentApps<br>• BAM/DAM analysis | Program execution<br>Timestamps<br>Frequency<br>User attribution |
 | **`Get-FileSystemJournal`** | File-system journal & timestomp evidence via fsutil (requires elevation) | • USN journal parsing with reason decoding and executable-creation evidence<br>• MFT summary statistics (summary-level via fsutil — no raw $MFT record parsing)<br>• TimestompScan cross-checks file timestamps against USN journal creation records plus pre-2000/future anomalies — explicitly labeled heuristic<br>• `-DriveLetter`, `-MaxRecords`, optional CSV `-OutputPath` | Executable drops<br>USN journal activity<br>Timestomp indicators (heuristic) |
-| **`Get-USBHistory`** | USB device forensics | • Device enumeration<br>• FirstInstalled timestamp; `LastConnected` is reported as unknown (not collected)<br>• Serial numbers<br>• Volume names<br>• Drive letters<br>• User correlation | Device usage<br>Hardware inventory<br>User activity |
+| **`Get-USBHistory`** | USB device forensics | • Device enumeration<br>• FirstInstalled timestamp; `LastConnected` is reported as unknown (not collected)<br>• Serial numbers | Device usage<br>Hardware inventory<br>User activity |
 | **`New-ForensicTimeline`** | Timeline reconstruction | • Multi-source correlation<br>• Event sequencing<br>• File system timeline<br>• Registry timeline<br>• Log correlation<br>• Visual timeline generation | Incident timeline<br>Attack chain<br>User actions<br>System events |
 
 ---
@@ -693,7 +695,7 @@ The Cloud Security module extends security assessment capabilities to cloud plat
 |----------|---------|-----------------|-----------------|
 | **`Get-CloudComplianceStatus`** | Cloud compliance catalog (evaluation pending) | • Built-in control catalog for cloud frameworks<br>• Controls currently return `NotEvaluated` — automated Microsoft Graph/API evaluation is not implemented yet<br>• Compliance score is `$null` when nothing was evaluated (no fabricated statuses) | Honest unevaluated status<br>Coverage transparency |
 | **`Get-AzureADRiskySignIns`** | Retrieves risky authentication detections | • Passes through Entra ID risk detections (risk level/state as reported by Microsoft Graph — no own risk scoring)<br>• Filter by risk level and time window<br>• Optional risky-user listing (`-IncludeRiskyUsers`) | Entra ID risk detections<br>Compromised accounts<br>Suspicious activity |
-| **`Test-M365SecurityPosture`** | Microsoft 365 security assessment | • Conditional Access policy review (Microsoft Graph)<br>• Exchange Online / SharePoint / Teams posture checks<br>• MFA coverage<br>• DLP policy status reported as `NotEvaluated` (needs Purview compliance PowerShell)<br>• Threat protection status<br>• Identity protection | Configuration weaknesses<br>Policy gaps<br>Security improvements |
+| **`Test-M365SecurityPosture`** | Microsoft 365 security assessment | • Conditional Access policy review (Microsoft Graph)<br>• Exchange Online / SharePoint / Teams posture checks<br>• DLP policy status reported as `NotEvaluated` (needs Purview compliance PowerShell)<br>• Threat protection status<br>• Identity protection | Configuration weaknesses<br>Policy gaps<br>Security improvements |
 
 ---
 
@@ -703,7 +705,7 @@ The Reporting module transforms raw security data into actionable intelligence t
 
 | Function | Purpose | Report Types | Delivery Formats |
 |----------|---------|--------------|------------------|
-| **`Get-SecurityMetrics`** | Collects and calculates KPIs/KRIs | • Security scores<br>• Threat statistics<br>• Compliance rates<br>• Vulnerability metrics<br>• Trend analysis<br>• Benchmarking data | JSON metrics<br>Time-series data<br>Comparison charts |
+| **`Get-SecurityMetrics`** | Collects and calculates KPIs/KRIs | • Security scores<br>• Threat statistics<br>• Compliance rates<br>• Vulnerability metrics<br>• Trend analysis | JSON metrics<br>Time-series data |
 | **`New-ExecutiveReport`** | Creates C-level presentations | • Risk matrices<br>• Business impact analysis<br>• Trend visualization<br>• Key findings<br>• Recommendations<br>• Action items | HTML dashboard<br>PDF (requires wkhtmltopdf) |
 | **`New-SecurityDashboard`** | Static HTML security dashboard snapshot | • Security metrics summary<br>• Risk indicators<br>• Compliance status<br>• Alert summary<br>• Optional auto-reload via meta-refresh (`-AutoRefreshSeconds`) — the data itself is a point-in-time snapshot | HTML5 responsive<br>Optional meta-refresh<br>Export capable |
 | **`New-ConsolidatedReport`** | Single interactive report combining key collectors | • 6 collectors: Assessment, Defender, Compliance, ThreatHunting, Vulnerability, Forensics<br>• Chart.js severity doughnut (loaded from the jsDelivr CDN — viewing charts requires internet)<br>• Category score bar charts<br>• Offline mode from saved JSON<br>• Section status tracking<br>• Raw data export | HTML report<br>Interactive charts (CDN)<br>JSON export |
@@ -716,7 +718,7 @@ The full feature set is documented in the module tables above — this section o
 
 ### 🆕 v1.6.0 — Full Non-English Windows Support (Locale-Invariant Auditing)
 
-**A correctness overhaul, not just a feature:** every check that parsed localized console output (`auditpol`, `net accounts`, `netsh`, `fsutil`, SFC/DISM) or matched localized identity names (`Administrators`, `Guest`, `Everyone`, `NT AUTHORITY\SYSTEM`) has been rewritten to use **APIs, GUIDs and SIDs** — the module now produces correct results on Turkish, German, French and any other Windows display language, and reports an honest *"unable to determine"* instead of a silent wrong PASS when data is unreachable.
+**A correctness overhaul, not just a feature:** every check that parsed localized console output (`auditpol`, `net accounts`, `netsh`, SFC/DISM) or matched localized identity names (`Administrators`, `Guest`, `Everyone`, `NT AUTHORITY\SYSTEM`) has been rewritten to use **APIs, GUIDs and SIDs** — the module now produces correct results on Turkish, German, French and other non-English Windows display languages, and reports an honest *"unable to determine"* instead of a silent wrong PASS when data is unreachable. Known exception: `Get-FileSystemJournal` still parses English `fsutil` output (see [Known Limitations](#-known-limitations)).
 
 **New internal data sources (`Private/`, 4 helpers):**
 
@@ -867,7 +869,7 @@ Everything below shipped with the original release and keeps getting sharper:
 - **On-Demand & Scheduled Scanning**: Automated recurring scans with alerting
 - **Incident Response**: Rapid containment and investigation
 - **Threat Hunting**: Proactive APT detection
-- **Metrics Tracking**: KPI/KRI dashboards
+- **Metrics Tracking**: Security-metrics dashboards
 
 ### For IT Administrators
 - **Daily Checks**: Automated morning security reports
@@ -921,18 +923,7 @@ Actual scan times depend on the target's hardware, event-log sizes and the modul
 - ✅ **Support**: Community-driven
 
 ### Why Free?
-We believe enterprise-grade security should be accessible to everyone. This project is our contribution to the security community. While the tool is free, we offer professional services for organizations needing additional support.
-
-### Professional Services Available
-For organizations requiring specialized assistance, we offer:
-- **Implementation Support**: Help with deployment and configuration
-- **Custom Development**: Tailored modules for your specific needs  
-- **Security Assessments**: Professional evaluation of your environment
-- **Training Programs**: Team education and best practices
-- **Priority Support**: Direct access to developers
-
-**📧 Contact us for professional services: yildzokan@gmail.com**  
-**💼 LinkedIn: [https://www.linkedin.com/in/yildizokan/](https://www.linkedin.com/in/yildizokan/)**
+We believe enterprise-grade security should be accessible to everyone. This project is our contribution to the security community.
 
 ---
 
@@ -973,27 +964,6 @@ Invoke-ScriptAnalyzer -Path . -Recurse
 
 ## 📞 Support & Contact
 
-### 🤝 Professional Support & Consulting
-
-We offer professional services to help organizations maximize the value of this toolkit:
-
-- **🚀 Implementation Support**: Expert guidance for deployment and configuration
-- **🔧 Custom Development**: Tailored security modules for your specific requirements
-- **📊 Security Assessments**: Comprehensive evaluation by experienced professionals
-- **📚 Training Programs**: Hands-on workshops for your security team
-- **🎯 Priority Support**: Direct access to module developers
-
-**Get in touch for professional services:**
-
-
-📧 **Email**: yildzokan@gmail.com
-
-💼 **LinkedIn**: [Connect with me on LinkedIn](https://www.linkedin.com/in/yildizokan/)  
-
-🌐 **Website**: [www.securedebug.com](https://securedebug.com/)  
-
-*Response time: Within 24 hours for all inquiries*
-
 ### 💬 Community Support (Free)
 
 - 📖 [GitHub Discussions](https://github.com/okanyildiz/WindowsSecurityAudit/discussions) - Ask questions, share experiences
@@ -1001,13 +971,7 @@ We offer professional services to help organizations maximize the value of this 
 - 📚 [Wiki Documentation](https://github.com/okanyildiz/WindowsSecurityAudit/wiki) - Comprehensive guides
 - 💡 [Feature Requests](https://github.com/okanyildiz/WindowsSecurityAudit/issues/new?labels=enhancement) - Suggest improvements
 
-### 🏢 Enterprise Inquiries
-
-For large-scale deployments or enterprise support contracts:
-
-**Enterprise Contact**: yildzokan@gmail.com
-
-We work with organizations of all sizes to implement robust security monitoring solutions.
+Found this useful? You can support development via [Buy Me a Coffee](https://buymeacoffee.com/okanyildizr). Security issues: see [SECURITY.md](SECURITY.md).
 
 ---
 
@@ -1020,7 +984,7 @@ We work with organizations of all sizes to implement robust security monitoring 
 - [ ] **SIEM streaming auth profiles** — named credential profiles and OAuth flows for Send-SiemEvent
 
 ### Version 1.6 (Released)
-- [x] **Locale-invariant auditing** — all `auditpol` / `net accounts` / `netsh` / `fsutil` / SFC-DISM parsing and name-based identity lookups replaced by APIs, GUIDs and SIDs; correct results on non-English Windows with honest "unable to determine" states
+- [x] **Locale-invariant core checks** — localized `auditpol` / `net accounts` / `netsh` / SFC-DISM parsing and name-based identity lookups replaced by APIs, GUIDs and SIDs; correct results on non-English Windows with honest "unable to determine" states (exception: `Get-FileSystemJournal` fsutil parsing, see [Known Limitations](#-known-limitations))
 
 ### Version 2.0 (Future)
 - [ ] Web-based GUI dashboard
@@ -1068,7 +1032,6 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 ### Sponsors
 Supporting the development of enterprise security tools:
 - [Secure Debug Limited](https://securedebug.com/)
-- [Become a Sponsor](https://github.com/sponsors/okanyildiz)
 
 ---
 
