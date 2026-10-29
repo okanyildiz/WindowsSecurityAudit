@@ -17,6 +17,8 @@ function Get-SecurityBaseline {
         Get-SecurityBaseline -ComputerName "SERVER01" -ExportPath "C:\Audits"
     .OUTPUTS
         PSCustomObject with security baseline information
+    .NOTES
+        Weights: Defender real-time protection 20, Firewall 30 (10 per Domain/Private/Public profile), UAC 15, BitLocker 20 (proportional to protected volumes), no pending Windows updates 15 = 100.
     #>
     
     [CmdletBinding()]
@@ -128,13 +130,13 @@ function Get-SecurityBaseline {
                     }
                     if ($volume.ProtectionStatus -eq "On") { $protectedVolumeCount++ }
                 }
-                # Scoring rule: BitLocker contributes a fixed 10-point budget,
+                # Scoring rule: BitLocker contributes a fixed 20-point budget,
                 # awarded proportionally to the share of protected volumes
-                # (all protected = 10, half = 5, none = 0). Awarding points per
+                # (all protected = 20, half = 10, none = 0). Awarding points per
                 # volume made the contribution depend on how many volumes a
                 # machine happens to have instead of how well it is protected.
                 if ($bitlockerVolumes.Count -gt 0) {
-                    $results.SecurityScore += [int][Math]::Round(10 * $protectedVolumeCount / $bitlockerVolumes.Count)
+                    $results.SecurityScore += [int][Math]::Round(20 * $protectedVolumeCount / $bitlockerVolumes.Count)
                 }
             }
             catch {
