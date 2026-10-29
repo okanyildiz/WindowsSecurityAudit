@@ -4,7 +4,7 @@
 .DESCRIPTION
     Comprehensive Windows security audit toolkit for threat detection and incident response
 .VERSION
-    1.6.1 (keep in sync with WindowsSecurityAudit.psd1 ModuleVersion)
+    1.6.2 (keep in sync with WindowsSecurityAudit.psd1 ModuleVersion)
 .AUTHOR
     Okan YILDIZ (keep in sync with WindowsSecurityAudit.psd1 Author)
 #>
@@ -15,7 +15,7 @@ Set-StrictMode -Version Latest
 # Module variables
 # NOTE: keep ModuleVersion in sync with the ModuleVersion field in WindowsSecurityAudit.psd1
 $script:ModuleRoot = $PSScriptRoot
-$script:ModuleVersion = '1.6.1'
+$script:ModuleVersion = '1.6.2'
 
 # Import all function files
 $Public = @(Get-ChildItem -Path "$PSScriptRoot\Core\*.ps1" -ErrorAction SilentlyContinue)

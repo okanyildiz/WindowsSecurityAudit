@@ -5,7 +5,7 @@
 [![PowerShell](https://img.shields.io/badge/PowerShell-5.1%2B-blue.svg)](https://github.com/PowerShell/PowerShell)
 [![Windows](https://img.shields.io/badge/Windows-10%2F11%2FServer%202016%2B-blue.svg)](https://www.microsoft.com/windows)
 [![License](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
-[![Version](https://img.shields.io/badge/Version-1.6.0-orange.svg)](https://github.com/okanyildiz/WindowsSecurityAudit/releases)
+[![Version](https://img.shields.io/badge/Version-1.6.2-orange.svg)](https://github.com/okanyildiz/WindowsSecurityAudit/releases)
 [![PowerShell Gallery](https://img.shields.io/powershellgallery/v/WindowsSecurityAudit.svg?label=PSGallery)](https://www.powershellgallery.com/packages/WindowsSecurityAudit)
 [![Functions](https://img.shields.io/badge/Functions-72-brightgreen.svg)](https://github.com/okanyildiz/WindowsSecurityAudit)
 [![Modules](https://img.shields.io/badge/Modules-14-blue.svg)](https://github.com/okanyildiz/WindowsSecurityAudit)

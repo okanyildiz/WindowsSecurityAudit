@@ -7,6 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.6.2] - 2026-10-29
+
+Verified-fix release driven by an independent post-release audit (every item reproduced before fixing; one commit per item).
+
+### Fixed
+
+- Compliance percentages no longer hide unevaluable controls: `NotEvaluated` (tool could not read the data) stays in the denominator and never counts as compliant; `Manual` (human verification by design) is excluded and listed separately; new `CoveragePercentage` + `EvaluatedControls`; CIS `Summary.NotApplicable` no longer stores the Manual count; `Get-ComplianceReport` passes the new fields through and renders null percentages as N/A. (PCI previously showed 100% with 8 of 18 requirements unevaluated; CIS 100% with 8 of 15.)
+- `Get-SecurityMetrics`: `RiskLevel`/`ThreatLevel` report `Unknown` when data is missing (majority collector failure, or all detection collectors failed) instead of `Low`/`Minimal`; new `ScoreConfidence` field (Full/Partial/Insufficient); partial-data warning notes the score is an upper bound.
+- `Register-ScheduledSecurityScan`: fail-closed — pre-existing output folder/script ownership is verified (SID-based), script owner set to Administrators, and if the ACL lockdown fails the webhook-secret-bearing script is NOT written and the task NOT registered (previously warn-and-continue).
+- `Invoke-SecurityRemediation -WhatIf` writes nothing to disk anymore; the rollback preview is returned in the new `RollbackPreview` result property (WhatIf contract).
+- `Test-SystemIntegrity`: the SFC branch no longer prints "Attempting to repair..." without running anything — it emits honest `RepairGuidance` (DISM RestoreHealth then sfc /scannow); `RepairAttempted` is set only where DISM RestoreHealth actually runs.
+- `New-ExecutiveReport`: `-IncludeCharts`/`-Audience` now warn that they are recorded but not implemented.
+- CSV formula injection: v1.6.1 notes said all compliance CSV exports were escaped; `Export-ComplianceEvidence`, `Get-ComplianceReport` and 21 other exports were not. All now pipe through `ConvertTo-CsvSafeObject` (new shared helper with Pester coverage).
+- `Test-PCI-DSS` renamed to `Test-PciDssCompliance` (the double-hyphen function name triggered PowerShell's 'restricted characters' warning on every import); `Test-PCI-DSS` remains as a backward-compatible alias.
+- `Get-SecurityBaseline`: score weights now sum to 100 (BitLocker budget 20, proportional to protected volumes) — fully-hardened machines score 100.
+- psd1 Description is pure ASCII (PS 5.1 parse safety) and the locale-invariance claim is scoped to core checks with the `Get-FileSystemJournal` fsutil exception; README function tables no longer list features the code does not have; paid-services sections removed (project is MIT + Buy Me a Coffee); static test-count badges replaced with CI-gated wording.
+- New regression guards: BOM guard (non-ASCII files must be UTF-8 BOM), compliance-honesty scenarios pinned (PCI 83.33%/coverage, CIS 53.85%), import-without-restricted-characters test, alias test.
+
 ## [1.6.1] - 2026-10-27
 
 Post-release audit hardening. Every finding below was verified against the code by independent reviewers before fixing.
@@ -141,7 +159,8 @@ Post-release audit hardening. Every finding below was verified against the code 
 - Cloud Security: Azure AD risky sign-ins, M365 security posture, cloud compliance status.
 - Hardening: audit policies, PowerShell security (logging, transcription), security baseline enforcement — all with `-WhatIf` support.
 
-[Unreleased]: https://github.com/okanyildiz/WindowsSecurityAudit/compare/v1.6.1...HEAD
+[Unreleased]: https://github.com/okanyildiz/WindowsSecurityAudit/compare/v1.6.2...HEAD
+[1.6.2]: https://github.com/okanyildiz/WindowsSecurityAudit/releases/tag/v1.6.2
 [1.6.1]: https://github.com/okanyildiz/WindowsSecurityAudit/releases/tag/v1.6.1
 [1.6.0]: https://github.com/okanyildiz/WindowsSecurityAudit/releases/tag/v1.6.0
 [1.5.0]: https://github.com/okanyildiz/WindowsSecurityAudit/releases/tag/v1.5.0
