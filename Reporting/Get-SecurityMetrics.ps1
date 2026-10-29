@@ -186,6 +186,7 @@ function Get-SecurityMetrics {
             ComplianceScore = 0
             ThreatLevel = "Minimal"
             HealthStatus = "Healthy"
+            ScoreConfidence = "Full"
             DataCompleteness = $null
             FailedCollectors = @()
             
@@ -436,6 +437,8 @@ function Get-SecurityMetrics {
             $successfulFunctions = 0
             $failedFunctions = 0
             $failedCollectors = @()
+            $attemptedDetectionCollectors = 0
+            $failedDetectionCollectors = 0
             
             # ============================================
             # CORE MODULE (4 functions)
@@ -563,6 +566,7 @@ function Get-SecurityMetrics {
                 # Find-PersistenceMechanisms
                 try {
                     $totalFunctions++
+                    $attemptedDetectionCollectors++
                     $persistence = Find-PersistenceMechanisms -ErrorAction Stop
                     if ($persistence -and $persistence.PSObject.Properties['SuspiciousCount']) {
                         $script:metrics.Detection.PersistenceMechanisms = $persistence.SuspiciousCount
@@ -573,6 +577,7 @@ function Get-SecurityMetrics {
                     Write-Host "  Persistence Mechanisms: $($script:metrics.Detection.PersistenceMechanisms)" -ForegroundColor $(if ($script:metrics.Detection.PersistenceMechanisms -gt 0) { 'Yellow' } else { 'Green' })
                 } catch { 
                     $failedFunctions++
+                    $failedDetectionCollectors++
                     Write-Verbose "  Find-PersistenceMechanisms: $_"
                     $failedCollectors += 'Find-PersistenceMechanisms'
                 }
@@ -580,12 +585,14 @@ function Get-SecurityMetrics {
                 # Find-SuspiciousProcesses
                 try {
                     $totalFunctions++
+                    $attemptedDetectionCollectors++
                     $processes = Find-SuspiciousProcesses -ErrorAction Stop
                     $script:metrics.Detection.SuspiciousProcesses = @($processes).Count
                     $successfulFunctions++
                     Write-Host "  Suspicious Processes: $($script:metrics.Detection.SuspiciousProcesses)" -ForegroundColor $(if ($script:metrics.Detection.SuspiciousProcesses -gt 0) { 'Yellow' } else { 'Green' })
                 } catch { 
                     $failedFunctions++
+                    $failedDetectionCollectors++
                     Write-Verbose "  Find-SuspiciousProcesses: $_"
                     $failedCollectors += 'Find-SuspiciousProcesses'
                 }
@@ -593,6 +600,7 @@ function Get-SecurityMetrics {
                 # Find-SuspiciousAuthentication
                 try {
                     $totalFunctions++
+                    $attemptedDetectionCollectors++
                     $auth = Find-SuspiciousAuthentication -ErrorAction Stop
                     if ($auth -and $auth.PSObject.Properties['Statistics'] -and $auth.Statistics) {
                         $script:metrics.Detection.SuspiciousAuthentications = 
@@ -605,6 +613,7 @@ function Get-SecurityMetrics {
                     Write-Host "  Suspicious Authentications: $($script:metrics.Detection.SuspiciousAuthentications)" -ForegroundColor $(if ($script:metrics.Detection.SuspiciousAuthentications -gt 0) { 'Yellow' } else { 'Green' })
                 } catch { 
                     $failedFunctions++
+                    $failedDetectionCollectors++
                     Write-Verbose "  Find-SuspiciousAuthentication: $_"
                     $failedCollectors += 'Find-SuspiciousAuthentication'
                 }
@@ -612,6 +621,7 @@ function Get-SecurityMetrics {
                 # Find-LateralMovement
                 try {
                     $totalFunctions++
+                    $attemptedDetectionCollectors++
                     $lateral = Find-LateralMovement -ErrorAction Stop
                     if ($lateral -and $lateral.PSObject.Properties['Summary'] -and $lateral.Summary) {
                         $script:metrics.Detection.LateralMovement = $lateral.Summary.TotalIndicators
@@ -622,6 +632,7 @@ function Get-SecurityMetrics {
                     Write-Host "  Lateral Movement: $($script:metrics.Detection.LateralMovement)" -ForegroundColor $(if ($script:metrics.Detection.LateralMovement -gt 0) { 'Red' } else { 'Green' })
                 } catch { 
                     $failedFunctions++
+                    $failedDetectionCollectors++
                     Write-Verbose "  Find-LateralMovement: $_"
                     $failedCollectors += 'Find-LateralMovement'
                 }
@@ -629,6 +640,7 @@ function Get-SecurityMetrics {
                 # Find-APTIndicators
                 try {
                     $totalFunctions++
+                    $attemptedDetectionCollectors++
                     $apt = Find-APTIndicators -ErrorAction Stop
                     if ($apt -and $apt.PSObject.Properties['Summary'] -and $apt.Summary) {
                         $script:metrics.Detection.APTIndicators = $apt.Summary.TotalIndicators
@@ -639,6 +651,7 @@ function Get-SecurityMetrics {
                     Write-Host "  APT Indicators: $($script:metrics.Detection.APTIndicators)" -ForegroundColor $(if ($script:metrics.Detection.APTIndicators -gt 0) { 'Red' } else { 'Green' })
                 } catch { 
                     $failedFunctions++
+                    $failedDetectionCollectors++
                     Write-Verbose "  Find-APTIndicators: $_"
                     $failedCollectors += 'Find-APTIndicators'
                 }
@@ -646,6 +659,7 @@ function Get-SecurityMetrics {
                 # Find-LivingOffLand
                 try {
                     $totalFunctions++
+                    $attemptedDetectionCollectors++
                     $lolbins = Find-LivingOffLand -ErrorAction Stop
                     if ($lolbins -and $lolbins.PSObject.Properties['Summary'] -and $lolbins.Summary) {
                         $script:metrics.Detection.LivingOffLand = $lolbins.Summary.TotalDetections
@@ -656,6 +670,7 @@ function Get-SecurityMetrics {
                     Write-Host "  Living Off Land: $($script:metrics.Detection.LivingOffLand)" -ForegroundColor $(if ($script:metrics.Detection.LivingOffLand -gt 0) { 'Yellow' } else { 'Green' })
                 } catch { 
                     $failedFunctions++
+                    $failedDetectionCollectors++
                     Write-Verbose "  Find-LivingOffLand: $_"
                     $failedCollectors += 'Find-LivingOffLand'
                 }
@@ -663,6 +678,7 @@ function Get-SecurityMetrics {
                 # Find-DataExfiltration
                 try {
                     $totalFunctions++
+                    $attemptedDetectionCollectors++
                     $exfil = Find-DataExfiltration -ErrorAction Stop
                     if ($exfil -and $exfil.PSObject.Properties['Summary'] -and $exfil.Summary) {
                         $script:metrics.Detection.DataExfiltration = $exfil.Summary.TotalIndicators
@@ -673,6 +689,7 @@ function Get-SecurityMetrics {
                     Write-Host "  Data Exfiltration: $($script:metrics.Detection.DataExfiltration)" -ForegroundColor $(if ($script:metrics.Detection.DataExfiltration -gt 0) { 'Red' } else { 'Green' })
                 } catch { 
                     $failedFunctions++
+                    $failedDetectionCollectors++
                     Write-Verbose "  Find-DataExfiltration: $_"
                     $failedCollectors += 'Find-DataExfiltration'
                 }
@@ -680,6 +697,7 @@ function Get-SecurityMetrics {
                 # Find-NetworkAnomalies
                 try {
                     $totalFunctions++
+                    $attemptedDetectionCollectors++
                     $network = Find-NetworkAnomalies -ErrorAction Stop
                     if ($network -and $network.PSObject.Properties['TotalAnomalies']) {
                         $script:metrics.Detection.NetworkAnomalies = $network.TotalAnomalies
@@ -690,6 +708,7 @@ function Get-SecurityMetrics {
                     Write-Host "  Network Anomalies: $($script:metrics.Detection.NetworkAnomalies)" -ForegroundColor $(if ($script:metrics.Detection.NetworkAnomalies -gt 0) { 'Yellow' } else { 'Green' })
                 } catch { 
                     $failedFunctions++
+                    $failedDetectionCollectors++
                     Write-Verbose "  Find-NetworkAnomalies: $_"
                     $failedCollectors += 'Find-NetworkAnomalies'
                 }
@@ -1330,6 +1349,7 @@ function Get-SecurityMetrics {
                 # Get-ThreatIntelligence
                 try {
                     $totalFunctions++
+                    $attemptedDetectionCollectors++
                     $threatIntel = Get-ThreatIntelligence -ErrorAction Stop
                     if ($threatIntel) {
                         if ($threatIntel.PSObject.Properties['IOCMatches']) {
@@ -1344,6 +1364,7 @@ function Get-SecurityMetrics {
                     Write-Host "  IOC Matches: $($script:metrics.ThreatHunting.IOCMatches)" -ForegroundColor $(if ($script:metrics.ThreatHunting.IOCMatches -gt 0) { 'Red' } else { 'Green' })
                 } catch { 
                     $failedFunctions++
+                    $failedDetectionCollectors++
                     Write-Verbose "  Get-ThreatIntelligence: $_"
                     $failedCollectors += 'Get-ThreatIntelligence'
                 }
@@ -1351,6 +1372,7 @@ function Get-SecurityMetrics {
                 # Get-MITREAttackMapping
                 try {
                     $totalFunctions++
+                    $attemptedDetectionCollectors++
                     $mitre = Get-MITREAttackMapping -ErrorAction Stop
                     if ($mitre) {
                         if ($mitre.PSObject.Properties['UniqueTechniques']) {
@@ -1365,6 +1387,7 @@ function Get-SecurityMetrics {
                     Write-Host "  MITRE Techniques: $($script:metrics.ThreatHunting.MITRETechniques)" -ForegroundColor $(if ($script:metrics.ThreatHunting.MITRETechniques -gt 0) { 'Yellow' } else { 'Green' })
                 } catch { 
                     $failedFunctions++
+                    $failedDetectionCollectors++
                     Write-Verbose "  Get-MITREAttackMapping: $_"
                     $failedCollectors += 'Get-MITREAttackMapping'
                 }
@@ -1614,9 +1637,11 @@ $majorityFailed = ($totalFunctions -gt 0) -and ($failedFunctions * 2 -gt $totalF
 if ($majorityFailed) {
     Write-Warning "More than 50% of collectors failed ($failedFunctions of $totalFunctions): $($failedCollectors -join ', '). OverallSecurityScore is reported as null because the collected data is too incomplete to score reliably."
     $script:metrics.OverallSecurityScore = $null
+    $script:metrics.ScoreConfidence = 'Insufficient'
 }
 elseif ($failedFunctions -gt 0) {
-    Write-Warning "$failedFunctions of $totalFunctions collectors failed: $($failedCollectors -join ', '). The overall score is based on partial data (see DataCompleteness)."
+    Write-Warning "$failedFunctions of $totalFunctions collectors failed: $($failedCollectors -join ', '). The overall score is based on partial data (see DataCompleteness); the score is an upper bound."
+    $script:metrics.ScoreConfidence = 'Partial'
 }
 
 Write-Host "  Overall Security Score: $(if ($null -ne $script:metrics.OverallSecurityScore) { "$($script:metrics.OverallSecurityScore)%" } else { 'N/A (insufficient data)' })" -ForegroundColor $(
@@ -1638,15 +1663,6 @@ $script:metrics.RiskLevel =
     elseif ($script:metrics.Findings.Medium -gt 20) { "Medium" }
     else { "Low" }
 
-Write-Host "  Risk Level: $($script:metrics.RiskLevel)" -ForegroundColor $(
-    switch ($script:metrics.RiskLevel) {
-        'Critical' { 'Red' }
-        'High' { 'Red' }
-        'Medium' { 'Yellow' }
-        default { 'Green' }
-    }
-)
-
 # Determine threat level
 $script:metrics.ThreatLevel = 
     if ($script:metrics.Detection.APTIndicators -gt 0) { "Critical" }
@@ -1657,11 +1673,31 @@ $script:metrics.ThreatLevel =
     elseif ($script:metrics.Detection.TotalThreats -gt 0) { "Low" }
     else { "Minimal" }
 
+# With most collectors failed, "no findings" means "no data", not "low risk"
+if ($majorityFailed) {
+    $script:metrics.RiskLevel   = 'Unknown'
+    $script:metrics.ThreatLevel = 'Unknown'
+}
+elseif ($attemptedDetectionCollectors -gt 0 -and $failedDetectionCollectors -eq $attemptedDetectionCollectors) {
+    $script:metrics.ThreatLevel = 'Unknown'
+}
+
+Write-Host "  Risk Level: $($script:metrics.RiskLevel)" -ForegroundColor $(
+    switch ($script:metrics.RiskLevel) {
+        'Critical' { 'Red' }
+        'High' { 'Red' }
+        'Medium' { 'Yellow' }
+        'Unknown' { 'Yellow' }
+        default { 'Green' }
+    }
+)
+
 Write-Host "  Threat Level: $($script:metrics.ThreatLevel)" -ForegroundColor $(
     switch ($script:metrics.ThreatLevel) {
         'Critical' { 'Red' }
         'High' { 'Red' }
         'Medium' { 'Yellow' }
+        'Unknown' { 'Yellow' }
         default { 'Green' }
     }
 )
