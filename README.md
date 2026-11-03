@@ -5,7 +5,7 @@
 [![PowerShell](https://img.shields.io/badge/PowerShell-5.1%2B-blue.svg)](https://github.com/PowerShell/PowerShell)
 [![Windows](https://img.shields.io/badge/Windows-10%2F11%2FServer%202016%2B-blue.svg)](https://www.microsoft.com/windows)
 [![License](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
-[![Version](https://img.shields.io/badge/Version-1.6.2-orange.svg)](https://github.com/okanyildiz/WindowsSecurityAudit/releases)
+[![Version](https://img.shields.io/badge/Version-1.7.0-orange.svg)](https://github.com/okanyildiz/WindowsSecurityAudit/releases)
 [![PowerShell Gallery](https://img.shields.io/powershellgallery/v/WindowsSecurityAudit.svg?label=PSGallery)](https://www.powershellgallery.com/packages/WindowsSecurityAudit)
 [![Functions](https://img.shields.io/badge/Functions-72-brightgreen.svg)](https://github.com/okanyildiz/WindowsSecurityAudit)
 [![Modules](https://img.shields.io/badge/Modules-14-blue.svg)](https://github.com/okanyildiz/WindowsSecurityAudit)
@@ -681,7 +681,7 @@ The Forensics module provides digital forensic capabilities for incident investi
 | **`Get-ArtifactCollection`** | Collects forensic artifacts | • Browser artifacts (Chrome and Edge Default profiles only)<br>• Download history<br>• Per-file SHA256 computed at acquisition<br>• Raw registry hive capture via `reg save`<br>• AcquisitionLog manifest block | User activity<br>File access<br>Internet activity |
 | **`Get-UserActivityArtifacts`** | Collects per-user activity artifacts for DFIR | • Recycle Bin `$I` parsing (v2 + best-effort v1 headers; path, size, deletion FILETIME)<br>• Recent/Desktop LNK resolution via WScript.Shell COM (unresolved off-Windows)<br>• JumpList enumeration (AutomaticDestinations; embedded targets not parsed)<br>• ActivitiesCache.db raw copy (no SQLite parsing)<br>• Optional CSV export (`-OutputPath`) | Deleted files<br>Opened documents<br>App usage evidence<br>Timeline databases |
 | **`Get-ExecutionArtifacts`** | Traces program execution | • Prefetch analysis<br>• ShimCache: raw binary data collected but NOT parsed (use ShimCacheParser for full decoding)<br>• UserAssist decoding<br>• RecentApps<br>• BAM/DAM analysis | Program execution<br>Timestamps<br>Frequency<br>User attribution |
-| **`Get-FileSystemJournal`** | File-system journal & timestomp evidence via fsutil (requires elevation) | • USN journal parsing with reason decoding and executable-creation evidence<br>• MFT summary statistics (summary-level via fsutil — no raw $MFT record parsing)<br>• TimestompScan cross-checks file timestamps against USN journal creation records plus pre-2000/future anomalies — explicitly labeled heuristic<br>• `-DriveLetter`, `-MaxRecords`, optional CSV `-OutputPath` | Executable drops<br>USN journal activity<br>Timestomp indicators (heuristic) |
+| **`Get-FileSystemJournal`** | File-system journal & timestomp evidence via native FSCTL binary reads with fsutil fallback (requires elevation) | • USN journal parsing with reason decoding and executable-creation evidence<br>• MFT summary statistics (summary-level via fsutil — no raw $MFT record parsing)<br>• Journal evidence Source reported as Native or Fsutil in Summary<br>• TimestompScan cross-checks file timestamps against USN journal creation records plus pre-2000/future anomalies — explicitly labeled heuristic<br>• `-DriveLetter`, `-MaxRecords`, optional CSV `-OutputPath` | Executable drops<br>USN journal activity<br>Timestomp indicators (heuristic) |
 | **`Get-USBHistory`** | USB device forensics | • Device enumeration<br>• FirstInstalled timestamp; `LastConnected` is reported as unknown (not collected)<br>• Serial numbers | Device usage<br>Hardware inventory<br>User activity |
 | **`New-ForensicTimeline`** | Timeline reconstruction | • Multi-source correlation<br>• Event sequencing<br>• File system timeline<br>• Registry timeline<br>• Log correlation<br>• Visual timeline generation | Incident timeline<br>Attack chain<br>User actions<br>System events |
 
@@ -716,6 +716,14 @@ The Reporting module transforms raw security data into actionable intelligence t
 
 The full feature set is documented in the module tables above — this section only covers what changed per release, newest first:
 
+### 🆕 v1.7.0 — Native Binary USN Journal Reading
+
+**The last locale exception is closed.** `Get-FileSystemJournal` now reads the NTFS USN change journal directly via `FSCTL_QUERY_USN_JOURNAL` / `FSCTL_READ_USN_JOURNAL` P/Invoke — structured binary data, no console-text parsing — instead of localized `fsutil usn readjournal` output. Works identically on every Windows display language (requires elevation).
+
+- **Native-first with honest fallback**: if the native read fails (permissions, inactive journal, CLM), the function falls back to fsutil with an explicit capability note; partial native evidence is preserved with an incomplete-collection note. `Summary.Source` shows whether evidence came from `Native` or `Fsutil`.
+- **V2 and V3 record support** (including 128-bit ReFS identifiers), defensive buffer walking with full bounds checks, `ParentFileReferenceNumber` added to records, `TRANSACTED_CHANGE` and `INTEGRITY_CHANGE` reason flags added.
+- **Cross-platform proof**: 25 new Pester tests drive a pure `ParseBuffer` seam with synthetic binary fixtures (valid V2/V3 records, malformed/truncated buffers, UTF-16 names, continuation edge cases) — the same parse logic is validated on macOS, Linux and Windows CI.
+
 ### 🆕 v1.6.0 — Full Non-English Windows Support (Locale-Invariant Auditing)
 
 **A correctness overhaul, not just a feature:** every check that parsed localized console output (`auditpol`, `net accounts`, `netsh`, SFC/DISM) or matched localized identity names (`Administrators`, `Guest`, `Everyone`, `NT AUTHORITY\SYSTEM`) has been rewritten to use **APIs, GUIDs and SIDs** — the module now produces correct results on Turkish, German, French and other non-English Windows display languages, and reports an honest *"unable to determine"* instead of a silent wrong PASS when data is unreachable. Known exception: `Get-FileSystemJournal` still parses English `fsutil` output (see [Known Limitations](#-known-limitations)).
@@ -741,7 +749,7 @@ The full feature set is documented in the module tables above — this section o
 |----------|--------|--------------|
 | **`Send-SiemEvent`** | Response | Stream findings directly to your SIEM over HTTP: **Splunk HEC** (`Splunk <token>` auth header), **Microsoft Sentinel** (Log Analytics Data Collector API with the documented HMAC-SHA256 **SharedKey signature**), or a **generic webhook** with custom headers — in **NDJSON or CEF** with batching (`-BatchSize`), exponential-backoff retry on HTTP 429/5xx (`-MaxRetries`, `-ThrottleMs`), and the token **masked** in all console output |
 | **`Get-SysmonAnalytics`** | Detection | Deep **Sysmon Operational log analytics** (requires Sysmon; returns `NotAvailable` gracefully when absent): Event 1 process chains & command-line indicators, Event 3 network **beaconing**, Event 7 image loads, Event 10 process access with **LSASS access-mask** analysis (T1003.001), Event 11 file creates, Events 12/13 registry writes, Event 22 DNS anomalies — every finding carries a MITRE ATT&CK `Technique` property; `-Hours`, `-EventTypes`, `-MaxEvents` filtering |
-| **`Get-FileSystemJournal`** | Forensics | File-system journal evidence via **fsutil** (requires elevation): **USN journal** parsing with reason decoding and **executable-creation evidence**, **MFT summary** statistics (summary-level only — no raw $MFT record parsing), and a **TimestompScan** mode that cross-checks file timestamps against journal creation records and is explicitly labeled **heuristic**; `-DriveLetter`, `-MaxRecords`, CSV `-OutputPath` |
+| **`Get-FileSystemJournal`** | Forensics | File-system journal evidence via **native FSCTL binary reads** (fsutil fallback; requires elevation): **USN journal** parsing with reason decoding and **executable-creation evidence**, **MFT summary** statistics (summary-level only — no raw $MFT record parsing), and a **TimestompScan** mode that cross-checks file timestamps against journal creation records and is explicitly labeled **heuristic**; `-DriveLetter`, `-MaxRecords`, CSV `-OutputPath` |
 
 **Extended parameters on existing functions:**
 
@@ -906,7 +914,7 @@ Actual scan times depend on the target's hardware, event-log sizes and the modul
 ## ⚠️ Known Limitations
 
 - **DISM/SFC verdicts rely on CBS.log markers** — `Test-SystemIntegrity` interprets servicing-log markers rather than performing a full image analysis.
-- **USN journal parsing requires English-locale `fsutil` output** — `Get-FileSystemJournal` parses `fsutil` text; full locale-invariant `FSCTL_READ_USN_JOURNAL` parsing is on the [v1.7 roadmap](#-roadmap).
+- **USN journal reads are native binary since v1.7.0** — `Get-FileSystemJournal` uses `FSCTL_READ_USN_JOURNAL` (locale-invariant) when elevated; the `fsutil` text fallback still requires English-locale output. Raw `$MFT` record carving remains out of scope (summary-level metadata only).
 - **Cloud compliance is a catalog, not an evaluation** — `Get-CloudComplianceStatus` returns `NotEvaluated` until framework-specific Microsoft Graph queries are implemented.
 - **No in-module memory acquisition** — full RAM capture requires external tools (WinPMEM, DumpIt, Magnet RAM Capture); `Export-MemoryDump` creates per-process dumps.
 
@@ -977,8 +985,9 @@ Found this useful? You can support development via [Buy Me a Coffee](https://buy
 
 ## 🚀 Roadmap
 
-### Version 1.7 (Next)
-- [ ] **Raw $MFT record parsing** — go beyond fsutil summary output for full file-system timelines (locale-invariant `FSCTL_READ_USN_JOURNAL` P/Invoke replaces fsutil text parsing)
+### Version 1.8 (Next)
+- [ ] **Raw $MFT record parsing** — go beyond fsutil summary output for full file-system timelines
+- [x] **Native USN journal reads** — `FSCTL_READ_USN_JOURNAL` P/Invoke replaces fsutil text parsing (v1.7.0; locale-invariant, V2/V3 records, 25 cross-platform fixture tests)
 - [ ] **JEA endpoint support** — run remote scans through Just Enough Administration constrained endpoints (CLM-safe: precompiled helpers, no Add-Type dependency)
 - [ ] **Alert webhook DPAPI protection** — encrypt stored webhook URLs at rest
 - [ ] **SIEM streaming auth profiles** — named credential profiles and OAuth flows for Send-SiemEvent

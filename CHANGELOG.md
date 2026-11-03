@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.7.0] - 2026-11-03
+
+### Added
+
+- Native binary USN journal reading: `Get-FileSystemJournal` now collects journal records via `FSCTL_QUERY_USN_JOURNAL` / `FSCTL_READ_USN_JOURNAL` P/Invoke instead of parsing localized `fsutil usn readjournal` text — the last locale exception is closed. Native-first with an fsutil fallback (explicit capability note); partial native evidence preserved with an incomplete-collection note; `Summary.Source` reports `Native` or `Fsutil`.
+- USN_RECORD_V2 and V3 parsing (incl. 128-bit ReFS file identifiers) with fully bounds-checked buffer walking; records gain `ParentFileReferenceNumber`; reason flags add `TRANSACTED_CHANGE` and `INTEGRITY_CHANGE`.
+- New private helper `Private/Get-UsnJournalNative.ps1` with a pure `ParseBuffer` seam (no OS calls) so parse logic is testable on every platform.
+- 25 cross-platform Pester tests with synthetic binary fixtures (valid V2/V3 records, malformed/truncated buffers, UTF-16 names, continuation edge cases).
+
+### Notes
+
+- Live DeviceIoControl integration (privileges, rollover, inactive journals, V3/ReFS) is exercised only on real Windows; CI covers parse logic on all platforms.
+
 ## [1.6.2] - 2026-10-29
 
 Verified-fix release driven by an independent post-release audit (every item reproduced before fixing; one commit per item).
@@ -159,7 +172,8 @@ Post-release audit hardening. Every finding below was verified against the code 
 - Cloud Security: Azure AD risky sign-ins, M365 security posture, cloud compliance status.
 - Hardening: audit policies, PowerShell security (logging, transcription), security baseline enforcement — all with `-WhatIf` support.
 
-[Unreleased]: https://github.com/okanyildiz/WindowsSecurityAudit/compare/v1.6.2...HEAD
+[Unreleased]: https://github.com/okanyildiz/WindowsSecurityAudit/compare/v1.7.0...HEAD
+[1.7.0]: https://github.com/okanyildiz/WindowsSecurityAudit/releases/tag/v1.7.0
 [1.6.2]: https://github.com/okanyildiz/WindowsSecurityAudit/releases/tag/v1.6.2
 [1.6.1]: https://github.com/okanyildiz/WindowsSecurityAudit/releases/tag/v1.6.1
 [1.6.0]: https://github.com/okanyildiz/WindowsSecurityAudit/releases/tag/v1.6.0

@@ -3,12 +3,13 @@ function Get-FileSystemJournal {
     .SYNOPSIS
         Parses NTFS USN change journal and file-system metadata for forensic analysis
     .DESCRIPTION
-        Reads the NTFS USN change journal via fsutil to surface file creation,
-        deletion, and rename activity, summarizes MFT statistics from volume
-        metadata, and scans targeted paths for timestomp indicators by comparing
+        Reads the NTFS USN change journal through binary native APIs, with an
+        English-locale fsutil fallback, to surface file creation, deletion, and
+        rename activity. Also summarizes MFT statistics from fsutil volume
+        metadata and scans targeted paths for timestomp indicators by comparing
         StandardInformation timestamps against journal creation records.
         Raw $MFT record carving is out of scope; this function operates at the
-        summary level exposed by fsutil.
+        journal-record and volume-summary levels.
     .PARAMETER DriveLetter
         NTFS volume to analyze (default: C)
     .PARAMETER Mode
@@ -112,11 +113,14 @@ function Get-FileSystemJournal {
                         Write-Host "`n[*] Reading USN change journal on $drive`:..." -ForegroundColor Cyan
 
                         try {
-                            $rawLines = @(Get-FsutilOutput -Arguments @('usn', 'readjournal', "$drive`:"))
-                            $fsutilExitCode = $script:FsutilLastExitCode
+                            $collection = Get-UsnJournalCollection -DriveLetter $drive -MaxRecords $MaxRecords -Elevated:$isAdmin
+                            foreach ($note in @($collection.Notes)) {
+                                $result.Notes += $note
+                            }
 
-                            if ($fsutilExitCode -ne 0) {
-                                if ($fsutilExitCode -eq 1 -or $fsutilExitCode -eq 5) {
+                            if (-not $collection.Success) {
+                                $fsutilExitCode = $collection.FsutilExitCode
+                                if ($collection.AccessDenied) {
                                     Write-Warning "fsutil denied access to the USN journal (exit code $fsutilExitCode); fsutil requires elevation or access denied. Rerun from an elevated prompt."
                                     $result.Notes += "USN journal read failed: fsutil requires elevation or access denied."
                                 }
@@ -126,14 +130,19 @@ function Get-FileSystemJournal {
                                 }
                             }
                             else {
-                                $journalRecords = @(ConvertFrom-UsnJournalOutput -Lines $rawLines -MaxRecords $MaxRecords)
-                                Write-Host "  Parsed $($journalRecords.Count) journal records" -ForegroundColor Green
+                                $journalRecords = @($collection.Records)
+                                Write-Host "  Parsed $($journalRecords.Count) journal records via $($collection.Source)" -ForegroundColor Green
 
                                 $resolveCap = 250
                                 $resolveCount = 0
+                                $skipped128BitPaths = 0
                                 $pathCache = @{}
                                 foreach ($record in $journalRecords) {
                                     if ($null -eq $record.FileReferenceNumber) { continue }
+                                    if ($record.FileReferenceNumber -match '^0x[0-9A-Fa-f]{32}$') {
+                                        $skipped128BitPaths++
+                                        continue
+                                    }
                                     if ($pathCache.ContainsKey($record.FileReferenceNumber)) {
                                         $record.FullPath = $pathCache[$record.FileReferenceNumber]
                                         continue
@@ -147,6 +156,9 @@ function Get-FileSystemJournal {
                                     }
                                 }
                                 Write-Verbose "Resolved full paths for $resolveCount unique file reference numbers (cap $resolveCap)."
+                                if ($skipped128BitPaths -gt 0) {
+                                    $result.Notes += "Full-path resolution was skipped for $skipped128BitPaths records with 128-bit file identifiers; the existing fsutil resolver is validated only for 64-bit NTFS identifiers."
+                                }
                                 if ($journalRecords.Count -gt $resolveCap) {
                                     $result.Notes += "Full-path resolution was capped at $resolveCap unique file reference numbers; the USN journal stores names, not paths, so remaining records have no directory context."
                                 }
@@ -192,10 +204,16 @@ function Get-FileSystemJournal {
                                         }
                                     })
                                     TopDirectories      = $topDirectories
+                                    Source              = $collection.Source
                                 }
 
-                                $result.Notes += "Journal output is text-parsed from 'fsutil usn readjournal'; fields are limited to what fsutil prints (file name, reason bitmask, time stamp, USN, file reference number)."
-                                $result.Notes += "The journal is circular; records shown cover only the window fsutil returned and older history may already be overwritten."
+                                if ($collection.Source -eq 'Native') {
+                                    $result.Notes += "Journal records were read through binary FSCTL_QUERY_USN_JOURNAL and FSCTL_READ_USN_JOURNAL calls; no localized text parsing was used."
+                                }
+                                else {
+                                    $result.Notes += "Journal output is text-parsed from 'fsutil usn readjournal'; fields are limited to what fsutil prints (file name, reason bitmask, time stamp, USN, file reference number)."
+                                }
+                                $result.Notes += "The journal is circular; records shown cover only the collected window and older history may already be overwritten."
 
                                 $result.Recommendations += "Review executable creation events for unexpected binaries consistent with ingress tool transfer (MITRE ATT&CK T1105)."
                                 $result.Recommendations += "Export and preserve the journal promptly during incident response before rollover destroys older records."
@@ -290,6 +308,7 @@ function Get-FileSystemJournal {
                                     MftZoneStart           = if ($volumeInfo.ContainsKey('Mft Zone Start')) { $volumeInfo['Mft Zone Start'] } else { $null }
                                     MftZoneEnd             = if ($volumeInfo.ContainsKey('Mft Zone End')) { $volumeInfo['Mft Zone End'] } else { $null }
                                     PropertiesReported     = $infoRecords.Count
+                                    Source                 = 'Fsutil'
                                 }
 
                                 $result.Notes += "Summary-level view only: values come from 'fsutil fsinfo ntfsinfo' volume metadata."
@@ -316,13 +335,17 @@ function Get-FileSystemJournal {
                         Write-Host "`n[*] Scanning for timestomp indicators..." -ForegroundColor Cyan
 
                         $creationRecords = @()
+                        $journalSource = $null
                         if ($isAdmin) {
                             try {
                                 Write-Host "  Reading USN journal for creation-record comparison..." -ForegroundColor Gray
-                                $rawLines = @(Get-FsutilOutput -Arguments @('usn', 'readjournal', "$drive`:"))
-                                $fsutilExitCode = $script:FsutilLastExitCode
-                                if ($fsutilExitCode -ne 0) {
-                                    if ($fsutilExitCode -eq 1 -or $fsutilExitCode -eq 5) {
+                                $collection = Get-UsnJournalCollection -DriveLetter $drive -MaxRecords $MaxRecords -Elevated
+                                foreach ($note in @($collection.Notes)) {
+                                    $result.Notes += $note
+                                }
+                                $fsutilExitCode = $collection.FsutilExitCode
+                                if (-not $collection.Success) {
+                                    if ($collection.AccessDenied) {
                                         Write-Warning "fsutil denied access to the USN journal (exit code $fsutilExitCode); fsutil requires elevation or access denied; journal comparison will be skipped."
                                         $result.Notes += "USN journal comparison skipped: fsutil requires elevation or access denied."
                                     }
@@ -332,9 +355,10 @@ function Get-FileSystemJournal {
                                     }
                                 }
                                 else {
-                                    $creationRecords = @(ConvertFrom-UsnJournalOutput -Lines $rawLines -MaxRecords $MaxRecords |
+                                    $journalSource = $collection.Source
+                                    $creationRecords = @($collection.Records |
                                         Where-Object { $_.ReasonFlags -contains 'FILE_CREATE' -and $null -ne $_.TimeStamp })
-                                    Write-Host "  Loaded $($creationRecords.Count) journal creation records" -ForegroundColor Gray
+                                    Write-Host "  Loaded $($creationRecords.Count) journal creation records via $journalSource" -ForegroundColor Gray
                                 }
                             }
                             catch {
@@ -402,6 +426,7 @@ function Get-FileSystemJournal {
                             FutureTimestampCount    = $futureCount
                             JournalCreationRecords  = $creationRecords.Count
                             ScanPaths               = @($ScanPaths)
+                            Source                  = $journalSource
                         }
 
                         $result.Notes += "Timestomp detection is a HEURISTIC: a `$SI LastWriteTime earlier than the file's USN journal creation record is a classic timestomp signature, but legitimate tools (archivers, installers, backup restore) also rewrite timestamps."
@@ -515,6 +540,145 @@ function Get-FsutilOutput {
     $output = @(& fsutil @Arguments 2>&1)
     $script:FsutilLastExitCode = $LASTEXITCODE
     return @($output | ForEach-Object { "$_" })
+}
+
+function Get-UsnJournalCollection {
+    [CmdletBinding()]
+    [OutputType([PSCustomObject])]
+    param(
+        [Parameter()]
+        [ValidateNotNullOrEmpty()]
+        [string]$DriveLetter = 'C',
+
+        [Parameter()]
+        [ValidateRange(1, 1000000)]
+        [int]$MaxRecords = 10000,
+
+        [Parameter()]
+        [switch]$Elevated
+    )
+
+    $notes = @()
+    $nativeAttempted = $false
+
+    if ($Elevated) {
+        $nativeAttempted = $true
+        $nativeResult = $null
+        $nativeError = $null
+
+        try {
+            $nativeResult = Get-UsnJournalNative -DriveLetter $DriveLetter -MaxRecords $MaxRecords
+        }
+        catch {
+            $nativeError = "Native USN journal invocation failed: $($_.Exception.Message)"
+        }
+
+        if ($null -ne $nativeResult) {
+            $notes += @($nativeResult.Notes)
+            $nativeError = $nativeResult.Error
+            $nativeRecords = @($nativeResult.Records)
+
+            if ($nativeResult.Success -or $nativeRecords.Count -gt 0) {
+                $mappedRecords = @($nativeRecords | ForEach-Object {
+                    ConvertTo-UsnJournalNativeRecord -NativeRecord $_
+                })
+
+                return [PSCustomObject]@{
+                    Records          = $mappedRecords
+                    Success          = $true
+                    Error            = $nativeError
+                    Source           = 'Native'
+                    NextUsn          = [long]$nativeResult.NextUsn
+                    FsutilExitCode   = $null
+                    AccessDenied     = $false
+                    NativeAttempted  = $true
+                    Incomplete       = [bool]$nativeResult.Incomplete
+                    Notes            = $notes
+                }
+            }
+        }
+
+        $notes += 'native journal read unavailable; using fsutil (English-locale output required)'
+        if ($nativeError) {
+            $notes += "Native USN journal read failed before collection: $nativeError"
+        }
+    }
+
+    $rawLines = @(Get-FsutilOutput -Arguments @('usn', 'readjournal', "$DriveLetter`:"))
+    $fsutilExitCode = $script:FsutilLastExitCode
+    $accessDenied = ($fsutilExitCode -eq 1 -or $fsutilExitCode -eq 5)
+
+    if ($fsutilExitCode -ne 0) {
+        return [PSCustomObject]@{
+            Records          = @()
+            Success          = $false
+            Error            = "fsutil usn readjournal failed with exit code $fsutilExitCode."
+            Source           = 'Fsutil'
+            NextUsn          = [long]0
+            FsutilExitCode   = $fsutilExitCode
+            AccessDenied     = $accessDenied
+            NativeAttempted  = $nativeAttempted
+            Incomplete       = $false
+            Notes            = $notes
+        }
+    }
+
+    $journalRecords = @(ConvertFrom-UsnJournalOutput -Lines $rawLines -MaxRecords $MaxRecords)
+    return [PSCustomObject]@{
+        Records          = $journalRecords
+        Success          = $true
+        Error            = $null
+        Source           = 'Fsutil'
+        NextUsn          = [long]0
+        FsutilExitCode   = $fsutilExitCode
+        AccessDenied     = $false
+        NativeAttempted  = $nativeAttempted
+        Incomplete       = $false
+        Notes            = $notes
+    }
+}
+
+function ConvertTo-UsnJournalNativeRecord {
+    [CmdletBinding()]
+    [OutputType([PSCustomObject])]
+    param(
+        [Parameter(Mandatory = $true)]
+        [object]$NativeRecord
+    )
+
+    $reasonMask = [uint32]$NativeRecord.ReasonMask
+    $timeStamp = $null
+    $timeStampText = $null
+    if ($null -ne $NativeRecord.TimeStamp) {
+        $timeStamp = [DateTime]$NativeRecord.TimeStamp
+        $timeStampText = $timeStamp.ToString('o', [System.Globalization.CultureInfo]::InvariantCulture)
+    }
+
+    if ($NativeRecord.MajorVersion -eq 3) {
+        if ($null -eq $NativeRecord.FileReferenceNumber128 -or $NativeRecord.FileReferenceNumber128.Length -ne 16 -or
+            $null -eq $NativeRecord.ParentFileReferenceNumber128 -or $NativeRecord.ParentFileReferenceNumber128.Length -ne 16) {
+            throw 'A V3 USN record must contain two complete 16-byte file identifiers.'
+        }
+        $fileReference = '0x' + ([BitConverter]::ToString($NativeRecord.FileReferenceNumber128)).Replace('-', '').ToLowerInvariant()
+        $parentReference = '0x' + ([BitConverter]::ToString($NativeRecord.ParentFileReferenceNumber128)).Replace('-', '').ToLowerInvariant()
+    }
+    else {
+        $fileReference = '0x' + ([uint64]$NativeRecord.FileReferenceNumber).ToString('x')
+        $parentReference = '0x' + ([uint64]$NativeRecord.ParentFileReferenceNumber).ToString('x')
+    }
+
+    return [PSCustomObject]@{
+        FileName                  = [string]$NativeRecord.FileName
+        FullPath                  = $null
+        Reason                    = '0x' + $reasonMask.ToString('x8')
+        ReasonMask                = $reasonMask
+        ReasonFlags               = @(Get-UsnReasonFlagNames -Mask $reasonMask)
+        TimeStamp                 = $timeStamp
+        TimeStampText             = $timeStampText
+        Usn                       = '0x' + ([long]$NativeRecord.Usn).ToString('x')
+        FileReferenceNumber       = $fileReference
+        ParentFileReferenceNumber = $parentReference
+    }
 }
 
 function Test-JournalElevation {
@@ -654,8 +818,9 @@ function New-UsnJournalRecord {
         ReasonFlags         = $reasonFlags
         TimeStamp           = $timeStamp
         TimeStampText       = $timeStampText
-        Usn                 = $usnText
-        FileReferenceNumber = $fileReference
+        Usn                       = $usnText
+        FileReferenceNumber       = $fileReference
+        ParentFileReferenceNumber = $null
     }
 }
 
@@ -690,6 +855,8 @@ function Get-UsnReasonFlagNames {
         'OBJECT_ID_CHANGE'      = [uint32]0x00080000
         'REPARSE_POINT_CHANGE'  = [uint32]0x00100000
         'STREAM_CHANGE'         = [uint32]0x00200000
+        'TRANSACTED_CHANGE'     = [uint32]0x00400000
+        'INTEGRITY_CHANGE'      = [uint32]0x00800000
         'CLOSE'                 = [uint32]2147483648
     }
 
