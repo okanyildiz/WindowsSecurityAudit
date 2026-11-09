@@ -9,8 +9,12 @@ function Register-ScheduledSecurityScan {
         findings are detected. The script is then registered as a Scheduled Task
         running as SYSTEM at the chosen cadence (Daily, Weekly on Monday, or
         Monthly on the 1st). Use -Unregister to remove the scheduled task.
-        The generated script embeds the webhook URL (a shared secret), so on
-        Windows its file permissions are restricted to Administrators and SYSTEM.
+        By default the generated script embeds only LocalMachine DPAPI ciphertext
+        for the webhook URL, allowing the elevated registering administrator and
+        the SYSTEM task to use different identities. On Windows its file permissions
+        are restricted to Administrators and SYSTEM because any local account that
+        can obtain LocalMachine ciphertext can ask DPAPI to decrypt it. The explicit
+        PlainText compatibility mode still embeds the webhook URL itself.
 
         Alert deduplication is enabled by default: the generated script persists a
         stable SHA256 fingerprint (first 16 hex chars over Category + Finding text)
@@ -33,7 +37,16 @@ function Register-ScheduledSecurityScan {
         (default: "$env:ProgramData\WindowsSecurityAudit\Scans")
     .PARAMETER WebhookUrl
         Optional incoming webhook URL (Microsoft Teams or Slack style) that receives
-        an adaptive-card JSON POST when Critical findings exist
+        an adaptive-card JSON POST when Critical findings exist. Cannot be combined
+        with WebhookSecret. For interactive use, prefer WebhookSecret so the URL is
+        not retained in command-line history.
+    .PARAMETER WebhookSecret
+        SecureString containing the incoming webhook URL. Use Read-Host -AsSecureString
+        for interactive entry. Cannot be combined with WebhookUrl.
+    .PARAMETER WebhookProtection
+        Protection used in the generated script: DpapiLocalMachine (default) stores
+        versioned LocalMachine DPAPI ciphertext; PlainText stores the URL itself and
+        is intended only for explicit backward compatibility.
     .PARAMETER EmailTo
         Optional recipient address for email alerts (requires EmailFrom and SmtpServer)
     .PARAMETER EmailFrom
@@ -51,15 +64,17 @@ function Register-ScheduledSecurityScan {
     .PARAMETER Unregister
         Removes the scheduled security scan task and exits without registering anything
     .PARAMETER WhatIf
-        Shows what would happen if the command runs (SupportsShouldProcess)
+        Shows what would happen if the command runs (SupportsShouldProcess). Does not
+        protect, write, or emit webhook secret material.
     .PARAMETER Confirm
         Prompts for confirmation before registering or unregistering the task
     .EXAMPLE
         Register-ScheduledSecurityScan -ScanType Standard -Frequency Weekly -Time '09:00'
         Registers a weekly (Monday 09:00) Standard scan running as SYSTEM
     .EXAMPLE
-        Register-ScheduledSecurityScan -ScanType Full -Frequency Daily -Time '22:30' -WebhookUrl 'https://outlook.office.com/webhook/...'
-        Registers a nightly Full scan that posts an adaptive card to a Teams webhook on Critical findings
+        Register-ScheduledSecurityScan -ScanType Full -Frequency Daily -Time '22:30' -WebhookSecret (Read-Host -AsSecureString)
+        Prompts without echoing the webhook URL, protects it with LocalMachine DPAPI,
+        and registers a nightly Full scan that alerts on Critical findings
     .EXAMPLE
         Register-ScheduledSecurityScan -ScanType Quick -Frequency Monthly -EmailTo secops@contoso.com -EmailFrom audit@contoso.com -SmtpServer smtp.contoso.com
         Registers a monthly Quick scan that emails an alert when Critical findings exist
@@ -70,7 +85,8 @@ function Register-ScheduledSecurityScan {
         Register-ScheduledSecurityScan -Unregister -Confirm:$false
         Removes the scheduled security scan task
     .OUTPUTS
-        PSCustomObject with the registration (or unregistration) result
+        PSCustomObject with the registration (or unregistration) result, including
+        WebhookProtection but never the URL, ciphertext, or SecureString value
     #>
 
     [CmdletBinding(SupportsShouldProcess = $true, ConfirmImpact = 'High')]
@@ -93,6 +109,13 @@ function Register-ScheduledSecurityScan {
         [string]$WebhookUrl,
 
         [Parameter()]
+        [SecureString]$WebhookSecret,
+
+        [Parameter()]
+        [ValidateSet('DpapiLocalMachine', 'PlainText')]
+        [string]$WebhookProtection = 'DpapiLocalMachine',
+
+        [Parameter()]
         [string]$EmailTo,
 
         [Parameter()]
@@ -113,6 +136,15 @@ function Register-ScheduledSecurityScan {
     )
 
     begin {
+        if ($PSBoundParameters.ContainsKey('WebhookUrl') -and $PSBoundParameters.ContainsKey('WebhookSecret')) {
+            throw 'Specify either WebhookUrl or WebhookSecret, not both.'
+        }
+
+        $webhookSecretConfigured = ($null -ne $WebhookSecret)
+        if ($webhookSecretConfigured -and $WebhookSecret.Length -eq 0) {
+            throw 'WebhookSecret cannot be empty.'
+        }
+
         Write-Host "=== SCHEDULED SECURITY SCAN REGISTRATION ===" -ForegroundColor Cyan
         Write-Host "Start Time: $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')" -ForegroundColor Yellow
 
@@ -141,7 +173,11 @@ function Register-ScheduledSecurityScan {
             Write-Warning "Email alerting requires EmailTo, EmailFrom, and SmtpServer together. Email alerts will be disabled."
         }
 
-        $webhookConfigured = (-not [string]::IsNullOrWhiteSpace($WebhookUrl))
+        $webhookConfigured = (-not [string]::IsNullOrWhiteSpace($WebhookUrl) -or $webhookSecretConfigured)
+        $effectiveWebhookProtection = if ($webhookConfigured) { $WebhookProtection } else { 'None' }
+        if ($webhookConfigured -and $WebhookProtection -eq 'PlainText') {
+            Write-Warning 'SECURITY WARNING: WebhookProtection PlainText writes the webhook URL into the scan script. Use the default DpapiLocalMachine protection unless plaintext compatibility is explicitly required.'
+        }
 
         # Alert dedup is opt-out; the generated script embeds both values
         $alertDedupEnabled = (-not $DisableAlertDedup)
@@ -204,6 +240,7 @@ function Register-ScheduledSecurityScan {
         Write-Host "Frequency: $Frequency at $($Time.ToString('HH:mm'))" -ForegroundColor Yellow
         Write-Host "Output Path: $OutputPath" -ForegroundColor Yellow
         Write-Host "Webhook Alerts: $webhookConfigured" -ForegroundColor Yellow
+        Write-Host "Webhook Protection: $effectiveWebhookProtection" -ForegroundColor Yellow
         Write-Host "Email Alerts: $emailConfigured" -ForegroundColor Yellow
         Write-Host "Alert Dedup: $(if ($alertDedupEnabled) { "True (re-alert after $RealertAfterDays days)" } else { 'False' })" -ForegroundColor Yellow
 
@@ -212,7 +249,6 @@ function Register-ScheduledSecurityScan {
         # Escape single quotes in values embedded into the generated script
         $safeModuleManifest = if ($null -ne $moduleManifest) { $moduleManifest -replace "'", "''" } else { '' }
         $safeOutputPath = if ($null -ne $OutputPath) { $OutputPath -replace "'", "''" } else { '' }
-        $safeWebhookUrl = if ($webhookConfigured) { $WebhookUrl -replace "'", "''" } else { '' }
         $safeEmailTo = if ($emailConfigured) { $EmailTo -replace "'", "''" } else { '' }
         $safeEmailFrom = if ($emailConfigured) { $EmailFrom -replace "'", "''" } else { '' }
         $safeSmtpServer = if ($emailConfigured) { $SmtpServer -replace "'", "''" } else { '' }
@@ -236,14 +272,16 @@ catch {
     Write-Verbose "Could not enforce TLS 1.2: $_"
 }
 
-$modulePath       = '__MODULE_PATH__'
-$scanOutputRoot   = '__OUTPUT_PATH__'
-$assessmentType   = '__ASSESSMENT_TYPE__'
-$webhookUrl       = '__WEBHOOK_URL__'
-$emailTo          = '__EMAIL_TO__'
-$emailFrom        = '__EMAIL_FROM__'
-$smtpServer       = '__SMTP_SERVER__'
-$alertDedup       = __ALERT_DEDUP__
+$modulePath = '__MODULE_PATH__'
+$scanOutputRoot = '__OUTPUT_PATH__'
+$assessmentType = '__ASSESSMENT_TYPE__'
+$webhookProtection = '__WEBHOOK_PROTECTION__'
+$webhookProtectedValue = '__WEBHOOK_VALUE__'
+$webhookUrl = ''
+$emailTo = '__EMAIL_TO__'
+$emailFrom = '__EMAIL_FROM__'
+$smtpServer = '__SMTP_SERVER__'
+$alertDedup = __ALERT_DEDUP__
 $realertAfterDays = __REALERT_AFTER_DAYS__
 
 $runStamp = Get-Date -Format 'yyyyMMdd_HHmmss'
@@ -272,6 +310,25 @@ try {
     }
 
     Import-Module $modulePath -Force -ErrorAction Stop
+
+    # Resolve the webhook once before either alert branch. A DPAPI failure never
+    # treats the protected value as plaintext and never stops scan reporting.
+    if ($webhookProtection -eq 'DpapiLocalMachine') {
+        try {
+            $webhookUrl = & (Get-Module -Name 'WindowsSecurityAudit') {
+                param($protectedText)
+                Unprotect-WsaDpapiData -ProtectedText $protectedText -ErrorAction Stop
+            } $webhookProtectedValue
+        }
+        catch {
+            $webhookUrl = ''
+            Write-Warning 'Webhook decryption failed; webhook delivery is disabled for this run.'
+        }
+    }
+    elseif ($webhookProtection -eq 'PlainText') {
+        $webhookUrl = $webhookProtectedValue
+    }
+    $webhookProtectedValue = ''
 
     $assessment = Invoke-SecurityAssessment -AssessmentType $assessmentType -OutputPath $runPath
 
@@ -653,8 +710,41 @@ exit 0
 
         if ($PSCmdlet.ShouldProcess($machineName, "Register scheduled security scan '$taskName' ($Frequency at $($Time.ToString('HH:mm')))")) {
             # Section 1: Create the scan script
+            $tempScriptPath = $null
             try {
                 Write-Host "`nCreating scan script..." -ForegroundColor Cyan
+
+                $webhookProtectedValue = ''
+                if ($webhookConfigured) {
+                    $webhookPlainText = $WebhookUrl
+                    $webhookBstr = [System.IntPtr]::Zero
+                    try {
+                        if ($webhookSecretConfigured) {
+                            $webhookBstr = [System.Runtime.InteropServices.Marshal]::SecureStringToBSTR($WebhookSecret)
+                            $webhookPlainText = [System.Runtime.InteropServices.Marshal]::PtrToStringBSTR($webhookBstr)
+                        }
+
+                        if ($WebhookProtection -eq 'DpapiLocalMachine') {
+                            $webhookProtectedValue = Protect-WsaDpapiData -PlainText $webhookPlainText -ErrorAction Stop
+                        }
+                        else {
+                            $webhookProtectedValue = $webhookPlainText
+                        }
+                    }
+                    catch {
+                        if ($WebhookProtection -eq 'DpapiLocalMachine') {
+                            throw "Webhook DPAPI protection failed; registration was aborted without plaintext fallback: $($_.Exception.Message)"
+                        }
+                        throw
+                    }
+                    finally {
+                        if ($webhookBstr -ne [System.IntPtr]::Zero) {
+                            [System.Runtime.InteropServices.Marshal]::ZeroFreeBSTR($webhookBstr)
+                        }
+                        $webhookPlainText = $null
+                    }
+                }
+                $safeWebhookValue = if ($webhookConfigured) { $webhookProtectedValue -replace "'", "''" } else { '' }
 
                 if (Test-Path $OutputPath) {
                     # A pre-existing output folder must be owned by SYSTEM/Administrators:
@@ -678,27 +768,24 @@ exit 0
                     Replace('__MODULE_PATH__', $safeModuleManifest).
                     Replace('__OUTPUT_PATH__', $safeOutputPath).
                     Replace('__ASSESSMENT_TYPE__', $assessmentType).
-                    Replace('__WEBHOOK_URL__', $safeWebhookUrl).
+                    Replace('__WEBHOOK_PROTECTION__', $effectiveWebhookProtection).
+                    Replace('__WEBHOOK_VALUE__', $safeWebhookValue).
                     Replace('__EMAIL_TO__', $safeEmailTo).
                     Replace('__EMAIL_FROM__', $safeEmailFrom).
                     Replace('__SMTP_SERVER__', $safeSmtpServer).
                     Replace('__ALERT_DEDUP__', $safeAlertDedup).
                     Replace('__REALERT_AFTER_DAYS__', $safeRealertAfterDays)
+                $webhookProtectedValue = $null
+                $safeWebhookValue = $null
 
-                # The script embeds the webhook URL (a shared secret) and runs as SYSTEM,
-                # so it must never exist world-readable: create the file EMPTY, restrict
-                # it to Administrators and SYSTEM, and only then write the content into
-                # the locked file (avoids the permissive ProgramData default between
-                # creation and lockdown)
+                # Build the replacement in the same directory so the final rename does
+                # not cross volumes. The temporary file is empty when it is locked to
+                # Administrators and SYSTEM; content is written only after verification.
+                $tempScriptPath = Join-Path $OutputPath ([System.IO.Path]::GetRandomFileName() + '.tmp')
+                New-Item -Path $tempScriptPath -ItemType File -Force -ErrorAction Stop | Out-Null
                 if ($env:OS -eq 'Windows_NT') {
-                    # A pre-existing script file may be owned by a non-admin who keeps
-                    # WRITE_DAC on it; delete and recreate so ownership starts clean
-                    if (Test-Path $scriptPath) {
-                        Remove-Item -Path $scriptPath -Force -ErrorAction Stop
-                    }
-                    New-Item -Path $scriptPath -ItemType File -Force | Out-Null
                     try {
-                        $scriptAcl = Get-Acl -Path $scriptPath -ErrorAction Stop
+                        $scriptAcl = Get-Acl -Path $tempScriptPath -ErrorAction Stop
                         $scriptAcl.SetAccessRuleProtection($true, $false)
                         foreach ($existingRule in @($scriptAcl.Access)) {
                             $null = $scriptAcl.RemoveAccessRule($existingRule)
@@ -715,28 +802,52 @@ exit 0
                             $scriptAcl.AddAccessRule($accessRule)
                         }
                         $scriptAcl.SetOwner([System.Security.Principal.SecurityIdentifier]'S-1-5-32-544')
-                        Set-Acl -Path $scriptPath -AclObject $scriptAcl -ErrorAction Stop
-                        if (-not (Test-AdminOnlyOwnership -Path $scriptPath) -or -not (Test-NoNonAdminWriteAccess -Path $scriptPath)) {
-                            throw "Post-lockdown verification failed for '$scriptPath': owner or write access is not restricted to SYSTEM/Administrators."
+                        Set-Acl -Path $tempScriptPath -AclObject $scriptAcl -ErrorAction Stop
+                        if (-not (Test-AdminOnlyOwnership -Path $tempScriptPath) -or -not (Test-NoNonAdminWriteAccess -Path $tempScriptPath)) {
+                            throw "Post-lockdown verification failed for '$tempScriptPath': owner or write access is not restricted to SYSTEM/Administrators."
                         }
                     }
                     catch {
-                        # Fail closed: without a verified admin-only ACL the secret-bearing
-                        # script must not be written and the task must not be registered
-                        throw "Could not restrict permissions on '$scriptPath'; refusing to write the scan script because it embeds the webhook URL and runs as SYSTEM: $_"
+                        # Fail closed before content is written or the task is registered.
+                        throw "Could not restrict permissions on '$tempScriptPath'; refusing to write webhook ciphertext or plaintext for a SYSTEM-run script: $_"
                     }
                 }
                 else {
-                    Write-Verbose "Non-Windows host: skipping ACL lockdown and ownership verification for '$scriptPath'."
+                    Write-Verbose "Non-Windows host: skipping ACL lockdown and ownership verification for '$tempScriptPath'."
                 }
 
-                $scanScript | Out-File $scriptPath -Encoding UTF8 -Force
+                $scanScript | Out-File $tempScriptPath -Encoding UTF8 -Force -ErrorAction Stop
+                $tokens = $null
+                $parseErrors = $null
+                $null = [System.Management.Automation.Language.Parser]::ParseFile($tempScriptPath, [ref]$tokens, [ref]$parseErrors)
+                if (@($parseErrors).Count -gt 0) {
+                    throw 'Generated scan script validation failed; the existing script was left unchanged.'
+                }
+
+                # Keep the old script until its validated replacement is ready. Renaming
+                # the locked temporary file also resets ownership from a legacy file.
+                if (Test-Path $scriptPath) {
+                    Remove-Item -Path $scriptPath -Force -ErrorAction Stop
+                }
+                Move-Item -Path $tempScriptPath -Destination $scriptPath -Force -ErrorAction Stop
+                $tempScriptPath = $null
+
+                if ($env:OS -eq 'Windows_NT') {
+                    if (-not (Test-AdminOnlyOwnership -Path $scriptPath) -or -not (Test-NoNonAdminWriteAccess -Path $scriptPath)) {
+                        throw "Post-rename verification failed for '$scriptPath': owner or write access is not restricted to SYSTEM/Administrators."
+                    }
+                }
 
                 Write-Host "Scan script created: $scriptPath" -ForegroundColor Green
             }
             catch {
                 Write-Error "Failed to create scan script at '$scriptPath': $_"
                 throw
+            }
+            finally {
+                if ($null -ne $tempScriptPath -and (Test-Path $tempScriptPath)) {
+                    Remove-Item -Path $tempScriptPath -Force -ErrorAction SilentlyContinue
+                }
             }
 
             # Section 2: Register the scheduled task
@@ -799,6 +910,7 @@ exit 0
                 ScriptPath = $scriptPath
                 OutputPath = $OutputPath
                 WebhookAlertEnabled = $webhookConfigured
+                WebhookProtection = $effectiveWebhookProtection
                 EmailAlertEnabled = $emailConfigured
                 AlertDedupEnabled = $alertDedupEnabled
                 RealertAfterDays = $RealertAfterDays
@@ -819,6 +931,7 @@ exit 0
                 ScriptPath = $scriptPath
                 OutputPath = $OutputPath
                 WebhookAlertEnabled = $webhookConfigured
+                WebhookProtection = $effectiveWebhookProtection
                 EmailAlertEnabled = $emailConfigured
                 AlertDedupEnabled = $alertDedupEnabled
                 RealertAfterDays = $RealertAfterDays
