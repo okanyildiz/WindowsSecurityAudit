@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.8.2] - 2026-11-09
+
+### Fixed
+
+- Post cross-review hardening (4 senior reviewers, all FIX-FIRST):
+  - Scheduled scans: directory ownership + non-admin write/delete checks on every OutputPath (SYSTEM script replacement privesc closed); temp files created atomically with restrictive FileSecurity ACLs; backup+rollback on replacement failure; webhook errors no longer leak plaintext URLs; cleanup failures warn loudly; platform checks use OSVersion.Platform.
+  - SIEM: profile replacement is atomic ([IO.File]::Replace with NullString backup binding); TLS 1.2 is a real floor (lower protocols cleared, fail-closed); plaintext char[]/key buffers cleared in finally.
+  - JEA/CLM: degradation paths now work in a REAL ConstrainedLanguage runspace (New-Object PSObject result construction, no prohibited method calls); language-mode reasons are accurate; ProcDump/comsvcs/MiniDumpWriteDump require exit code 0 + nonempty MDMP-valid output, deleting failed artifacts instead of reporting Success.
+  - MFT: timestomp alert narrowed to SI.Created < FN.Created (normal drift no longer alerts); every FN attribute evaluated with per-FN findings; raw-tick comparison even for extreme timestamps; complete Summary schema on all paths; NTFS 3.1 exact entry-number match.
+- New tests: 5 real constrained-runspace child-process tests, dump failure-injection tests, SIEM replacement/TLS/multibyte regressions, MFT negative/alternate-FN/schema cases.
+
 ## [1.8.1] - 2026-11-09
 
 ### Added
@@ -232,7 +243,8 @@ Post-release audit hardening. Every finding below was verified against the code 
 - Cloud Security: Azure AD risky sign-ins, M365 security posture, cloud compliance status.
 - Hardening: audit policies, PowerShell security (logging, transcription), security baseline enforcement — all with `-WhatIf` support.
 
-[Unreleased]: https://github.com/okanyildiz/WindowsSecurityAudit/compare/v1.8.1...HEAD
+[Unreleased]: https://github.com/okanyildiz/WindowsSecurityAudit/compare/v1.8.2...HEAD
+[1.8.2]: https://github.com/okanyildiz/WindowsSecurityAudit/releases/tag/v1.8.2
 [1.8.1]: https://github.com/okanyildiz/WindowsSecurityAudit/releases/tag/v1.8.1
 [1.8.0]: https://github.com/okanyildiz/WindowsSecurityAudit/releases/tag/v1.8.0
 [1.7.1]: https://github.com/okanyildiz/WindowsSecurityAudit/releases/tag/v1.7.1
