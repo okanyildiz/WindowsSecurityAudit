@@ -1,3 +1,122 @@
+function Invoke-WsaExternalDumpCommand {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$FilePath,
+
+        [Parameter()]
+        [string[]]$ArgumentList = @(),
+
+        [Parameter()]
+        [ValidateRange(1, 86400)]
+        [int]$TimeoutSeconds = 300
+    )
+
+    $invokeResult = New-Object PSObject -Property ([ordered]@{
+        ExitCode = $null
+        Output = @()
+        TimedOut = $false
+        ErrorMessage = $null
+    })
+    $job = $null
+
+    try {
+        $job = Start-Job -ScriptBlock {
+            param($CommandPath, $CommandArguments)
+
+            $commandOutput = @(& $CommandPath @CommandArguments 2>&1)
+            [PSCustomObject]@{
+                ExitCode = $LASTEXITCODE
+                Output = $commandOutput
+            }
+        } -ArgumentList $FilePath, (, $ArgumentList)
+
+        $completedJob = $job | Wait-Job -Timeout $TimeoutSeconds
+        if ($null -eq $completedJob) {
+            $invokeResult.TimedOut = $true
+            $invokeResult.ErrorMessage = "External dump command exceeded $TimeoutSeconds seconds."
+            $job | Stop-Job -ErrorAction SilentlyContinue
+        }
+        else {
+            $jobResult = $job | Receive-Job
+            if ($null -eq $jobResult) {
+                $invokeResult.ErrorMessage = 'External dump command returned no completion result.'
+            }
+            else {
+                $invokeResult.ExitCode = $jobResult.ExitCode
+                $invokeResult.Output = @($jobResult.Output)
+            }
+        }
+    }
+    catch {
+        $invokeResult.ErrorMessage = $_.Exception.Message
+    }
+    finally {
+        if ($null -ne $job) {
+            $job | Remove-Job -Force -ErrorAction SilentlyContinue
+        }
+    }
+
+    return $invokeResult
+}
+
+function Get-WsaDumpFileValidation {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$Path
+    )
+
+    $validation = New-Object PSObject -Property ([ordered]@{
+        IsValid = $false
+        FileSize = [long]0
+        ErrorMessage = $null
+    })
+
+    try {
+        if (-not (Test-Path -LiteralPath $Path -PathType Leaf)) {
+            $validation.ErrorMessage = 'Dump file was not created.'
+            return $validation
+        }
+
+        $dumpItem = Get-Item -LiteralPath $Path -ErrorAction Stop
+        $validation.FileSize = [long]$dumpItem.Length
+        if ($dumpItem.Length -le 0) {
+            $validation.ErrorMessage = 'Dump file is empty.'
+            return $validation
+        }
+
+        $stream = $null
+        $signature = [byte[]]@(0, 0, 0, 0)
+        $bytesRead = 0
+        try {
+            $stream = [System.IO.File]::Open(
+                $Path,
+                [System.IO.FileMode]::Open,
+                [System.IO.FileAccess]::Read,
+                [System.IO.FileShare]::ReadWrite)
+            $bytesRead = $stream.Read($signature, 0, $signature.Length)
+        }
+        finally {
+            if ($null -ne $stream) { $stream.Dispose() }
+        }
+
+        if ($bytesRead -ne 4 -or
+            $signature[0] -ne 0x4D -or $signature[1] -ne 0x44 -or
+            $signature[2] -ne 0x4D -or $signature[3] -ne 0x50) {
+            $validation.ErrorMessage = 'Dump file does not have a valid MDMP signature.'
+            return $validation
+        }
+
+        $validation.IsValid = $true
+    }
+    catch {
+        $validation.ErrorMessage = "Dump file validation failed: $($_.Exception.Message)"
+    }
+
+    return $validation
+}
+
 function Export-MemoryDump {
     <#
     .SYNOPSIS
@@ -48,32 +167,10 @@ function Export-MemoryDump {
     )
     
     begin {
-        Write-Host "=== MEMORY DUMP EXPORT ===" -ForegroundColor Cyan
-        Write-Host "Dump Type: $DumpType" -ForegroundColor Yellow
-        Write-Host "Output Path: $OutputPath" -ForegroundColor Yellow
-        
-        # Check if running as Administrator (Windows-only check; the WindowsPrincipal
-        # APIs do not exist on other platforms)
-        if ($env:OS -eq 'Windows_NT') {
-            $isAdmin = ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
-            
-            if (-not $isAdmin) {
-                throw "This function requires Administrator privileges!"
-            }
-        }
-        
-        # Create output directory
-        if (-not (Test-Path $OutputPath)) {
-            if ($PSCmdlet.ShouldProcess($OutputPath, 'Create output directory')) {
-                New-Item -Path $OutputPath -ItemType Directory -Force | Out-Null
-                Write-Host "Created output directory: $OutputPath" -ForegroundColor Green
-            }
-        }
-        
         $effectiveLanguageMode = Get-WsaEffectiveLanguageMode
         $dynamicCompilationExpected = Test-WsaDynamicCompilationExpected
 
-        $result = [PSCustomObject]@{
+        $result = New-Object PSObject -Property ([ordered]@{
             Timestamp = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
             ComputerName = $env:COMPUTERNAME
             DumpType = $DumpType
@@ -87,66 +184,98 @@ function Export-MemoryDump {
             EffectiveLanguageMode = $effectiveLanguageMode
             DynamicCompilationExpected = $dynamicCompilationExpected
             UnavailableReason = $null
+        })
+
+        $languageModeUnavailable = ($effectiveLanguageMode -ne 'FullLanguage')
+        if ($languageModeUnavailable) {
+            $result.UnavailableReason = $effectiveLanguageMode
+            $result.ErrorMessage = "Memory dump acquisition requires FullLanguage; effective language mode '$effectiveLanguageMode' cannot safely invoke the supported acquisition methods."
+            Write-Warning "Export-MemoryDump: memory dump acquisition is unavailable in effective language mode '$effectiveLanguageMode'."
         }
+        else {
+            Write-Host "=== MEMORY DUMP EXPORT ===" -ForegroundColor Cyan
+            Write-Host "Dump Type: $DumpType" -ForegroundColor Yellow
+            Write-Host "Output Path: $OutputPath" -ForegroundColor Yellow
 
-        # Memory dumps (LSASS especially) can contain plaintext credentials, so restrict
-        # the dump file to Administrators and SYSTEM instead of the inherited default
-        # that grants every local user read access (mirrors the generated-script lockdown
-        # in Register-ScheduledSecurityScan)
-        function Protect-DumpFile {
-            param([Parameter(Mandatory = $true)][string]$Path)
-            if ($env:OS -ne 'Windows_NT') { return $true }
-            $requiredSids = @('S-1-5-18', 'S-1-5-32-544')
-            try {
-                $fileAcl = Get-Acl -Path $Path -ErrorAction Stop
-                $fileAcl.SetAccessRuleProtection($true, $false)
-                foreach ($existingRule in @($fileAcl.Access)) {
-                    $null = $fileAcl.RemoveAccessRule($existingRule)
+            # Check if running as Administrator (Windows-only check; the WindowsPrincipal
+            # APIs do not exist on other platforms)
+            if ($env:OS -eq 'Windows_NT') {
+                $isAdmin = ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
+
+                if (-not $isAdmin) {
+                    throw "This function requires Administrator privileges!"
                 }
-                foreach ($sidString in $requiredSids) {
-                    $accessRule = New-Object System.Security.AccessControl.FileSystemAccessRule(
-                        (New-Object System.Security.Principal.SecurityIdentifier($sidString)),
-                        [System.Security.AccessControl.FileSystemRights]::FullControl,
-                        [System.Security.AccessControl.AccessControlType]::Allow)
-                    $fileAcl.AddAccessRule($accessRule)
+            }
+
+            # Create output directory
+            if (-not (Test-Path $OutputPath)) {
+                if ($PSCmdlet.ShouldProcess($OutputPath, 'Create output directory')) {
+                    New-Item -Path $OutputPath -ItemType Directory -Force | Out-Null
+                    Write-Host "Created output directory: $OutputPath" -ForegroundColor Green
                 }
-                Set-Acl -Path $Path -AclObject $fileAcl -ErrorAction Stop
-            }
-            catch {
-                Write-Warning "Could not restrict permissions on '$Path'; the dump may contain credentials and may be readable by other local users: $_"
-                return $false
             }
 
-            $appliedAcl = Get-Acl -Path $Path -ErrorAction SilentlyContinue
-            if ($null -eq $appliedAcl) {
-                Write-Warning "ACL verification FAILED on '$Path': could not re-read the ACL; the dump may contain credentials and may be readable by other local users."
-                return $false
-            }
-            $missingSids = @($requiredSids | Where-Object {
-                $sid = $_
-                -not @($appliedAcl.Access | Where-Object { Test-IdentityReferenceIsSid -IdentityReference $_.IdentityReference -Sid $sid }).Count
-            })
-            if ($missingSids.Count -gt 0) {
-                Write-Warning "ACL verification FAILED on '$Path': missing access rules for SID(s) $($missingSids -join ', '); the dump may contain credentials and may be readable by other local users."
-                return $false
-            }
-            return $true
-        }
+            # Memory dumps (LSASS especially) can contain plaintext credentials, so restrict
+            # the dump file to Administrators and SYSTEM instead of the inherited default
+            # that grants every local user read access (mirrors the generated-script lockdown
+            # in Register-ScheduledSecurityScan)
+            function Protect-DumpFile {
+                param([Parameter(Mandatory = $true)][string]$Path)
+                if ($env:OS -ne 'Windows_NT') { return $true }
+                $requiredSids = @('S-1-5-18', 'S-1-5-32-544')
+                try {
+                    $fileAcl = Get-Acl -Path $Path -ErrorAction Stop
+                    $fileAcl.SetAccessRuleProtection($true, $false)
+                    foreach ($existingRule in @($fileAcl.Access)) {
+                        $null = $fileAcl.RemoveAccessRule($existingRule)
+                    }
+                    foreach ($sidString in $requiredSids) {
+                        $accessRule = New-Object System.Security.AccessControl.FileSystemAccessRule(
+                            (New-Object System.Security.Principal.SecurityIdentifier($sidString)),
+                            [System.Security.AccessControl.FileSystemRights]::FullControl,
+                            [System.Security.AccessControl.AccessControlType]::Allow)
+                        $fileAcl.AddAccessRule($accessRule)
+                    }
+                    Set-Acl -Path $Path -AclObject $fileAcl -ErrorAction Stop
+                }
+                catch {
+                    Write-Warning "Could not restrict permissions on '$Path'; the dump may contain credentials and may be readable by other local users: $_"
+                    return $false
+                }
 
-        # Pre-create the dump target as an empty, ACL-locked file so the dump content
-        # is never written to a world-readable file (closes the create -> protect race:
-        # writers that open the existing file inherit the locked ACL instead of the
-        # permissive directory default)
-        function Initialize-LockedDumpFile {
-            param([Parameter(Mandatory = $true)][string]$Path)
-            if (-not (Test-Path $Path)) {
-                New-Item -Path $Path -ItemType File -Force | Out-Null
+                $appliedAcl = Get-Acl -Path $Path -ErrorAction SilentlyContinue
+                if ($null -eq $appliedAcl) {
+                    Write-Warning "ACL verification FAILED on '$Path': could not re-read the ACL; the dump may contain credentials and may be readable by other local users."
+                    return $false
+                }
+                $missingSids = @($requiredSids | Where-Object {
+                    $sid = $_
+                    -not @($appliedAcl.Access | Where-Object { Test-IdentityReferenceIsSid -IdentityReference $_.IdentityReference -Sid $sid }).Count
+                })
+                if ($missingSids.Count -gt 0) {
+                    Write-Warning "ACL verification FAILED on '$Path': missing access rules for SID(s) $($missingSids -join ', '); the dump may contain credentials and may be readable by other local users."
+                    return $false
+                }
+                return $true
             }
-            $null = Protect-DumpFile -Path $Path
+
+            # Pre-create the dump target as an empty, ACL-locked file so the dump content
+            # is never written to a world-readable file (closes the create -> protect race:
+            # writers that open the existing file inherit the locked ACL instead of the
+            # permissive directory default)
+            function Initialize-LockedDumpFile {
+                param([Parameter(Mandatory = $true)][string]$Path)
+                if (-not (Test-Path $Path)) {
+                    New-Item -Path $Path -ItemType File -Force | Out-Null
+                }
+                $null = Protect-DumpFile -Path $Path
+            }
         }
     }
     
     process {
+        if ($languageModeUnavailable) { return }
+
         try {
             # Determine target process
             $targetProcess = $null
@@ -223,7 +352,7 @@ function Export-MemoryDump {
                         "-accepteula",
                         "-ma",  # Full dump
                         $targetProcess.Id,
-                        $dumpFilePath
+                        "`"$dumpFilePath`""
                     )
                     
                     if ($PSCmdlet.ShouldProcess($dumpTarget, 'Create memory dump')) {
@@ -231,18 +360,31 @@ function Export-MemoryDump {
                             # Pre-create and ACL-lock the empty target so procdump writes
                             # into an already-locked file
                             Initialize-LockedDumpFile -Path $dumpFilePath
-                            
-                            $procDumpResult = & $foundProcDump $procDumpArgs 2>&1
-                            
-                            if (Test-Path $dumpFilePath) {
-                                $result.Success = $true
-                                $result.Method = "ProcDump"
-                                $result.DumpFile = $dumpFilePath
-                                Write-Host "  Successfully created dump with ProcDump" -ForegroundColor Green
+
+                            $procDumpResult = Invoke-WsaExternalDumpCommand -FilePath $foundProcDump -ArgumentList $procDumpArgs
+                            if ($procDumpResult.TimedOut) {
+                                throw "ProcDump timed out: $($procDumpResult.ErrorMessage)"
                             }
+                            if ($procDumpResult.ExitCode -ne 0) {
+                                throw "ProcDump exited with code '$($procDumpResult.ExitCode)'. $($procDumpResult.ErrorMessage)"
+                            }
+
+                            $validation = Get-WsaDumpFileValidation -Path $dumpFilePath
+                            if (-not $validation.IsValid) {
+                                throw "ProcDump created an invalid dump: $($validation.ErrorMessage)"
+                            }
+
+                            $result.Success = $true
+                            $result.Method = "ProcDump"
+                            $result.DumpFile = $dumpFilePath
+                            Write-Host "  Successfully created dump with ProcDump" -ForegroundColor Green
                         }
                         catch {
                             Write-Warning "ProcDump failed: $_"
+                            $result.ErrorMessage = $_.Exception.Message
+                            if (Test-Path -LiteralPath $dumpFilePath) {
+                                Remove-Item -LiteralPath $dumpFilePath -Force -ErrorAction SilentlyContinue
+                            }
                         }
                     }
                 }
@@ -250,10 +392,15 @@ function Export-MemoryDump {
                     Write-Host "  ProcDump not found, trying alternative methods..." -ForegroundColor Gray
                 }
             }
-            
+
             # METHOD 2: Use MiniDumpWriteDump with proper handle
             if (-not $result.Success -and -not $dynamicCompilationExpected) {
-                $result.UnavailableReason = 'ConstrainedLanguage'
+                if ($effectiveLanguageMode -eq 'FullLanguage') {
+                    $result.UnavailableReason = 'DynamicCompilationUnavailable'
+                }
+                else {
+                    $result.UnavailableReason = $effectiveLanguageMode
+                }
                 Write-Warning "Export-MemoryDump: MiniDumpWriteDump is unavailable in effective language mode '$effectiveLanguageMode'; trying the existing external-tool fallback when applicable."
             }
             if (-not $result.Success -and $dynamicCompilationExpected -and $PSCmdlet.ShouldProcess($dumpTarget, 'Create memory dump')) {
@@ -344,7 +491,12 @@ public class ProcessDump {
                     [ProcessDump]::CloseHandle($processHandle) | Out-Null
                     $processHandle = [IntPtr]::Zero
                     
-                    if ($success -and (Test-Path $dumpFilePath)) {
+                    if ($success) {
+                        $validation = Get-WsaDumpFileValidation -Path $dumpFilePath
+                        if (-not $validation.IsValid) {
+                            throw "MiniDumpWriteDump created an invalid dump: $($validation.ErrorMessage)"
+                        }
+
                         $result.Success = $true
                         $result.Method = "MiniDumpWriteDump"
                         $result.DumpFile = $dumpFilePath
@@ -373,52 +525,54 @@ public class ProcessDump {
             # METHOD 3: Use rundll32.exe comsvcs.dll method (LSASS specific)
             if (-not $result.Success -and $DumpType -eq 'LSASS' -and $PSCmdlet.ShouldProcess($dumpTarget, 'Create memory dump (LSASS)')) {
                 Write-Host "`n[3/3] Attempting comsvcs.dll method (LSASS specific)..." -ForegroundColor Cyan
-                
+
                 try {
                     $comsvcsPath = "$env:SystemRoot\System32\comsvcs.dll"
-                    
-                    if (Test-Path $comsvcsPath) {
-                        Write-Host "  Using rundll32.exe with comsvcs.dll..." -ForegroundColor Gray
-                        
-                        # Build command
-                        $arguments = @(
-                            $comsvcsPath,
-                            "MiniDump",
-                            $targetProcess.Id,
-                            "`"$dumpFilePath`"",
-                            "full"
-                        )
-                        
-                        # Run elevated (the target file was pre-created and ACL-locked,
-                        # so the elevated writer inherits the locked ACL on write)
-                        Initialize-LockedDumpFile -Path $dumpFilePath
-                        
-                        $psi = New-Object System.Diagnostics.ProcessStartInfo
-                        $psi.FileName = "rundll32.exe"
-                        $psi.Arguments = $arguments -join ' '
-                        $psi.Verb = "runas"
-                        $psi.WindowStyle = "Hidden"
-                        
-                        $proc = [System.Diagnostics.Process]::Start($psi)
-                        $proc.WaitForExit(10000)  # Wait 10 seconds
-                        
-                        # Wait a moment for dump to complete
-                        Start-Sleep -Seconds 2
-                        
-                        if (Test-Path $dumpFilePath) {
-                            $result.Success = $true
-                            $result.Method = "comsvcs.dll"
-                            $result.DumpFile = $dumpFilePath
-                            Write-Host "  Successfully created LSASS dump with comsvcs.dll" -ForegroundColor Green
-                        }
+                    if (-not (Test-Path $comsvcsPath)) {
+                        throw "comsvcs.dll was not found at '$comsvcsPath'."
                     }
+
+                    Write-Host "  Using rundll32.exe with comsvcs.dll..." -ForegroundColor Gray
+                    $arguments = @(
+                        $comsvcsPath,
+                        "MiniDump",
+                        $targetProcess.Id,
+                        "`"$dumpFilePath`"",
+                        "full"
+                    )
+
+                    # The function already requires elevation. Pre-create and ACL-lock the
+                    # target so rundll32 inherits the locked ACL when it writes the dump.
+                    Initialize-LockedDumpFile -Path $dumpFilePath
+                    $rundll32Path = "$env:SystemRoot\System32\rundll32.exe"
+                    $comsvcsResult = Invoke-WsaExternalDumpCommand -FilePath $rundll32Path -ArgumentList $arguments
+                    if ($comsvcsResult.TimedOut) {
+                        throw "comsvcs.dll timed out: $($comsvcsResult.ErrorMessage)"
+                    }
+                    if ($comsvcsResult.ExitCode -ne 0) {
+                        throw "comsvcs.dll exited with code '$($comsvcsResult.ExitCode)'. $($comsvcsResult.ErrorMessage)"
+                    }
+
+                    $validation = Get-WsaDumpFileValidation -Path $dumpFilePath
+                    if (-not $validation.IsValid) {
+                        throw "comsvcs.dll created an invalid dump: $($validation.ErrorMessage)"
+                    }
+
+                    $result.Success = $true
+                    $result.Method = "comsvcs.dll"
+                    $result.DumpFile = $dumpFilePath
+                    Write-Host "  Successfully created LSASS dump with comsvcs.dll" -ForegroundColor Green
                 }
                 catch {
                     Write-Warning "comsvcs.dll method failed: $_"
+                    $result.ErrorMessage = $_.Exception.Message
+                    if (Test-Path -LiteralPath $dumpFilePath) {
+                        Remove-Item -LiteralPath $dumpFilePath -Force -ErrorAction SilentlyContinue
+                    }
                 }
             }
-            
-            if (-not $result.Success -and $result.UnavailableReason -eq 'ConstrainedLanguage' -and [string]::IsNullOrEmpty($result.ErrorMessage)) {
+
+            if (-not $result.Success -and -not $dynamicCompilationExpected -and [string]::IsNullOrEmpty($result.ErrorMessage)) {
                 $result.ErrorMessage = "MiniDumpWriteDump was skipped because dynamic compilation is not expected in effective language mode '$effectiveLanguageMode'."
             }
 

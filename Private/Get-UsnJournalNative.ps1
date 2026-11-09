@@ -30,7 +30,7 @@ function Initialize-UsnJournalNativeType {
     $script:UsnJournalNativeUnavailableReason = $null
 
     if (-not $dynamicCompilationExpected) {
-        $script:UsnJournalNativeUnavailableReason = 'ConstrainedLanguage'
+        $script:UsnJournalNativeUnavailableReason = $effectiveLanguageMode
         $script:UsnJournalNativeTypeError = "Dynamic compilation is not expected in effective language mode '$effectiveLanguageMode'."
         Write-Warning "Initialize-UsnJournalNativeType: native USN journal reading is unavailable in effective language mode '$effectiveLanguageMode'; callers must use the fsutil fallback."
         return $false
@@ -792,7 +792,7 @@ function Get-UsnJournalNative {
     )
 
     if (-not (Initialize-UsnJournalNativeType)) {
-        return [PSCustomObject]@{
+        return New-Object PSObject -Property ([ordered]@{
             Records                    = @()
             Success                    = $false
             Error                      = "Native USN journal type initialization failed: $script:UsnJournalNativeTypeError"
@@ -803,20 +803,19 @@ function Get-UsnJournalNative {
             EffectiveLanguageMode      = $script:UsnJournalNativeEffectiveLanguageMode
             DynamicCompilationExpected = $script:UsnJournalNativeDynamicCompilationExpected
             UnavailableReason          = $script:UsnJournalNativeUnavailableReason
-        }
+        })
     }
 
     $isWindowsHost = $false
     try {
-        $isWindowsHost = [System.Runtime.InteropServices.RuntimeInformation]::IsOSPlatform(
-            [System.Runtime.InteropServices.OSPlatform]::Windows)
+        $isWindowsHost = ([Environment]::OSVersion.Platform -eq [PlatformID]::Win32NT)
     }
     catch {
         $isWindowsHost = ($env:OS -eq 'Windows_NT')
     }
 
     if (-not $isWindowsHost) {
-        return [PSCustomObject]@{
+        return New-Object PSObject -Property ([ordered]@{
             Records                    = @()
             Success                    = $false
             Error                      = 'Native USN journal reading is only available on Windows.'
@@ -827,7 +826,7 @@ function Get-UsnJournalNative {
             EffectiveLanguageMode      = $script:UsnJournalNativeEffectiveLanguageMode
             DynamicCompilationExpected = $script:UsnJournalNativeDynamicCompilationExpected
             UnavailableReason          = $script:UsnJournalNativeUnavailableReason
-        }
+        })
     }
 
     try {
@@ -839,7 +838,7 @@ function Get-UsnJournalNative {
             $notes += "Native USN journal collection is incomplete: $($nativeResult.Error)"
         }
 
-        return [PSCustomObject]@{
+        return New-Object PSObject -Property ([ordered]@{
             Records                    = $records
             Success                    = [bool]$nativeResult.Success
             Error                      = if ($null -ne $nativeResult.Error) { [string]$nativeResult.Error } else { $null }
@@ -850,10 +849,10 @@ function Get-UsnJournalNative {
             EffectiveLanguageMode      = $script:UsnJournalNativeEffectiveLanguageMode
             DynamicCompilationExpected = $script:UsnJournalNativeDynamicCompilationExpected
             UnavailableReason          = $script:UsnJournalNativeUnavailableReason
-        }
+        })
     }
     catch {
-        return [PSCustomObject]@{
+        return New-Object PSObject -Property ([ordered]@{
             Records                    = @()
             Success                    = $false
             Error                      = "Native USN journal invocation failed: $($_.Exception.Message)"
@@ -864,6 +863,6 @@ function Get-UsnJournalNative {
             EffectiveLanguageMode      = $script:UsnJournalNativeEffectiveLanguageMode
             DynamicCompilationExpected = $script:UsnJournalNativeDynamicCompilationExpected
             UnavailableReason          = $script:UsnJournalNativeUnavailableReason
-        }
+        })
     }
 }

@@ -144,30 +144,249 @@ Describe 'Native helper ConstrainedLanguage degradation' {
         }
     }
 
-    It 'Export-MemoryDump skips Add-Type and fails explicitly when no external fallback applies' {
+    It 'Export-MemoryDump degrades before ShouldProcess or process discovery' {
         InModuleScope -ModuleName $script:ModuleName -ArgumentList $TestDrive -ScriptBlock {
             param($TestDrive)
             $previousOS = $env:OS
             try {
                 $env:OS = 'WsaTestNonWindows'
+                $outputPath = Join-Path $TestDrive 'constrained-dump'
                 Mock Get-WsaEffectiveLanguageMode { 'ConstrainedLanguage' }
                 Mock Add-Type { throw 'Add-Type must not be called' }
-                Mock Get-Process { [PSCustomObject]@{ ProcessName = 'fixture'; Id = 123 } }
-                Mock Test-Path { $true }
+                Mock Get-Process { throw 'Get-Process must not be called' }
                 Mock Write-Host { }
 
-                $dump = Export-MemoryDump -ProcessId 123 -OutputPath (Join-Path $TestDrive 'dump') -WarningVariable warnings -WarningAction SilentlyContinue
+                $dump = Export-MemoryDump -ProcessId 123 -OutputPath $outputPath -WarningVariable warnings -WarningAction SilentlyContinue
                 $dump.Success | Should -BeFalse
                 $dump.EffectiveLanguageMode | Should -Be 'ConstrainedLanguage'
                 $dump.DynamicCompilationExpected | Should -BeFalse
                 $dump.UnavailableReason | Should -Be 'ConstrainedLanguage'
-                $dump.ErrorMessage | Should -Match 'dynamic compilation'
+                $dump.ErrorMessage | Should -Match 'requires FullLanguage'
+                Test-Path -LiteralPath $outputPath | Should -BeFalse
                 @($warnings).Count | Should -Be 1
+                Should -Invoke Get-Process -Times 0 -Exactly
                 Should -Invoke Add-Type -Times 0 -Exactly
             }
             finally {
                 $env:OS = $previousOS
             }
+        }
+    }
+}
+
+Describe 'Language-mode-specific unavailable reasons' {
+    It 'preserves <Mode> instead of relabeling it ConstrainedLanguage' -ForEach @(
+        @{ Mode = 'NoLanguage' },
+        @{ Mode = 'RestrictedLanguage' },
+        @{ Mode = 'Unavailable' }
+    ) {
+        $mode = $_.Mode
+        InModuleScope -ModuleName $script:ModuleName -ArgumentList $mode, $TestDrive -ScriptBlock {
+            param($Mode, $TestDrive)
+            Mock Get-WsaEffectiveLanguageMode { $Mode }
+            Mock Get-Command -ParameterFilter { $Name -in @('secedit.exe', 'secedit', 'auditpol.exe', 'auditpol') } { $null }
+            Mock Get-Process { throw 'Get-Process must not be called' }
+            Mock Write-Host { }
+
+            $policy = Get-LocalPasswordPolicy -WarningAction SilentlyContinue
+            $table = Get-AuditPolicyTable -Subcategory 'Logon' -Force -WarningAction SilentlyContinue
+            $native = Get-UsnJournalNative -WarningAction SilentlyContinue
+            $dump = Export-MemoryDump -ProcessId 123 -OutputPath (Join-Path $TestDrive $Mode) -WarningAction SilentlyContinue
+
+            $policy.EffectiveLanguageMode | Should -Be $Mode
+            $policy.UnavailableReason | Should -Be $Mode
+            foreach ($entry in $table.Values) {
+                $entry.EffectiveLanguageMode | Should -Be $Mode
+                $entry.UnavailableReason | Should -Be $Mode
+            }
+            $native.EffectiveLanguageMode | Should -Be $Mode
+            $native.UnavailableReason | Should -Be $Mode
+            $dump.EffectiveLanguageMode | Should -Be $Mode
+            $dump.UnavailableReason | Should -Be $Mode
+            Should -Invoke Get-Process -Times 0 -Exactly
+        }
+    }
+}
+
+Describe 'External memory dump validation' {
+    BeforeAll {
+        function Invoke-ExternalDumpCase {
+            param(
+                [Parameter(Mandatory = $true)]
+                [hashtable]$Case,
+
+                [Parameter(Mandatory = $true)]
+                [string]$TestDrive
+            )
+
+            InModuleScope -ModuleName $script:ModuleName -ArgumentList $Case, $TestDrive -ScriptBlock {
+                param($Case, $TestDrive)
+                $previousOS = $env:OS
+                $previousSystemRoot = $env:SystemRoot
+                try {
+                    $env:OS = 'WsaTestNonWindows'
+                    $env:SystemRoot = $TestDrive
+                    $outputPath = Join-Path $TestDrive ($Case.Method + '-' + $Case.Scenario)
+                    $dumpType = if ($Case.Method -eq 'ProcDump') { 'Mini' } else { 'LSASS' }
+                    $processName = if ($Case.Method -eq 'ProcDump') { 'fixture' } else { 'lsass' }
+
+                    Mock Get-WsaEffectiveLanguageMode { 'FullLanguage' }
+                    Mock Test-WsaDynamicCompilationExpected { $false }
+                    Mock Add-Type { throw 'Add-Type must not be called for external tool cases' }
+                    Mock Get-Process { [PSCustomObject]@{ ProcessName = $processName; Id = 123 } }
+                    Mock Write-Host { }
+                    Mock Write-Warning { }
+                    Mock Test-Path {
+                        $targetPath = $Path
+                        if ($null -ne $LiteralPath) { $targetPath = $LiteralPath }
+                        if ($PathType -eq 'Leaf') {
+                            [System.IO.File]::Exists($targetPath)
+                        }
+                        elseif ($PathType -eq 'Container') {
+                            [System.IO.Directory]::Exists($targetPath)
+                        }
+                        else {
+                            [System.IO.File]::Exists($targetPath) -or [System.IO.Directory]::Exists($targetPath)
+                        }
+                    }
+                    Mock Test-Path -ParameterFilter {
+                        $Path -in @('C:\Tools\procdump.exe', 'C:\Tools\procdump64.exe') -or
+                        $Path -like '*comsvcs.dll'
+                    } { $true }
+                    Mock Invoke-WsaExternalDumpCommand {
+                        $dumpPath = if ($Case.Method -eq 'ProcDump') { $ArgumentList[-1] } else { $ArgumentList[-2] }
+                        $dumpPath = $dumpPath.Trim('"')
+                        $exitCode = $null
+                        $timedOut = $false
+                        $errorMessage = $null
+
+                        switch ($Case.Scenario) {
+                            'NonzeroExit' {
+                                [System.IO.File]::WriteAllBytes($dumpPath, [byte[]](0x4D, 0x44, 0x4D, 0x50))
+                                $exitCode = 17
+                            }
+                            'Timeout' {
+                                [System.IO.File]::WriteAllBytes($dumpPath, [byte[]](0x4D, 0x44, 0x4D, 0x50))
+                                $timedOut = $true
+                                $errorMessage = 'External dump command exceeded 1 seconds.'
+                            }
+                            'Empty' {
+                                $exitCode = 0
+                            }
+                            'InvalidSignature' {
+                                [System.IO.File]::WriteAllBytes($dumpPath, [byte[]](0x4E, 0x4F, 0x50, 0x45))
+                                $exitCode = 0
+                            }
+                            'Valid' {
+                                [System.IO.File]::WriteAllBytes($dumpPath, [byte[]](0x4D, 0x44, 0x4D, 0x50, 1, 2))
+                                $exitCode = 0
+                            }
+                        }
+
+                        New-Object PSObject -Property ([ordered]@{
+                            ExitCode = $exitCode
+                            Output = @()
+                            TimedOut = $timedOut
+                            ErrorMessage = $errorMessage
+                        })
+                    }
+
+                    $parameters = @{
+                        ProcessId = 123
+                        DumpType = $dumpType
+                        OutputPath = $outputPath
+                        Confirm = $false
+                        WarningAction = 'SilentlyContinue'
+                    }
+                    if ($Case.Method -eq 'ProcDump') { $parameters.UseProcDump = $true }
+                    $dump = Export-MemoryDump @parameters
+
+                    Should -Invoke Invoke-WsaExternalDumpCommand -Times 1 -Exactly
+                    Should -Invoke Add-Type -Times 0 -Exactly
+                    [PSCustomObject]@{
+                        Result = $dump
+                        OutputPath = $outputPath
+                    }
+                }
+                finally {
+                    $env:OS = $previousOS
+                    $env:SystemRoot = $previousSystemRoot
+                }
+            }
+        }
+    }
+
+    It '<Method> rejects <Scenario> and removes the failed artifact' -ForEach @(
+        @{ Method = 'ProcDump'; Scenario = 'NonzeroExit' },
+        @{ Method = 'ProcDump'; Scenario = 'Timeout' },
+        @{ Method = 'ProcDump'; Scenario = 'Empty' },
+        @{ Method = 'ProcDump'; Scenario = 'InvalidSignature' },
+        @{ Method = 'comsvcs.dll'; Scenario = 'NonzeroExit' },
+        @{ Method = 'comsvcs.dll'; Scenario = 'Timeout' },
+        @{ Method = 'comsvcs.dll'; Scenario = 'Empty' },
+        @{ Method = 'comsvcs.dll'; Scenario = 'InvalidSignature' }
+    ) {
+        $probe = Invoke-ExternalDumpCase -Case $_ -TestDrive $TestDrive
+        $probe.Result.Success | Should -BeFalse
+        $probe.Result.DumpFile | Should -BeNullOrEmpty
+        switch ($_.Scenario) {
+            'NonzeroExit' { $probe.Result.ErrorMessage | Should -Match "exited with code '17'" }
+            'Timeout' { $probe.Result.ErrorMessage | Should -Match 'timed out' }
+            'Empty' { $probe.Result.ErrorMessage | Should -Match 'Dump file is empty' }
+            'InvalidSignature' { $probe.Result.ErrorMessage | Should -Match 'valid MDMP signature' }
+        }
+        @(Get-ChildItem -LiteralPath $probe.OutputPath -Filter '*.dmp' -File).Count | Should -Be 0
+    }
+
+    It '<Method> accepts a completed nonempty MDMP file' -ForEach @(
+        @{ Method = 'ProcDump'; Scenario = 'Valid'; ExpectedMethod = 'ProcDump' },
+        @{ Method = 'comsvcs.dll'; Scenario = 'Valid'; ExpectedMethod = 'comsvcs.dll' }
+    ) {
+        $probe = Invoke-ExternalDumpCase -Case $_ -TestDrive $TestDrive
+        $probe.Result.Success | Should -BeTrue
+        $probe.Result.Method | Should -Be $_.ExpectedMethod
+        $probe.Result.FileSize | Should -BeGreaterThan 0
+        $probe.Result.ErrorMessage | Should -BeNullOrEmpty
+        Test-Path -LiteralPath $probe.Result.DumpFile | Should -BeTrue
+        $signature = [System.IO.File]::ReadAllBytes($probe.Result.DumpFile)[0..3]
+        [string]::Join('', @($signature | ForEach-Object { $_.ToString('X2') })) | Should -Be '4D444D50'
+    }
+}
+
+Describe 'External dump command execution' {
+    It 'captures a real nonzero native exit code' {
+        InModuleScope -ModuleName $script:ModuleName -ScriptBlock {
+            if ($env:OS -eq 'Windows_NT') {
+                $filePath = "$env:SystemRoot\System32\cmd.exe"
+                $arguments = @('/c', 'exit 17')
+            }
+            else {
+                $filePath = '/bin/sh'
+                $arguments = @('-c', 'exit 17')
+            }
+
+            $native = Invoke-WsaExternalDumpCommand -FilePath $filePath -ArgumentList $arguments -TimeoutSeconds 10
+            $native.TimedOut | Should -BeFalse
+            $native.ExitCode | Should -Be 17
+            $native.ErrorMessage | Should -BeNullOrEmpty
+        }
+    }
+
+    It 'reports a real native command timeout' {
+        InModuleScope -ModuleName $script:ModuleName -ScriptBlock {
+            if ($env:OS -eq 'Windows_NT') {
+                $filePath = "$env:SystemRoot\System32\cmd.exe"
+                $arguments = @('/c', 'ping -n 6 127.0.0.1 >nul')
+            }
+            else {
+                $filePath = '/bin/sh'
+                $arguments = @('-c', 'sleep 10')
+            }
+
+            $native = Invoke-WsaExternalDumpCommand -FilePath $filePath -ArgumentList $arguments -TimeoutSeconds 1
+            $native.TimedOut | Should -BeTrue
+            $native.ExitCode | Should -BeNullOrEmpty
+            $native.ErrorMessage | Should -Match 'exceeded 1 seconds'
         }
     }
 }

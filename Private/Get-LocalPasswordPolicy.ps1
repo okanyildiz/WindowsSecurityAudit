@@ -101,10 +101,10 @@ function Get-LocalPasswordPolicy {
     $dynamicCompilationExpected = Test-WsaDynamicCompilationExpected
     $nativeUnavailableReason = $null
     if (-not $dynamicCompilationExpected) {
-        $nativeUnavailableReason = 'ConstrainedLanguage'
+        $nativeUnavailableReason = $effectiveLanguageMode
     }
 
-    $policy = [PSCustomObject]@{
+    $policy = New-Object PSObject -Property ([ordered]@{
         MinPasswordLength               = $null
         MaxPasswordAgeDays              = $null
         MinPasswordAgeDays              = $null
@@ -119,15 +119,13 @@ function Get-LocalPasswordPolicy {
         EffectiveLanguageMode           = $effectiveLanguageMode
         DynamicCompilationExpected      = $dynamicCompilationExpected
         UnavailableReason               = $nativeUnavailableReason
-    }
+    })
 
     $isWindowsHost = $false
     try {
-        $isWindowsHost = [System.Runtime.InteropServices.RuntimeInformation]::IsOSPlatform(
-            [System.Runtime.InteropServices.OSPlatform]::Windows)
+        $isWindowsHost = ([Environment]::OSVersion.Platform -eq [PlatformID]::Win32NT)
     }
     catch {
-        # RuntimeInformation missing on old .NET Framework (PS 5.1)
         $isWindowsHost = ($env:OS -eq 'Windows_NT')
     }
     if (-not $isWindowsHost) {
@@ -253,7 +251,10 @@ public static class NetApiModals {
             $secedit = Get-Command 'secedit' -ErrorAction SilentlyContinue
         }
         if ($null -ne $secedit) {
-            $tempFile = Join-Path -Path ([System.IO.Path]::GetTempPath()) -ChildPath ('wsa-secpol-{0}.inf' -f [guid]::NewGuid().ToString('N'))
+            $tempRoot = $env:TEMP
+            if (-not $tempRoot) { $tempRoot = $env:TMP }
+            if (-not $tempRoot) { $tempRoot = '.' }
+            $tempFile = Join-Path -Path $tempRoot -ChildPath ('wsa-secpol-{0}.inf' -f (New-Guid).Guid)
             try {
                 $null = & $secedit.Source '/export' '/cfg' $tempFile '/quiet' 2>&1
                 if ($LASTEXITCODE -eq 0 -and (Test-Path -LiteralPath $tempFile)) {

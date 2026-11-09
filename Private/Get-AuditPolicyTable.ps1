@@ -85,7 +85,7 @@ function Copy-AuditPolicyTable {
     .DESCRIPTION
         Cache entries are PSCustomObjects returned by reference; without a clone a
         caller mutating .Value/.Source would corrupt the session cache. Entries
-        contain only scalars, so a shallow .PSObject.Copy() per entry suffices.
+        contain only scalars, so copying their property values is sufficient.
     #>
     [CmdletBinding()]
     [OutputType([hashtable])]
@@ -96,7 +96,11 @@ function Copy-AuditPolicyTable {
 
     $copy = @{}
     foreach ($key in $Table.Keys) {
-        $copy[$key] = $Table[$key].PSObject.Copy()
+        $properties = [ordered]@{}
+        foreach ($property in $Table[$key].PSObject.Properties) {
+            $properties[$property.Name] = $property.Value
+        }
+        $copy[$key] = New-Object PSObject -Property $properties
     }
     return $copy
 }
@@ -213,7 +217,7 @@ function Get-AuditPolicyTable {
         [switch]$Force
     )
 
-    $subsetRequested = ($PSBoundParameters.ContainsKey('Subcategory') -and
+    $subsetRequested = (($PSBoundParameters.Keys -contains 'Subcategory') -and
         $null -ne $Subcategory -and $Subcategory.Count -gt 0)
 
     if (-not $subsetRequested -and -not $Force -and $null -ne $script:AuditPolicyTableCache) {
@@ -244,12 +248,12 @@ function Get-AuditPolicyTable {
     $dynamicCompilationExpected = Test-WsaDynamicCompilationExpected
     $nativeUnavailableReason = $null
     if (-not $dynamicCompilationExpected) {
-        $nativeUnavailableReason = 'ConstrainedLanguage'
+        $nativeUnavailableReason = $effectiveLanguageMode
     }
 
     $table = @{}
     foreach ($key in $guidToName.Keys) {
-        $table[$key] = [PSCustomObject]@{
+        $table[$key] = New-Object PSObject -Property ([ordered]@{
             Guid                       = ('{' + $key.ToUpperInvariant() + '}')
             Name                       = $guidToName[$key]
             Value                      = $null
@@ -259,16 +263,14 @@ function Get-AuditPolicyTable {
             EffectiveLanguageMode      = $effectiveLanguageMode
             DynamicCompilationExpected = $dynamicCompilationExpected
             UnavailableReason          = $nativeUnavailableReason
-        }
+        })
     }
 
     $isWindowsHost = $false
     try {
-        $isWindowsHost = [System.Runtime.InteropServices.RuntimeInformation]::IsOSPlatform(
-            [System.Runtime.InteropServices.OSPlatform]::Windows)
+        $isWindowsHost = ([Environment]::OSVersion.Platform -eq [PlatformID]::Win32NT)
     }
     catch {
-        # RuntimeInformation missing on old .NET Framework (PS 5.1)
         $isWindowsHost = ($env:OS -eq 'Windows_NT')
     }
     if (-not $isWindowsHost) {
@@ -373,7 +375,10 @@ public static class AuditPolicyNative {
             $auditpol = Get-Command 'auditpol' -ErrorAction SilentlyContinue
         }
         if ($null -ne $auditpol) {
-            $tempFile = Join-Path -Path ([System.IO.Path]::GetTempPath()) -ChildPath ('wsa-audit-{0}.csv' -f [guid]::NewGuid().ToString('N'))
+            $tempRoot = $env:TEMP
+            if (-not $tempRoot) { $tempRoot = $env:TMP }
+            if (-not $tempRoot) { $tempRoot = '.' }
+            $tempFile = Join-Path -Path $tempRoot -ChildPath ('wsa-audit-{0}.csv' -f (New-Guid).Guid)
             try {
                 $null = & $auditpol.Source '/backup' "/file:$tempFile" 2>&1
                 if ($LASTEXITCODE -eq 0 -and (Test-Path -LiteralPath $tempFile)) {

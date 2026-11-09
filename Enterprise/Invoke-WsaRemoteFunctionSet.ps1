@@ -36,13 +36,13 @@
         'Deep' { $functionNames = $deepFunctions }
     }
 
-    $runOutput = [PSCustomObject]@{
+    $runOutput = New-Object PSObject -Property ([ordered]@{
         Results = [ordered]@{}
         Errors = @()
         FunctionSet = $FunctionSet
         EffectiveLanguageMode = Get-WsaEffectiveLanguageMode
         DynamicCompilationExpected = Test-WsaDynamicCompilationExpected
-    }
+    })
 
     foreach ($functionName in $functionNames) {
         try {
