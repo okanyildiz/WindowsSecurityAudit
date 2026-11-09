@@ -1,4 +1,4 @@
-function Export-SecurityReport {
+﻿function Export-SecurityReport {
     <#
     .SYNOPSIS
         Generates comprehensive security assessment reports
@@ -6,11 +6,12 @@ function Export-SecurityReport {
         Creates detailed security reports in multiple formats (HTML, JSON, CSV, NDJSON, CEF)
         with findings, recommendations, and executive summaries. NDJSON and CEF formats
         produce SIEM-ready finding exports via ConvertTo-SiemEvent (.ndjson / .cef files).
-        When -StreamTo is specified, findings are additionally streamed live to a SIEM
-        HTTP endpoint (Splunk HEC, Microsoft Sentinel, or a generic webhook) via
-        Send-SiemEvent after the report files are written. A streaming failure never
-        fails report generation; the outcome is noted on the console and in the
-        StreamResult property of the output.
+        When -StreamTo or -StreamProfileName is specified, findings are additionally
+        streamed via Send-SiemEvent after the report files are written. Direct streaming
+        supports Splunk HEC, legacy Microsoft Sentinel, and generic webhooks. OAuth Logs
+        Ingestion is configured with -StreamProfileName instead of direct secret parameters.
+        A streaming failure never fails report generation; the outcome is noted on the
+        console and in the StreamResult property of the output.
     .PARAMETER ReportType
         Type of report: Executive, Technical, or Compliance
     .PARAMETER Format
@@ -23,13 +24,17 @@ function Export-SecurityReport {
         Do not automatically open the HTML report after generation.
         Use for headless or SYSTEM-context runs where no interactive session exists.
     .PARAMETER StreamTo
-        Optional SIEM destination type to stream findings to after the report files are
-        written: SplunkHEC, Sentinel, or GenericWebhook. Requires -StreamUri.
+        Optional direct SIEM destination: SplunkHEC, Sentinel, SentinelLogsIngestion, or
+        GenericWebhook. Requires -StreamUri. Direct OAuth is not exposed here; use
+        -StreamProfileName for SentinelLogsIngestion.
     .PARAMETER StreamUri
         SIEM endpoint URL used with -StreamTo.
     .PARAMETER StreamToken
-        Credential for the streaming endpoint (Splunk HEC token or Sentinel shared key).
-        Sent only in request headers, never logged in full.
+        Credential for the direct streaming endpoint (Splunk HEC token or Sentinel shared key).
+    .PARAMETER StreamProfileName
+        Stored SIEM profile to use instead of StreamTo, StreamUri, and StreamToken.
+    .PARAMETER StreamProfileScope
+        Profile lookup scope: Auto, CurrentUser, or LocalMachine. Auto rejects duplicates.
     .PARAMETER StreamFormat
         Event format for streaming: NDJSON (default) or CEF.
     .EXAMPLE
@@ -37,8 +42,9 @@ function Export-SecurityReport {
         Export-SecurityReport -ReportType Executive -Format All -IncludeCharts
         Export-SecurityReport -ReportType Technical -Format NDJSON -NoAutoOpen
         Export-SecurityReport -ReportType Technical -Format JSON -NoAutoOpen -StreamTo SplunkHEC -StreamUri "https://splunk.contoso.com:8088/services/collector" -StreamToken $hecToken
+        Export-SecurityReport -ReportType Technical -Format JSON -NoAutoOpen -StreamProfileName sentinel-prod -StreamProfileScope LocalMachine
     .OUTPUTS
-        String path(s) to generated report files. When -StreamTo is specified, returns a
+        String path(s) to generated report files. When streaming is requested, returns a
         PSCustomObject with Files (string array) and StreamResult (PSCustomObject with
         BatchesSent, EventsSent, Failed, DurationSec; $null if streaming did not run)
         properties.
@@ -64,7 +70,7 @@ function Export-SecurityReport {
         [switch]$NoAutoOpen,
 
         [Parameter()]
-        [ValidateSet('SplunkHEC', 'Sentinel', 'GenericWebhook')]
+        [ValidateSet('SplunkHEC', 'Sentinel', 'SentinelLogsIngestion', 'GenericWebhook')]
         [string]$StreamTo,
 
         [Parameter()]
@@ -74,12 +80,33 @@ function Export-SecurityReport {
         [string]$StreamToken,
 
         [Parameter()]
+        [string]$StreamProfileName,
+
+        [Parameter()]
+        [ValidateSet('Auto', 'CurrentUser', 'LocalMachine')]
+        [string]$StreamProfileScope = 'Auto',
+
+        [Parameter()]
         [ValidateSet('NDJSON', 'CEF')]
         [string]$StreamFormat = 'NDJSON'
     )
     
     begin {
         Write-Host "Generating $ReportType Security Report..." -ForegroundColor Cyan
+
+        $streamProfileRequested = -not [string]::IsNullOrWhiteSpace($StreamProfileName)
+        if ($streamProfileRequested -and
+            ($PSBoundParameters.ContainsKey('StreamTo') -or $PSBoundParameters.ContainsKey('StreamUri') -or $PSBoundParameters.ContainsKey('StreamToken'))) {
+            throw 'StreamProfileName cannot be combined with StreamTo, StreamUri, or StreamToken.'
+        }
+        if (-not $streamProfileRequested -and $PSBoundParameters.ContainsKey('StreamProfileScope')) {
+            throw 'StreamProfileScope requires StreamProfileName.'
+        }
+        if ($StreamTo -eq 'SentinelLogsIngestion') {
+            throw 'Direct OAuth pass-through is not supported by Export-SecurityReport. Use -StreamProfileName for SentinelLogsIngestion.'
+        }
+        $streamRequested = $streamProfileRequested -or -not [string]::IsNullOrWhiteSpace($StreamTo)
+        $streamLabel = $(if ($streamProfileRequested) { "profile $StreamProfileName" } else { $StreamTo })
         
         if (-not (Test-Path $OutputPath)) {
             New-Item -Path $OutputPath -ItemType Directory -Force | Out-Null
@@ -460,10 +487,18 @@ if ($highSeverityProcs.Count -gt 0) {
                 $generatedFiles += $htmlPath
             }
 
-            if (-not [string]::IsNullOrWhiteSpace($StreamTo)) {
-                Write-Host "Streaming findings to $StreamTo endpoint..." -ForegroundColor Yellow
+            if ($streamRequested) {
+                Write-Host "Streaming findings to $streamLabel..." -ForegroundColor Yellow
                 try {
-                    if ([string]::IsNullOrWhiteSpace($StreamUri)) {
+                    $streamParams = $null
+                    if ($streamProfileRequested) {
+                        $streamParams = @{
+                            ProfileName  = $StreamProfileName
+                            ProfileScope = $StreamProfileScope
+                            Format       = $StreamFormat
+                        }
+                    }
+                    elseif ([string]::IsNullOrWhiteSpace($StreamUri)) {
                         Write-Warning "StreamTo was specified without StreamUri; skipping SIEM streaming."
                     }
                     else {
@@ -475,12 +510,14 @@ if ($highSeverityProcs.Count -gt 0) {
                         if (-not [string]::IsNullOrWhiteSpace($StreamToken)) {
                             $streamParams['Token'] = $StreamToken
                         }
+                    }
+                    if ($null -ne $streamParams) {
                         $streamResult = @($reportData.Findings) | Send-SiemEvent @streamParams
-                        Write-Host "Streamed $($streamResult.EventsSent) of $(@($reportData.Findings).Count) finding event(s) to $StreamTo ($($streamResult.Failed) failed)." -ForegroundColor Green
+                        Write-Host "Streamed $($streamResult.EventsSent) of $(@($reportData.Findings).Count) finding event(s) to $streamLabel ($($streamResult.Failed) failed)." -ForegroundColor Green
                     }
                 }
                 catch {
-                    Write-Warning "SIEM streaming failed; report files were still generated: $_"
+                    Write-Warning "SIEM streaming failed; report files were still generated ($($_.Exception.GetType().Name))."
                 }
             }
 
@@ -498,12 +535,12 @@ if ($highSeverityProcs.Count -gt 0) {
             Write-Host "  - $file" -ForegroundColor White
         }
 
-        if (-not [string]::IsNullOrWhiteSpace($StreamTo)) {
+        if ($streamRequested) {
             if ($null -ne $streamResult) {
-                Write-Host "SIEM Stream ($StreamTo): $($streamResult.EventsSent) event(s) sent in $($streamResult.BatchesSent) batch(es), $($streamResult.Failed) failed, $($streamResult.DurationSec)s" -ForegroundColor Cyan
+                Write-Host "SIEM Stream ($streamLabel): $($streamResult.EventsSent) event(s) sent in $($streamResult.BatchesSent) batch(es), $($streamResult.Failed) failed, $($streamResult.DurationSec)s" -ForegroundColor Cyan
             }
             else {
-                Write-Host "SIEM Stream ($StreamTo): not delivered (see warnings above)" -ForegroundColor Yellow
+                Write-Host "SIEM Stream ($streamLabel): not delivered (see warnings above)" -ForegroundColor Yellow
             }
         }
         
@@ -518,7 +555,7 @@ if ($highSeverityProcs.Count -gt 0) {
             }
         }
         
-        if (-not [string]::IsNullOrWhiteSpace($StreamTo)) {
+        if ($streamRequested) {
             return [PSCustomObject]@{
                 Files        = $generatedFiles
                 StreamResult = $streamResult

@@ -1,11 +1,11 @@
 ﻿@{
     RootModule = 'WindowsSecurityAudit.psm1'
-    ModuleVersion = '1.7.1'
+    ModuleVersion = '1.8.0'
     GUID = 'a8d7c4e5-3b2f-4e8a-9c1d-6f5a8b9d2e7c'
     Author = 'Okan YILDIZ'
     CompanyName = 'okanyildiz'
     Copyright = '(c) 2026 Okan YILDIZ. All rights reserved.'
-    Description = 'Comprehensive Windows security audit and DFIR toolkit: 72 functions across 14 categories - threat hunting (MITRE ATT&CK mapping, lateral movement, LOLBins, data exfiltration), compliance (CIS Benchmark, NIST 800-53, PCI-DSS), vulnerability management (NVD CVE matching, CPE resolution, EOL software), forensics (artifact collection, memory dumps, USN journal, Sysmon analytics), SIEM integration (Splunk HEC, Microsoft Sentinel, CEF/NDJSON), threat intelligence feeds (abuse.ch, AbuseIPDB, MISP, TAXII/STIX), Active Directory security, hardening baselines and automated remediation. Runs on Windows PowerShell 5.1+ and PowerShell 7. Locale-invariant core checks since v1.6.0: compliance, audit-policy, account and ACL checks use APIs, GUIDs and SIDs instead of localized console output (correct results on Turkish, German, French and other non-English Windows). Since v1.7.0 the USN journal is read natively via FSCTL (binary) with an fsutil fallback (see README Known Limitations). Core checks are dependency-free; AD functions require the ActiveDirectory module (RSAT) and cloud functions the Microsoft Graph SDK. Free and open source - support development: https://buymeacoffee.com/okanyildizr'
+    Description = 'Comprehensive Windows security audit and DFIR toolkit: 75 functions across 14 categories - threat hunting (MITRE ATT&CK mapping, lateral movement, LOLBins, data exfiltration), compliance (CIS Benchmark, NIST 800-53, PCI-DSS), vulnerability management (NVD CVE matching, CPE resolution, EOL software), forensics (artifact collection, memory dumps, USN journal, Sysmon analytics), SIEM integration (Splunk HEC, Microsoft Sentinel Logs Ingestion OAuth, legacy Sentinel, CEF/NDJSON), threat intelligence feeds (abuse.ch, AbuseIPDB, MISP, TAXII/STIX), Active Directory security, hardening baselines and automated remediation. Runs on Windows PowerShell 5.1+ and PowerShell 7. Locale-invariant core checks since v1.6.0: compliance, audit-policy, account and ACL checks use APIs, GUIDs and SIDs instead of localized console output (correct results on Turkish, German, French and other non-English Windows). Since v1.7.0 the USN journal is read natively via FSCTL (binary) with an fsutil fallback (see README Known Limitations). Core checks are dependency-free; AD functions require the ActiveDirectory module (RSAT) and cloud functions the Microsoft Graph SDK. Free and open source - support development: https://buymeacoffee.com/okanyildizr'
     PowerShellVersion = '5.1'
     CompatiblePSEditions = @('Desktop', 'Core')
     FunctionsToExport = @(
@@ -52,6 +52,7 @@
         'Get-SecurityBaseline',
         'Get-SecurityMetrics',
         'Get-SecurityMisconfigurations',
+        'Get-SiemProfile',
         'Get-SysmonAnalytics',
         'Get-SystemInfo',
         'Get-ThreatIntelligence',
@@ -69,9 +70,11 @@
         'New-ForensicTimeline',
         'New-SecurityDashboard',
         'Register-ScheduledSecurityScan',
+        'Remove-SiemProfile',
         'Resolve-CpeName',
         'Send-SiemEvent',
         'Set-SecurityBaseline',
+        'Set-SiemProfile',
         'Test-ADSecurityPosture',
         'Test-CertificateHealth',
         'Test-CISBenchmark',
