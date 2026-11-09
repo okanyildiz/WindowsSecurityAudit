@@ -1066,7 +1066,7 @@ function New-WsaPrivateFile {
             # The verified admin-only parent directory already gives a restrictive
             # inherited ACL at creation; apply the explicit lockdown before content.
             $fileSecurity = New-WsaAdminFileSecurity
-            [System.IO.FileInfo]::new($Path).SetAccessControl($fileSecurity)
+            Set-Acl -Path $Path -AclObject $fileSecurity -ErrorAction Stop
         }
     }
     finally {
