@@ -6,16 +6,19 @@ function Get-FileSystemJournal {
         Reads the NTFS USN change journal through binary native APIs, with an
         English-locale fsutil fallback, to surface file creation, deletion, and
         rename activity. Also summarizes MFT statistics from fsutil volume
-        metadata and scans targeted paths for timestomp indicators by comparing
-        StandardInformation timestamps against journal creation records.
-        Raw $MFT record carving is out of scope; this function operates at the
-        journal-record and volume-summary levels.
+        metadata, scans targeted paths for timestomp indicators, and compares
+        SI/FN timestamps in live in-use FILE records through native NTFS FSCTLs.
+        Raw-volume $MFT acquisition and deleted-record recovery are out of scope.
     .PARAMETER DriveLetter
         NTFS volume to analyze (default: C)
     .PARAMETER Mode
-        Analysis mode: USNJournal, MFTSummary, or TimestompScan (default: USNJournal)
+        Analysis mode: USNJournal, MFTSummary, TimestompScan, or MftTimestompScan (default: USNJournal)
     .PARAMETER MaxRecords
-        Maximum journal records to parse or files to scan (default: 10000)
+        Maximum journal records, files, or live MFT records to scan (default: 10000)
+    .PARAMETER MaxSeconds
+        Maximum live MFT enumeration time in seconds (default: 300)
+    .PARAMETER IncludeAll
+        Return every parsed live MFT base record instead of only timestomp suspects
     .PARAMETER ScanPaths
         Paths scanned in TimestompScan mode (default: user Desktop, Downloads, Temp)
     .PARAMETER OutputPath
@@ -24,6 +27,8 @@ function Get-FileSystemJournal {
         Get-FileSystemJournal -DriveLetter C -Mode USNJournal -MaxRecords 5000
     .EXAMPLE
         Get-FileSystemJournal -Mode TimestompScan -ScanPaths "C:\Users\victim\Downloads" -OutputPath "C:\IR\timestomp.csv"
+    .EXAMPLE
+        Get-FileSystemJournal -Mode MftTimestompScan -DriveLetter C -MaxRecords 50000 -MaxSeconds 300
     .OUTPUTS
         PSCustomObject with Mode, Records, Summary, Notes, and Recommendations
     #>
@@ -35,12 +40,19 @@ function Get-FileSystemJournal {
         [string]$DriveLetter = 'C',
 
         [Parameter()]
-        [ValidateSet('USNJournal', 'MFTSummary', 'TimestompScan')]
+        [ValidateSet('USNJournal', 'MFTSummary', 'TimestompScan', 'MftTimestompScan')]
         [string]$Mode = 'USNJournal',
 
         [Parameter()]
         [ValidateRange(1, 1000000)]
         [int]$MaxRecords = 10000,
+
+        [Parameter()]
+        [ValidateRange(1, 86400)]
+        [int]$MaxSeconds = 300,
+
+        [Parameter()]
+        [switch]$IncludeAll,
 
         [Parameter()]
         [string[]]$ScanPaths,
@@ -115,6 +127,17 @@ function Get-FileSystemJournal {
             }
             elseif (-not $isWindowsPlatform) {
                 $result.Notes += "Platform check failed: NTFS journal and fsutil.exe are only available on Windows. No data was collected."
+                if ($Mode -eq 'MftTimestompScan') {
+                    $result.Notes += "Native MFT SI/FN scanning was skipped: FSCTL_GET_NTFS_FILE_RECORD is only available on Windows."
+                    $result.Summary = @{
+                        RecordsScanned = [long]0
+                        SuspectCount   = 0
+                        Truncated      = $false
+                        Incomplete     = $false
+                        StopReason     = 'UnsupportedPlatform'
+                        Source         = 'Unavailable'
+                    }
+                }
                 $result.Recommendations += "Run this function on a Windows host against an NTFS volume."
             }
             else {
@@ -327,7 +350,7 @@ function Get-FileSystemJournal {
                                 }
 
                                 $result.Notes += "Summary-level view only: values come from 'fsutil fsinfo ntfsinfo' volume metadata."
-                                $result.Notes += "Raw `$MFT record parsing (per-entry `$SI/`$FN attribute decoding) requires direct disk access or third-party libraries and is intentionally out of scope for this function."
+                                $result.Notes += "This mode does not parse individual FILE records; use MftTimestompScan for live in-use SI/FN candidates. Raw-volume acquisition and deleted-record recovery remain out of scope."
 
                                 $result.Recommendations += "For per-record `$MFT analysis, pair this summary with a dedicated parser (e.g., MFTECmd) run against an acquired `$MFT copy."
                                 $result.Recommendations += "A large or rapidly growing MFT valid data length relative to expectations can indicate mass file creation (staging or encryption activity); baseline before alerting."
@@ -344,6 +367,85 @@ function Get-FileSystemJournal {
                             Write-Warning "Failed to collect MFT summary - $_"
                             $result.Notes += "MFT summary collection failed: $_"
                         }
+                    }
+
+                    'MftTimestompScan' {
+                        Write-Host "`n[*] Scanning live in-use MFT records for SI/FN timestomp candidates..." -ForegroundColor Cyan
+
+                        if (-not $isAdmin) {
+                            $result.Notes += "Native MFT SI/FN scanning was skipped: administrator elevation is required to open the NTFS volume."
+                            $result.Summary = @{
+                                RecordsScanned = [long]0
+                                SuspectCount   = 0
+                                Truncated      = $false
+                                Incomplete     = $false
+                                StopReason     = 'ElevationRequired'
+                                Source         = 'Unavailable'
+                            }
+                        }
+                        else {
+                            try {
+                                $nativeResult = Get-MftNative -DriveLetter $drive -MaxRecords $MaxRecords -MaxSeconds $MaxSeconds -IncludeAll:$IncludeAll
+                                foreach ($note in @($nativeResult.Notes)) {
+                                    $result.Notes += $note
+                                }
+                                if ($nativeResult.Error) {
+                                    $result.Notes += "Native MFT collection status: $($nativeResult.Error)"
+                                }
+
+                                $allRecords = @($nativeResult.Records)
+                                $suspectRecords = @($allRecords | Where-Object { $_.TimestompSuspect })
+                                $result.Records = if ($IncludeAll) { $allRecords } else { $suspectRecords }
+                                $result.Summary = @{
+                                    RecordsScanned             = [long]$nativeResult.RecordsScanned
+                                    NativeRecordsReturned      = [long]$nativeResult.RecordsScanned
+                                    ReturnedRecords            = $allRecords.Count
+                                    SuspectCount               = [int]$nativeResult.SuspectCount
+                                    MalformedRecords           = [int]$nativeResult.MalformedRecords
+                                    AttributeListRecords       = [int]$nativeResult.AttributeListRecords
+                                    MissingStandardInformation = [int]$nativeResult.MissingStandardInformation
+                                    MissingFileName            = [int]$nativeResult.MissingFileName
+                                    ExtensionRecordsSkipped    = [int]$nativeResult.ExtensionRecordsSkipped
+                                    NotInUseRecordsSkipped     = [int]$nativeResult.NotInUseRecordsSkipped
+                                    SkippedOrdinalCount        = [long]$nativeResult.SkippedOrdinalCount
+                                    EstimatedMftRecords        = [long]$nativeResult.EstimatedMftRecords
+                                    BytesPerSector             = [int]$nativeResult.BytesPerSector
+                                    BytesPerFileRecord         = [int]$nativeResult.BytesPerFileRecord
+                                    ElapsedMilliseconds        = [long]$nativeResult.ElapsedMilliseconds
+                                    MaxRecords                 = $MaxRecords
+                                    MaxSeconds                 = $MaxSeconds
+                                    IncludeAll                 = [bool]$IncludeAll
+                                    Success                    = [bool]$nativeResult.Success
+                                    Truncated                  = [bool]$nativeResult.Truncated
+                                    Incomplete                 = [bool]$nativeResult.Incomplete
+                                    StopReason                 = [string]$nativeResult.StopReason
+                                    Source                     = 'NativeMft'
+                                }
+
+                                if (-not $nativeResult.Success) {
+                                    Write-Warning "Native MFT collection failed: $($nativeResult.Error)"
+                                }
+                                Write-Host "  Records scanned: $($nativeResult.RecordsScanned); suspects: $($nativeResult.SuspectCount)" -ForegroundColor Green
+                            }
+                            catch {
+                                Write-Warning "Native MFT SI/FN scanning failed: $($_.Exception.Message)"
+                                $result.Notes += "Native MFT SI/FN scanning failed without a fallback: $($_.Exception.Message)"
+                                $result.Summary = @{
+                                    RecordsScanned = [long]0
+                                    SuspectCount   = 0
+                                    Truncated      = $false
+                                    Incomplete     = $false
+                                    StopReason     = 'InvocationFailed'
+                                    Source         = 'NativeMft'
+                                }
+                            }
+                        }
+
+                        $result.Notes += "MFT timestomp candidates compare raw UTC FILETIME values: SI.Created != FN.Created or SI.Modified != FN.Modified when both values in a pair exist. This broader mismatch heuristic is not proof of malicious timestomping."
+                        $result.Notes += "FSCTL_GET_NTFS_FILE_RECORD returns only in-use records. Skipped ordinals can be unused or uninitialized entries and are not deleted-file evidence."
+                        $result.Notes += "Records with attribute lists have limited coverage because extension attributes are not resolved by this scan."
+                        $result.Recommendations += "Validate SI/FN candidates against an acquired `$MFT and an independent parser; legitimate installers, restores, copies, and timestamp-preserving tools can produce the same signal (MITRE ATT&CK T1070.006)."
+                        $result.Recommendations += "Increase MaxRecords or MaxSeconds and review Summary.StopReason whenever Truncated or Incomplete is true before drawing volume-wide conclusions."
                     }
 
                     'TimestompScan' {
@@ -632,6 +734,10 @@ function Get-UsnJournalCollection {
         }
 
         $notes += 'native journal read unavailable; using fsutil (English-locale output required)'
+        if ($null -ne $nativeResult -and $null -ne $nativeResult.PSObject.Properties['UnavailableReason'] -and
+            $nativeResult.UnavailableReason -eq 'ConstrainedLanguage') {
+            $notes += 'Native USN journal reading was skipped because effective ConstrainedLanguage does not permit dynamic compilation (reason: ConstrainedLanguage).'
+        }
         if ($nativeError) {
             $notes += "Native USN journal read failed before collection: $nativeError"
         }
