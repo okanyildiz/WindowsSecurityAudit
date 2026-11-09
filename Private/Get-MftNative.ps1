@@ -80,6 +80,10 @@ public static class MftNative {
         public string Name;
         public byte NameNamespace;
         public ushort AttributeId;
+        public long? CreatedDeltaTicks;
+        public long? ModifiedDeltaTicks;
+        public bool TimestompSuspect;
+        public string SuspicionReason = string.Empty;
     }
 
     public class MftFileRecord {
@@ -127,6 +131,7 @@ public static class MftNative {
         public bool HasFileName;
         public bool HasAttributeList;
         public List<MftFileNameInfo> FileNames = new List<MftFileNameInfo>();
+        public List<MftFileNameInfo> FileNameFindings = new List<MftFileNameInfo>();
         public List<string> Notes = new List<string>();
     }
 
@@ -445,14 +450,18 @@ public static class MftNative {
 
         MftFileRecord parsed = result.ParseResult.Record;
         parsed.FileReferenceNumber = actual;
-        if (parsed.HeaderRecordNumberPresent && parsed.HeaderRecordNumber != (uint)actual) {
-            if (parsed.HeaderRecordNumber == 0) {
-                parsed.Notes.Add("The FILE header has no entry number; the FSCTL-returned ordinal is used as a fallback.");
+        if (parsed.HeaderRecordNumberPresent) {
+            if (actual > uint.MaxValue) {
+                result.Error = string.Format("The FSCTL-returned ordinal {0} exceeds the NTFS 3.1 header entry-number range.", actual);
+                return result;
             }
-            else {
+            if (parsed.HeaderRecordNumber != (uint)actual) {
                 result.Error = string.Format("The FILE header entry number {0} does not match the FSCTL-returned ordinal {1}.", parsed.HeaderRecordNumber, actual);
                 return result;
             }
+        }
+        else {
+            parsed.Notes.Add("The NTFS 3.0 FILE header has no entry number; the FSCTL-returned ordinal is used as a fallback.");
         }
 
         result.Success = true;
@@ -911,17 +920,39 @@ public static class MftNative {
     }
 
     private static void EvaluateTimestomp(MftFileRecord record) {
-        List<string> reasons = new List<string>();
-        if (record.HasStandardInformation && record.HasFileName) {
-            if (record.SiCreatedValid && record.FnCreatedValid && record.SiCreatedFileTime != record.FnCreatedFileTime) {
-                reasons.Add(record.SiCreatedFileTime < record.FnCreatedFileTime ? "SI_CREATED_LT_FN_CREATED" : "SI_CREATED_GT_FN_CREATED");
+        MftFileNameInfo primaryName = SelectPrimaryFileName(record.FileNames);
+        record.TimestompSuspect = false;
+        record.SuspicionReason = string.Empty;
+        record.FileNameFindings.Clear();
+        if (!record.HasStandardInformation) {
+            return;
+        }
+
+        foreach (MftFileNameInfo name in record.FileNames) {
+            List<string> reasons = new List<string>();
+            if (record.SiCreatedFileTime != name.CreatedFileTime) {
+                reasons.Add(record.SiCreatedFileTime < name.CreatedFileTime ? "SI_CREATED_LT_FN_CREATED" : "SI_CREATED_GT_FN_CREATED");
             }
-            if (record.SiModifiedValid && record.FnModifiedValid && record.SiModifiedFileTime != record.FnModifiedFileTime) {
-                reasons.Add(record.SiModifiedFileTime < record.FnModifiedFileTime ? "SI_MODIFIED_LT_FN_MODIFIED" : "SI_MODIFIED_GT_FN_MODIFIED");
+            if (record.SiModifiedFileTime != name.ModifiedFileTime) {
+                reasons.Add(record.SiModifiedFileTime < name.ModifiedFileTime ? "SI_MODIFIED_LT_FN_MODIFIED" : "SI_MODIFIED_GT_FN_MODIFIED");
+            }
+
+            name.CreatedDeltaTicks = record.SiCreatedValid && name.CreatedValid
+                ? name.CreatedFileTime - record.SiCreatedFileTime
+                : (long?)null;
+            name.ModifiedDeltaTicks = record.SiModifiedValid && name.ModifiedValid
+                ? name.ModifiedFileTime - record.SiModifiedFileTime
+                : (long?)null;
+            name.SuspicionReason = string.Join("; ", reasons.ToArray());
+            name.TimestompSuspect = record.SiCreatedFileTime < name.CreatedFileTime;
+            if (name.TimestompSuspect) {
+                record.FileNameFindings.Add(name);
+            }
+            if (name == primaryName) {
+                record.SuspicionReason = name.SuspicionReason;
             }
         }
-        record.TimestompSuspect = reasons.Count > 0;
-        record.SuspicionReason = string.Join("; ", reasons.ToArray());
+        record.TimestompSuspect = record.FileNameFindings.Count > 0;
     }
 
     private static bool TryQueryVolumeData(SafeFileHandle volume, out NTFS_VOLUME_DATA_BUFFER volumeData, out string error) {
@@ -1067,18 +1098,34 @@ function ConvertTo-MftNativeRecord {
         $modifiedDeltaTicks = [long]$NativeRecord.FnModifiedFileTime - [long]$NativeRecord.SiModifiedFileTime
     }
 
-    $fileNames = @($NativeRecord.FileNames | ForEach-Object {
-        [PSCustomObject]@{
-            FileName                  = [string]$_.Name
-            ParentFileReferenceNumber = '0x' + ([uint64]$_.ParentFileReferenceNumber).ToString('x16')
-            NameNamespace             = [byte]$_.NameNamespace
-            FnAttributeId             = [uint16]$_.AttributeId
-            FnCreated                 = if ($null -ne $_.Created) { [datetime]$_.Created } else { $null }
-            FnModified                = if ($null -ne $_.Modified) { [datetime]$_.Modified } else { $null }
-            FnMftChanged              = if ($null -ne $_.MftChanged) { [datetime]$_.MftChanged } else { $null }
-            FnAccessed                = if ($null -ne $_.Accessed) { [datetime]$_.Accessed } else { $null }
+    $convertFileName = {
+        param([object]$NameInfo)
+
+        return [PSCustomObject]@{
+            FileName                  = [string]$NameInfo.Name
+            ParentFileReferenceNumber = '0x' + ([uint64]$NameInfo.ParentFileReferenceNumber).ToString('x16')
+            NameNamespace             = [byte]$NameInfo.NameNamespace
+            FnAttributeId             = [uint16]$NameInfo.AttributeId
+            FnCreatedFileTime         = [long]$NameInfo.CreatedFileTime
+            FnModifiedFileTime        = [long]$NameInfo.ModifiedFileTime
+            FnMftChangedFileTime      = [long]$NameInfo.MftChangedFileTime
+            FnAccessedFileTime        = [long]$NameInfo.AccessedFileTime
+            FnCreatedValid            = [bool]$NameInfo.CreatedValid
+            FnModifiedValid           = [bool]$NameInfo.ModifiedValid
+            FnMftChangedValid         = [bool]$NameInfo.MftChangedValid
+            FnAccessedValid           = [bool]$NameInfo.AccessedValid
+            FnCreated                 = if ($null -ne $NameInfo.Created) { [datetime]$NameInfo.Created } else { $null }
+            FnModified                = if ($null -ne $NameInfo.Modified) { [datetime]$NameInfo.Modified } else { $null }
+            FnMftChanged              = if ($null -ne $NameInfo.MftChanged) { [datetime]$NameInfo.MftChanged } else { $null }
+            FnAccessed                = if ($null -ne $NameInfo.Accessed) { [datetime]$NameInfo.Accessed } else { $null }
+            CreatedDeltaTicks         = if ($null -ne $NameInfo.CreatedDeltaTicks) { [long]$NameInfo.CreatedDeltaTicks } else { $null }
+            ModifiedDeltaTicks        = if ($null -ne $NameInfo.ModifiedDeltaTicks) { [long]$NameInfo.ModifiedDeltaTicks } else { $null }
+            TimestompSuspect          = [bool]$NameInfo.TimestompSuspect
+            SuspicionReason           = [string]$NameInfo.SuspicionReason
         }
-    })
+    }
+    $fileNames = @($NativeRecord.FileNames | ForEach-Object { & $convertFileName $_ })
+    $fileNameFindings = @($NativeRecord.FileNameFindings | ForEach-Object { & $convertFileName $_ })
 
     return [PSCustomObject]@{
         RecordNumber               = $recordNumber
@@ -1109,6 +1156,7 @@ function ConvertTo-MftNativeRecord {
         HasFileName                = [bool]$NativeRecord.HasFileName
         HasAttributeList           = [bool]$NativeRecord.HasAttributeList
         FileNames                  = $fileNames
+        FileNameFindings           = $fileNameFindings
         Notes                      = @($NativeRecord.Notes | ForEach-Object { [string]$_ })
         Assessment                 = 'Heuristic candidate - not proof of timestomping'
         Source                     = 'FSCTL_GET_NTFS_FILE_RECORD'

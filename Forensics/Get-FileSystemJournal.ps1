@@ -84,6 +84,32 @@ function Get-FileSystemJournal {
             $isAdmin = Test-JournalElevation
         }
 
+        $mftSummaryTemplate = @{
+            RecordsScanned             = [long]0
+            NativeRecordsReturned      = [long]0
+            ReturnedRecords            = 0
+            SuspectCount               = 0
+            MalformedRecords           = 0
+            AttributeListRecords       = 0
+            MissingStandardInformation = 0
+            MissingFileName            = 0
+            ExtensionRecordsSkipped    = 0
+            NotInUseRecordsSkipped     = 0
+            SkippedOrdinalCount        = [long]0
+            EstimatedMftRecords        = [long]0
+            BytesPerSector             = 0
+            BytesPerFileRecord         = 0
+            ElapsedMilliseconds        = [long]0
+            MaxRecords                 = $MaxRecords
+            MaxSeconds                 = $MaxSeconds
+            IncludeAll                 = [bool]$IncludeAll
+            Success                    = $false
+            Truncated                  = $false
+            Incomplete                 = $false
+            StopReason                 = 'NotStarted'
+            Source                     = 'Unavailable'
+        }
+
         $result = [PSCustomObject]@{
             CollectionDate = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
             ComputerName   = $env:COMPUTERNAME
@@ -91,7 +117,7 @@ function Get-FileSystemJournal {
             Mode           = $Mode
             IsElevated     = $isAdmin
             Records        = @()
-            Summary        = @{ Source = 'Unavailable' }
+            Summary        = if ($Mode -eq 'MftTimestompScan') { $mftSummaryTemplate.Clone() } else { @{ Source = 'Unavailable' } }
             Notes          = @()
             Recommendations = @()
         }
@@ -123,20 +149,16 @@ function Get-FileSystemJournal {
         try {
             if (-not $driveIsValid) {
                 $result.Notes += "Invalid DriveLetter '$drive': exactly one ASCII letter is required. Collection was skipped."
+                if ($Mode -eq 'MftTimestompScan') {
+                    $result.Summary.StopReason = 'InvalidDriveLetter'
+                }
                 $result.Recommendations += "Provide one ASCII drive letter, such as C or D."
             }
             elseif (-not $isWindowsPlatform) {
                 $result.Notes += "Platform check failed: NTFS journal and fsutil.exe are only available on Windows. No data was collected."
                 if ($Mode -eq 'MftTimestompScan') {
                     $result.Notes += "Native MFT SI/FN scanning was skipped: FSCTL_GET_NTFS_FILE_RECORD is only available on Windows."
-                    $result.Summary = @{
-                        RecordsScanned = [long]0
-                        SuspectCount   = 0
-                        Truncated      = $false
-                        Incomplete     = $false
-                        StopReason     = 'UnsupportedPlatform'
-                        Source         = 'Unavailable'
-                    }
+                    $result.Summary.StopReason = 'UnsupportedPlatform'
                 }
                 $result.Recommendations += "Run this function on a Windows host against an NTFS volume."
             }
@@ -374,14 +396,7 @@ function Get-FileSystemJournal {
 
                         if (-not $isAdmin) {
                             $result.Notes += "Native MFT SI/FN scanning was skipped: administrator elevation is required to open the NTFS volume."
-                            $result.Summary = @{
-                                RecordsScanned = [long]0
-                                SuspectCount   = 0
-                                Truncated      = $false
-                                Incomplete     = $false
-                                StopReason     = 'ElevationRequired'
-                                Source         = 'Unavailable'
-                            }
+                            $result.Summary.StopReason = 'ElevationRequired'
                         }
                         else {
                             try {
@@ -396,31 +411,27 @@ function Get-FileSystemJournal {
                                 $allRecords = @($nativeResult.Records)
                                 $suspectRecords = @($allRecords | Where-Object { $_.TimestompSuspect })
                                 $result.Records = if ($IncludeAll) { $allRecords } else { $suspectRecords }
-                                $result.Summary = @{
-                                    RecordsScanned             = [long]$nativeResult.RecordsScanned
-                                    NativeRecordsReturned      = [long]$nativeResult.RecordsScanned
-                                    ReturnedRecords            = $allRecords.Count
-                                    SuspectCount               = [int]$nativeResult.SuspectCount
-                                    MalformedRecords           = [int]$nativeResult.MalformedRecords
-                                    AttributeListRecords       = [int]$nativeResult.AttributeListRecords
-                                    MissingStandardInformation = [int]$nativeResult.MissingStandardInformation
-                                    MissingFileName            = [int]$nativeResult.MissingFileName
-                                    ExtensionRecordsSkipped    = [int]$nativeResult.ExtensionRecordsSkipped
-                                    NotInUseRecordsSkipped     = [int]$nativeResult.NotInUseRecordsSkipped
-                                    SkippedOrdinalCount        = [long]$nativeResult.SkippedOrdinalCount
-                                    EstimatedMftRecords        = [long]$nativeResult.EstimatedMftRecords
-                                    BytesPerSector             = [int]$nativeResult.BytesPerSector
-                                    BytesPerFileRecord         = [int]$nativeResult.BytesPerFileRecord
-                                    ElapsedMilliseconds        = [long]$nativeResult.ElapsedMilliseconds
-                                    MaxRecords                 = $MaxRecords
-                                    MaxSeconds                 = $MaxSeconds
-                                    IncludeAll                 = [bool]$IncludeAll
-                                    Success                    = [bool]$nativeResult.Success
-                                    Truncated                  = [bool]$nativeResult.Truncated
-                                    Incomplete                 = [bool]$nativeResult.Incomplete
-                                    StopReason                 = [string]$nativeResult.StopReason
-                                    Source                     = 'NativeMft'
-                                }
+                                $result.Summary = $mftSummaryTemplate.Clone()
+                                $result.Summary.RecordsScanned = [long]$nativeResult.RecordsScanned
+                                $result.Summary.NativeRecordsReturned = [long]$nativeResult.RecordsScanned
+                                $result.Summary.ReturnedRecords = $allRecords.Count
+                                $result.Summary.SuspectCount = [int]$nativeResult.SuspectCount
+                                $result.Summary.MalformedRecords = [int]$nativeResult.MalformedRecords
+                                $result.Summary.AttributeListRecords = [int]$nativeResult.AttributeListRecords
+                                $result.Summary.MissingStandardInformation = [int]$nativeResult.MissingStandardInformation
+                                $result.Summary.MissingFileName = [int]$nativeResult.MissingFileName
+                                $result.Summary.ExtensionRecordsSkipped = [int]$nativeResult.ExtensionRecordsSkipped
+                                $result.Summary.NotInUseRecordsSkipped = [int]$nativeResult.NotInUseRecordsSkipped
+                                $result.Summary.SkippedOrdinalCount = [long]$nativeResult.SkippedOrdinalCount
+                                $result.Summary.EstimatedMftRecords = [long]$nativeResult.EstimatedMftRecords
+                                $result.Summary.BytesPerSector = [int]$nativeResult.BytesPerSector
+                                $result.Summary.BytesPerFileRecord = [int]$nativeResult.BytesPerFileRecord
+                                $result.Summary.ElapsedMilliseconds = [long]$nativeResult.ElapsedMilliseconds
+                                $result.Summary.Success = [bool]$nativeResult.Success
+                                $result.Summary.Truncated = [bool]$nativeResult.Truncated
+                                $result.Summary.Incomplete = [bool]$nativeResult.Incomplete
+                                $result.Summary.StopReason = [string]$nativeResult.StopReason
+                                $result.Summary.Source = 'NativeMft'
 
                                 if (-not $nativeResult.Success) {
                                     Write-Warning "Native MFT collection failed: $($nativeResult.Error)"
@@ -430,18 +441,12 @@ function Get-FileSystemJournal {
                             catch {
                                 Write-Warning "Native MFT SI/FN scanning failed: $($_.Exception.Message)"
                                 $result.Notes += "Native MFT SI/FN scanning failed without a fallback: $($_.Exception.Message)"
-                                $result.Summary = @{
-                                    RecordsScanned = [long]0
-                                    SuspectCount   = 0
-                                    Truncated      = $false
-                                    Incomplete     = $false
-                                    StopReason     = 'InvocationFailed'
-                                    Source         = 'NativeMft'
-                                }
+                                $result.Summary = $mftSummaryTemplate.Clone()
+                                $result.Summary.StopReason = 'InvocationFailed'
                             }
                         }
 
-                        $result.Notes += "MFT timestomp candidates compare raw UTC FILETIME values: SI.Created != FN.Created or SI.Modified != FN.Modified when both values in a pair exist. This broader mismatch heuristic is not proof of malicious timestomping."
+                        $result.Notes += "MFT timestomp candidates alert only when raw SI.Created is earlier than FN.Created for any preserved FN attribute. Other raw creation/modified mismatches remain supporting evidence; UTC display and delta fields require .NET-valid FILETIME values."
                         $result.Notes += "FSCTL_GET_NTFS_FILE_RECORD returns only in-use records. Skipped ordinals can be unused or uninitialized entries and are not deleted-file evidence."
                         $result.Notes += "Records with attribute lists have limited coverage because extension attributes are not resolved by this scan."
                         $result.Recommendations += "Validate SI/FN candidates against an acquired `$MFT and an independent parser; legitimate installers, restores, copies, and timestamp-preserving tools can produce the same signal (MITRE ATT&CK T1070.006)."
@@ -748,7 +753,7 @@ function Get-UsnJournalCollection {
     $accessDenied = ($fsutilExitCode -eq 1 -or $fsutilExitCode -eq 5)
 
     if ($fsutilExitCode -ne 0) {
-        return [PSCustomObject]@{
+        return New-Object PSObject -Property ([ordered]@{
             Records          = @()
             Success          = $false
             Error            = "fsutil usn readjournal failed with exit code $fsutilExitCode."
@@ -759,11 +764,11 @@ function Get-UsnJournalCollection {
             NativeAttempted  = $nativeAttempted
             Incomplete       = $false
             Notes            = $notes
-        }
+        })
     }
 
     $journalRecords = @(ConvertFrom-UsnJournalOutput -Lines $rawLines -MaxRecords $MaxRecords)
-    return [PSCustomObject]@{
+    return New-Object PSObject -Property ([ordered]@{
         Records          = $journalRecords
         Success          = $true
         Error            = $null
@@ -774,7 +779,7 @@ function Get-UsnJournalCollection {
         NativeAttempted  = $nativeAttempted
         Incomplete       = $false
         Notes            = $notes
-    }
+    })
 }
 
 function ConvertTo-UsnJournalNativeRecord {

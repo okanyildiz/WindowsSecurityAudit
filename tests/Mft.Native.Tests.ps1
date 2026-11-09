@@ -42,6 +42,11 @@ BeforeAll {
         [Array]::Copy([BitConverter]::GetBytes($Value), 0, $Buffer, $Offset, 8)
     }
 
+    function Set-MftFixtureInt64 {
+        param([byte[]]$Buffer, [int]$Offset, [long]$Value)
+        [Array]::Copy([BitConverter]::GetBytes($Value), 0, $Buffer, $Offset, 8)
+    }
+
     function Set-MftFixtureFileTime {
         param([byte[]]$Buffer, [int]$Offset, [datetime]$Value)
         [Array]::Copy([BitConverter]::GetBytes($Value.ToFileTimeUtc()), 0, $Buffer, $Offset, 8)
@@ -154,6 +159,47 @@ BeforeAll {
             Set-MftFixtureUInt16 -Buffer $record -Offset 0x3FE -Value 0x2222
         }
         return ,$record
+    }
+
+    function Add-MftAlternateFileName {
+        param(
+            [byte[]]$Record,
+            [string]$FileName = 'hardlink.exe',
+            [datetime]$Created = [datetime]::SpecifyKind([datetime]'2025-01-01T03:04:05', [DateTimeKind]::Utc),
+            [datetime]$Modified = [datetime]::SpecifyKind([datetime]'2024-01-03T03:04:05', [DateTimeKind]::Utc),
+            [uint64]$Parent = 0x0006000000000006,
+            [uint16]$AttributeId = 7,
+            [byte]$NameNamespace = 0
+        )
+
+        $fnOffset = [int]([BitConverter]::ToUInt32($Record, 24) - 8)
+        [byte[]]$nameBytes = [Text.Encoding]::Unicode.GetBytes($FileName)
+        $fnLength = (24 + 66 + $nameBytes.Length + 7) -band (-bnot 7)
+        Set-MftFixtureUInt32 -Buffer $Record -Offset $fnOffset -Value 0x30
+        Set-MftFixtureUInt32 -Buffer $Record -Offset ($fnOffset + 4) -Value $fnLength
+        Set-MftFixtureUInt16 -Buffer $Record -Offset ($fnOffset + 14) -Value $AttributeId
+        Set-MftFixtureUInt32 -Buffer $Record -Offset ($fnOffset + 16) -Value (66 + $nameBytes.Length)
+        Set-MftFixtureUInt16 -Buffer $Record -Offset ($fnOffset + 20) -Value 24
+        $fnValue = $fnOffset + 24
+        Set-MftFixtureUInt64 -Buffer $Record -Offset $fnValue -Value $Parent
+        Set-MftFixtureFileTime -Buffer $Record -Offset ($fnValue + 8) -Value $Created
+        Set-MftFixtureFileTime -Buffer $Record -Offset ($fnValue + 16) -Value $Modified
+        $mftChanged = [datetime]::SpecifyKind([datetime]'2024-01-04T03:04:05', [DateTimeKind]::Utc)
+        $accessed = [datetime]::SpecifyKind([datetime]'2024-01-05T03:04:05', [DateTimeKind]::Utc)
+        Set-MftFixtureFileTime -Buffer $Record -Offset ($fnValue + 24) -Value $mftChanged
+        Set-MftFixtureFileTime -Buffer $Record -Offset ($fnValue + 32) -Value $accessed
+        Set-MftFixtureUInt64 -Buffer $Record -Offset ($fnValue + 40) -Value 0x1000
+        Set-MftFixtureUInt64 -Buffer $Record -Offset ($fnValue + 48) -Value 0x200
+        Set-MftFixtureUInt32 -Buffer $Record -Offset ($fnValue + 56) -Value 0x20
+        $Record[$fnValue + 64] = [byte]$FileName.Length
+        $Record[$fnValue + 65] = $NameNamespace
+        [Array]::Copy($nameBytes, 0, $Record, $fnValue + 66, $nameBytes.Length)
+
+        $offset = $fnOffset + $fnLength
+        Set-MftFixtureUInt32 -Buffer $Record -Offset $offset -Value ([uint32]::MaxValue)
+        Set-MftFixtureUInt32 -Buffer $Record -Offset ($offset + 4) -Value 0
+        Set-MftFixtureUInt32 -Buffer $Record -Offset 24 -Value ($offset + 8)
+        return ,$Record
     }
 
     function New-MftOutputBuffer {
@@ -295,7 +341,7 @@ Describe 'MFT synthetic FILE record parsing' {
         $public.Source | Should -Be 'FSCTL_GET_NTFS_FILE_RECORD'
     }
 
-    It 'flags a modified-time mismatch even when creation times are equal' {
+    It 'retains a modified-time mismatch as supporting evidence without raising an alert' {
         $siModified = [datetime]::SpecifyKind([datetime]'2019-02-03T04:05:06', [DateTimeKind]::Utc)
         $fnModified = [datetime]::SpecifyKind([datetime]'2024-01-03T03:04:05', [DateTimeKind]::Utc)
         $record = New-MftFileRecord -SiModified $siModified -FnModified $fnModified
@@ -303,8 +349,90 @@ Describe 'MFT synthetic FILE record parsing' {
 
         $parsed.Success | Should -BeTrue
         $parsed.Record.SiCreatedFileTime | Should -Be $parsed.Record.FnCreatedFileTime
-        $parsed.Record.TimestompSuspect | Should -BeTrue
+        $parsed.Record.TimestompSuspect | Should -BeFalse
         $parsed.Record.SuspicionReason | Should -Be 'SI_MODIFIED_LT_FN_MODIFIED'
+        $parsed.Record.FileNameFindings.Count | Should -Be 0
+        $public = ConvertTo-PublicMftFixtureRecord -NativeRecord $parsed.Record
+        $public.ModifiedDeltaTicks | Should -Be ($fnModified.ToFileTimeUtc() - $siModified.ToFileTimeUtc())
+    }
+
+    It 'does not flag SI creation later than FN creation' {
+        $siCreated = [datetime]::SpecifyKind([datetime]'2025-01-01T03:04:05', [DateTimeKind]::Utc)
+        $fnCreated = [datetime]::SpecifyKind([datetime]'2024-01-01T03:04:05', [DateTimeKind]::Utc)
+        $record = New-MftFileRecord -SiCreated $siCreated -FnCreated $fnCreated
+        $parsed = Invoke-MftParse -Record $record
+
+        $parsed.Success | Should -BeTrue
+        $parsed.Record.TimestompSuspect | Should -BeFalse
+        $parsed.Record.SuspicionReason | Should -Be 'SI_CREATED_GT_FN_CREATED'
+        $parsed.Record.FileNameFindings.Count | Should -Be 0
+        $public = ConvertTo-PublicMftFixtureRecord -NativeRecord $parsed.Record
+        $public.TimestompSuspect | Should -BeFalse
+        $public.CreatedDeltaTicks | Should -Be ($fnCreated.ToFileTimeUtc() - $siCreated.ToFileTimeUtc())
+    }
+
+    It 'does not flag SI modified later than FN modified' {
+        $siModified = [datetime]::SpecifyKind([datetime]'2025-01-03T03:04:05', [DateTimeKind]::Utc)
+        $fnModified = [datetime]::SpecifyKind([datetime]'2024-01-03T03:04:05', [DateTimeKind]::Utc)
+        $record = New-MftFileRecord -SiModified $siModified -FnModified $fnModified
+        $parsed = Invoke-MftParse -Record $record
+
+        $parsed.Success | Should -BeTrue
+        $parsed.Record.TimestompSuspect | Should -BeFalse
+        $parsed.Record.SuspicionReason | Should -Be 'SI_MODIFIED_GT_FN_MODIFIED'
+        $parsed.Record.FileNameFindings.Count | Should -Be 0
+        $public = ConvertTo-PublicMftFixtureRecord -NativeRecord $parsed.Record
+        $public.TimestompSuspect | Should -BeFalse
+        $public.ModifiedDeltaTicks | Should -Be ($fnModified.ToFileTimeUtc() - $siModified.ToFileTimeUtc())
+    }
+
+    It 'evaluates every FN and emits a candidate for a suspicious alternate hard link' {
+        $record = New-MftFileRecord
+        $record = Add-MftAlternateFileName -Record $record
+        $parsed = Invoke-MftParse -Record $record
+
+        $parsed.Success | Should -BeTrue
+        $parsed.Record.FileNames.Count | Should -Be 2
+        $parsed.Record.FileName | Should -Be 'timestomp.exe'
+        $parsed.Record.FnAttributeId | Should -Be 2
+        $parsed.Record.ParentFileReferenceNumber | Should -Be 0x0005000000000005
+        $parsed.Record.TimestompSuspect | Should -BeTrue
+        $parsed.Record.SuspicionReason | Should -BeNullOrEmpty
+        $parsed.Record.FileNameFindings.Count | Should -Be 1
+        $parsed.Record.FileNameFindings[0].Name | Should -Be 'hardlink.exe'
+        $parsed.Record.FileNameFindings[0].AttributeId | Should -Be 7
+        $parsed.Record.FileNameFindings[0].ParentFileReferenceNumber | Should -Be 0x0006000000000006
+        $parsed.Record.FileNameFindings[0].SuspicionReason | Should -Be 'SI_CREATED_LT_FN_CREATED'
+
+        $public = ConvertTo-PublicMftFixtureRecord -NativeRecord $parsed.Record
+        $public.FileName | Should -Be 'timestomp.exe'
+        $public.FileNameFindings.Count | Should -Be 1
+        $public.FileNameFindings[0].FileName | Should -Be 'hardlink.exe'
+        $public.FileNameFindings[0].FnAttributeId | Should -Be 7
+        $public.FileNameFindings[0].ParentFileReferenceNumber | Should -Be '0x0006000000000006'
+        $public.FileNames[0].TimestompSuspect | Should -BeFalse
+        $public.FileNames[1].TimestompSuspect | Should -BeTrue
+    }
+
+    It 'compares raw extreme FILETIME values even when UTC display is invalid' {
+        $record = New-MftFileRecord
+        Set-MftFixtureInt64 -Buffer $record -Offset 0x50 -Value -1
+        Set-MftFixtureInt64 -Buffer $record -Offset 0xB8 -Value 0
+        $parsed = Invoke-MftParse -Record $record
+
+        $parsed.Success | Should -BeTrue
+        $parsed.Record.SiCreatedFileTime | Should -Be -1
+        $parsed.Record.FnCreatedFileTime | Should -Be 0
+        $parsed.Record.SiCreatedValid | Should -BeFalse
+        $parsed.Record.FnCreatedValid | Should -BeTrue
+        $parsed.Record.SiCreated | Should -BeNullOrEmpty
+        $parsed.Record.TimestompSuspect | Should -BeTrue
+        $parsed.Record.SuspicionReason | Should -Be 'SI_CREATED_LT_FN_CREATED'
+        $public = ConvertTo-PublicMftFixtureRecord -NativeRecord $parsed.Record
+        $public.SiCreated | Should -BeNullOrEmpty
+        $public.CreatedDeltaTicks | Should -BeNullOrEmpty
+        $public.TimestompSuspect | Should -BeTrue
+        $public.FileNameFindings.Count | Should -Be 1
     }
 
     It 'preserves a free-record flag in the pure parser without treating it as deleted evidence' {
@@ -466,6 +594,50 @@ Describe 'MFT FSCTL output-buffer seam' {
 
         $parsed.PrefixValid | Should -BeFalse
         $parsed.Error | Should -Match 'does not equal the volume record size'
+    }
+
+    It 'accepts an exact NTFS 3.1 header entry-number match including zero' {
+        $record = New-MftFileRecord -RecordNumber 0
+        $output = New-MftOutputBuffer -Record $record -Actual 0
+        $parsed = Invoke-MftOutputParse -Output $output -Requested 0
+
+        $parsed.Success | Should -BeTrue
+        $parsed.ParseResult.Record.HeaderRecordNumberPresent | Should -BeTrue
+        $parsed.ParseResult.Record.HeaderRecordNumber | Should -Be 0
+        $parsed.ParseResult.Record.FileReferenceNumber | Should -Be 0
+    }
+
+    It 'rejects a nonzero ordinal when the NTFS 3.1 header entry number is zero' {
+        $record = New-MftFileRecord -RecordNumber 0
+        $output = New-MftOutputBuffer -Record $record -Actual 42
+        $parsed = Invoke-MftOutputParse -Output $output -Requested 50
+
+        $parsed.PrefixValid | Should -BeTrue
+        $parsed.Success | Should -BeFalse
+        $parsed.Error | Should -Match 'entry number 0 does not match.*42'
+    }
+
+    It 'rejects an ordinal above the NTFS 3.1 header range before casting' {
+        $actual = [long]([uint32]::MaxValue) + 1
+        $record = New-MftFileRecord -RecordNumber 0
+        $output = New-MftOutputBuffer -Record $record -Actual $actual
+        $parsed = Invoke-MftOutputParse -Output $output -Requested $actual
+
+        $parsed.PrefixValid | Should -BeTrue
+        $parsed.Success | Should -BeFalse
+        $parsed.Error | Should -Match 'exceeds the NTFS 3.1 header entry-number range'
+    }
+
+    It 'uses the ordinal fallback only for an NTFS 3.0 header' {
+        $record = New-MftFileRecord -RecordNumber 42
+        Set-MftFixtureUInt16 -Buffer $record -Offset 4 -Value 0x2A
+        $output = New-MftOutputBuffer -Record $record -Actual 42
+        $parsed = Invoke-MftOutputParse -Output $output -Requested 50
+
+        $parsed.Success | Should -BeTrue
+        $parsed.ParseResult.Record.HeaderRecordNumberPresent | Should -BeFalse
+        $parsed.ParseResult.Record.FileReferenceNumber | Should -Be 42
+        @($parsed.ParseResult.Record.Notes | Where-Object { $_ -match 'NTFS 3.0.*fallback' }).Count | Should -Be 1
     }
 }
 
@@ -641,6 +813,15 @@ Describe 'Get-FileSystemJournal MftTimestompScan integration' {
             $result.Summary.Incomplete | Should -BeFalse
             $result.Summary.StopReason | Should -Be 'Complete'
             $result.Summary.MaxSeconds | Should -Be 12
+            $result.Summary.Success | Should -BeTrue
+            $expectedKeys = @(
+                'RecordsScanned', 'NativeRecordsReturned', 'ReturnedRecords', 'SuspectCount',
+                'MalformedRecords', 'AttributeListRecords', 'MissingStandardInformation', 'MissingFileName',
+                'ExtensionRecordsSkipped', 'NotInUseRecordsSkipped', 'SkippedOrdinalCount', 'EstimatedMftRecords',
+                'BytesPerSector', 'BytesPerFileRecord', 'ElapsedMilliseconds', 'MaxRecords', 'MaxSeconds',
+                'IncludeAll', 'Success', 'Truncated', 'Incomplete', 'StopReason', 'Source'
+            )
+            @($expectedKeys | Where-Object { $_ -notin @($result.Summary.Keys) }).Count | Should -Be 0
             $result.Notes | Should -Contain 'synthetic native note'
             Should -Invoke Get-MftNative -Times 1 -Exactly -ParameterFilter {
                 $MaxRecords -eq 50000 -and $MaxSeconds -eq 12 -and -not $IncludeAll
@@ -718,6 +899,51 @@ Describe 'Get-FileSystemJournal MftTimestompScan integration' {
             $result.Summary.StopReason | Should -Be 'ElevationRequired'
             @($result.Notes | Where-Object { $_ -match 'administrator elevation is required' }).Count | Should -Be 1
             Should -Invoke Get-MftNative -Times 0 -Exactly
+        }
+    }
+
+    It 'returns the complete zeroed summary schema on every degraded MFT path' {
+        InModuleScope -ModuleName $script:ModuleName -ScriptBlock {
+            Mock Test-JournalElevation { $false }
+            Mock Get-MftNative { throw 'synthetic native invocation failure' }
+            $originalOs = $env:OS
+            $results = @()
+            try {
+                $env:OS = 'Windows_NT'
+                $results += Get-FileSystemJournal -Mode MftTimestompScan -DriveLetter '!!' -WarningAction SilentlyContinue
+                $env:OS = 'Unix'
+                $results += Get-FileSystemJournal -Mode MftTimestompScan -WarningAction SilentlyContinue
+                $env:OS = 'Windows_NT'
+                $results += Get-FileSystemJournal -Mode MftTimestompScan -WarningAction SilentlyContinue
+                Mock Test-JournalElevation { $true }
+                $results += Get-FileSystemJournal -Mode MftTimestompScan -WarningAction SilentlyContinue
+            }
+            finally {
+                $env:OS = $originalOs
+            }
+
+            $expectedKeys = @(
+                'RecordsScanned', 'NativeRecordsReturned', 'ReturnedRecords', 'SuspectCount',
+                'MalformedRecords', 'AttributeListRecords', 'MissingStandardInformation', 'MissingFileName',
+                'ExtensionRecordsSkipped', 'NotInUseRecordsSkipped', 'SkippedOrdinalCount', 'EstimatedMftRecords',
+                'BytesPerSector', 'BytesPerFileRecord', 'ElapsedMilliseconds', 'MaxRecords', 'MaxSeconds',
+                'IncludeAll', 'Success', 'Truncated', 'Incomplete', 'StopReason', 'Source'
+            )
+            $expectedReasons = @('InvalidDriveLetter', 'UnsupportedPlatform', 'ElevationRequired', 'InvocationFailed')
+            $results.Count | Should -Be 4
+            for ($index = 0; $index -lt $results.Count; $index++) {
+                $summary = $results[$index].Summary
+                $reason = $expectedReasons[$index]
+                @($expectedKeys | Where-Object { $_ -notin @($summary.Keys) }).Count | Should -Be 0 -Because "$reason must preserve the complete schema"
+                $summary.RecordsScanned | Should -Be 0
+                $summary.SuspectCount | Should -Be 0
+                $summary.Success | Should -BeFalse
+                $summary.Truncated | Should -BeFalse
+                $summary.Incomplete | Should -BeFalse
+                $summary.StopReason | Should -Be $reason
+                $summary.Source | Should -Be 'Unavailable'
+            }
+            Should -Invoke Get-MftNative -Times 1 -Exactly
         }
     }
 }
