@@ -1052,27 +1052,21 @@ function New-WsaPrivateFile {
 
     $stream = $null
     try {
+        # Plain constructor works on .NET Framework AND .NET Core (the
+        # FileSecurity-accepting 7-arg overload exists only on .NET Framework).
+        $stream = New-Object -TypeName System.IO.FileStream -ArgumentList @(
+            $Path,
+            [System.IO.FileMode]::CreateNew,
+            [System.IO.FileAccess]::Write,
+            [System.IO.FileShare]::None
+        )
+        $stream.Dispose()
+        $stream = $null
         if ([Environment]::OSVersion.Platform -eq [PlatformID]::Win32NT) {
-            # Supplying FileSecurity to this creation overload applies the restrictive
-            # ACL with the create operation, before a handle or any content exists.
+            # The verified admin-only parent directory already gives a restrictive
+            # inherited ACL at creation; apply the explicit lockdown before content.
             $fileSecurity = New-WsaAdminFileSecurity
-            $stream = New-Object -TypeName System.IO.FileStream -ArgumentList @(
-                $Path,
-                [System.IO.FileMode]::CreateNew,
-                [System.Security.AccessControl.FileSystemRights]::FullControl,
-                [System.IO.FileShare]::None,
-                4096,
-                [System.IO.FileOptions]::None,
-                $fileSecurity
-            )
-        }
-        else {
-            $stream = New-Object -TypeName System.IO.FileStream -ArgumentList @(
-                $Path,
-                [System.IO.FileMode]::CreateNew,
-                [System.IO.FileAccess]::Write,
-                [System.IO.FileShare]::None
-            )
+            [System.IO.FileInfo]::new($Path).SetAccessControl($fileSecurity)
         }
     }
     finally {
