@@ -4,7 +4,7 @@
 .DESCRIPTION
     Get-UsnJournalNative uses FSCTL_QUERY_USN_JOURNAL and
     FSCTL_READ_USN_JOURNAL instead of parsing localized fsutil output. The C#
-    ParseBuffer method is a pure cross-platform seam for synthetic fixtures.
+    ParseBuffer and ReadJournalChunks methods are cross-platform synthetic seams.
     Native failures before the first record are returned to the caller for
     fsutil fallback; failures after records are returned as partial evidence.
 .NOTES
@@ -189,6 +189,22 @@ public static class UsnJournalNative {
         public bool Success;
         public string Error;
     }
+
+    public class UsnChunkReadContext {
+        public long StartUsn;
+        public byte[] OutputBuffer;
+        public bool UseVersion1;
+        public ushort MinMajorVersion;
+        public ushort MaxMajorVersion;
+    }
+
+    public class UsnChunkReadResult {
+        public bool Success;
+        public uint BytesReturned;
+        public int Win32Error;
+    }
+
+    public delegate UsnChunkReadResult UsnChunkReader(UsnChunkReadContext context);
 
     [DllImport(
         "kernel32.dll",
@@ -393,8 +409,8 @@ public static class UsnJournalNative {
         }
 
         string drive = driveLetter.Trim().TrimEnd(':', '\\').ToUpperInvariant();
-        if (drive.Length != 1) {
-            result.Error = "DriveLetter must identify exactly one volume letter.";
+        if (drive.Length != 1 || !((drive[0] >= 'A' && drive[0] <= 'Z'))) {
+            result.Error = "DriveLetter must contain exactly one ASCII letter.";
             return result;
         }
 
@@ -484,98 +500,36 @@ public static class UsnJournalNative {
                     }
                 }
 
-                long startUsn = queryData.FirstUsn;
-                long targetNextUsn = queryData.NextUsn;
-                int bufferSize = InitialBufferSize;
-                byte[] readBuffer = new byte[bufferSize];
-
-                while (startUsn < targetNextUsn && result.Records.Count < maxRecords) {
-                    uint bytesReturned = 0;
-                    int readError = 0;
-                    bool readOk = ReadChunk(
-                        volume,
-                        queryData.UsnJournalID,
-                        startUsn,
-                        reasonMask,
-                        useVersion1,
-                        minMajorVersion,
-                        maxMajorVersion,
-                        readBuffer,
-                        out bytesReturned,
-                        out readError);
-
-                    if (!readOk && useVersion1 && IsVersion1FallbackError(readError)) {
-                        useVersion1 = false;
-                        readOk = ReadChunk(
+                UsnJournalReadResult readResult = ReadJournalChunks(
+                    queryData.FirstUsn,
+                    queryData.NextUsn,
+                    maxRecords,
+                    useVersion1,
+                    minMajorVersion,
+                    maxMajorVersion,
+                    delegate(UsnChunkReadContext context) {
+                        UsnChunkReadResult chunkResult = new UsnChunkReadResult();
+                        chunkResult.Success = ReadChunk(
                             volume,
                             queryData.UsnJournalID,
-                            startUsn,
+                            context.StartUsn,
                             reasonMask,
-                            false,
-                            0,
-                            0,
-                            readBuffer,
-                            out bytesReturned,
-                            out readError);
-                    }
+                            context.UseVersion1,
+                            context.MinMajorVersion,
+                            context.MaxMajorVersion,
+                            context.OutputBuffer,
+                            out chunkResult.BytesReturned,
+                            out chunkResult.Win32Error);
+                        return chunkResult;
+                    });
 
-                    if (!readOk) {
-                        if (readError == ERROR_MORE_DATA) {
-                            if (bufferSize >= MaximumBufferSize) {
-                                result.Error = "FSCTL_READ_USN_JOURNAL requires more than the 1 MiB buffer ceiling (ERROR_MORE_DATA).";
-                                break;
-                            }
-                            bufferSize = Math.Min(bufferSize * 2, MaximumBufferSize);
-                            readBuffer = new byte[bufferSize];
-                            continue;
-                        }
-
-                        result.Error = FormatNativeError("FSCTL_READ_USN_JOURNAL", readError);
-                        break;
-                    }
-
-                    if (bytesReturned > (uint)readBuffer.Length) {
-                        result.Error = string.Format(
-                            "FSCTL_READ_USN_JOURNAL returned {0} bytes for a {1}-byte buffer.",
-                            bytesReturned,
-                            readBuffer.Length);
-                        break;
-                    }
-
-                    UsnBufferParseResult parsed = ParseBuffer(
-                        readBuffer,
-                        (int)bytesReturned,
-                        maxRecords - result.Records.Count);
-
-                    result.NextUsn = parsed.NextUsn;
-                    foreach (string diagnostic in parsed.Diagnostics) {
-                        result.Notes.Add(diagnostic);
-                    }
-                    result.Records.AddRange(parsed.Records);
-
-                    if (!parsed.Success) {
-                        result.Error = "Malformed USN journal data: " + parsed.Error;
-                        break;
-                    }
-                    if (result.Records.Count >= maxRecords) {
-                        break;
-                    }
-                    if (parsed.NextUsn == startUsn) {
-                        result.Notes.Add("USN journal continuation did not advance; collection stopped to avoid an infinite loop.");
-                        break;
-                    }
-                    if (parsed.NextUsn < startUsn) {
-                        result.Error = string.Format(
-                            "Invalid USN continuation: next USN {0} is below start USN {1}.",
-                            parsed.NextUsn,
-                            startUsn);
-                        break;
-                    }
-
-                    startUsn = parsed.NextUsn;
+                result.Records = readResult.Records;
+                foreach (string note in readResult.Notes) {
+                    result.Notes.Add(note);
                 }
-
-                result.Success = result.Error == null;
+                result.NextUsn = readResult.NextUsn;
+                result.Error = readResult.Error;
+                result.Success = readResult.Success;
             }
         }
         catch (Exception exception) {
@@ -583,6 +537,117 @@ public static class UsnJournalNative {
             result.Success = false;
         }
 
+        return result;
+    }
+
+    public static UsnJournalReadResult ReadJournalChunks(
+        long startUsn,
+        long targetNextUsn,
+        int maxRecords,
+        bool useVersion1,
+        ushort minMajorVersion,
+        ushort maxMajorVersion,
+        UsnChunkReader chunkReader) {
+
+        UsnJournalReadResult result = new UsnJournalReadResult();
+        result.Success = false;
+        result.NextUsn = targetNextUsn;
+
+        if (maxRecords < 1) {
+            result.Error = "MaxRecords must be greater than zero.";
+            return result;
+        }
+        if (chunkReader == null) {
+            result.Error = "The USN journal chunk reader is null.";
+            return result;
+        }
+
+        int bufferSize = InitialBufferSize;
+        byte[] readBuffer = new byte[bufferSize];
+
+        while (startUsn < targetNextUsn && result.Records.Count < maxRecords) {
+            UsnChunkReadContext context = new UsnChunkReadContext();
+            context.StartUsn = startUsn;
+            context.OutputBuffer = readBuffer;
+            context.UseVersion1 = useVersion1;
+            context.MinMajorVersion = minMajorVersion;
+            context.MaxMajorVersion = maxMajorVersion;
+
+            UsnChunkReadResult chunkResult = chunkReader(context);
+            if (chunkResult == null) {
+                result.Error = "The USN journal chunk reader returned no result.";
+                break;
+            }
+
+            if (!chunkResult.Success && useVersion1 && IsVersion1FallbackError(chunkResult.Win32Error)) {
+                useVersion1 = false;
+                context.UseVersion1 = false;
+                context.MinMajorVersion = 0;
+                context.MaxMajorVersion = 0;
+                chunkResult = chunkReader(context);
+                if (chunkResult == null) {
+                    result.Error = "The USN journal chunk reader returned no result.";
+                    break;
+                }
+            }
+
+            if (!chunkResult.Success) {
+                if (chunkResult.Win32Error == ERROR_MORE_DATA) {
+                    if (bufferSize >= MaximumBufferSize) {
+                        result.Error = "FSCTL_READ_USN_JOURNAL requires more than the 1 MiB buffer ceiling (ERROR_MORE_DATA).";
+                        break;
+                    }
+                    bufferSize = Math.Min(bufferSize * 2, MaximumBufferSize);
+                    readBuffer = new byte[bufferSize];
+                    continue;
+                }
+
+                result.Error = FormatNativeError("FSCTL_READ_USN_JOURNAL", chunkResult.Win32Error);
+                break;
+            }
+
+            if (chunkResult.BytesReturned > (uint)readBuffer.Length) {
+                result.Error = string.Format(
+                    "FSCTL_READ_USN_JOURNAL returned {0} bytes for a {1}-byte buffer.",
+                    chunkResult.BytesReturned,
+                    readBuffer.Length);
+                break;
+            }
+
+            UsnBufferParseResult parsed = ParseBuffer(
+                readBuffer,
+                (int)chunkResult.BytesReturned,
+                maxRecords - result.Records.Count);
+
+            result.NextUsn = parsed.NextUsn;
+            foreach (string diagnostic in parsed.Diagnostics) {
+                result.Notes.Add(diagnostic);
+            }
+            result.Records.AddRange(parsed.Records);
+
+            if (!parsed.Success) {
+                result.Error = "Malformed USN journal data: " + parsed.Error;
+                break;
+            }
+            if (result.Records.Count >= maxRecords) {
+                break;
+            }
+            if (parsed.NextUsn == startUsn) {
+                result.Notes.Add("USN journal continuation did not advance; collection stopped to avoid an infinite loop.");
+                break;
+            }
+            if (parsed.NextUsn < startUsn) {
+                result.Error = string.Format(
+                    "Invalid USN continuation: next USN {0} is below start USN {1}.",
+                    parsed.NextUsn,
+                    startUsn);
+                break;
+            }
+
+            startUsn = parsed.NextUsn;
+        }
+
+        result.Success = result.Error == null;
         return result;
     }
 

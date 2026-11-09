@@ -7,6 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.7.1] - 2026-11-04
+
+### Fixed
+
+- TimestompScan: journal timestamps are now compared against `LastWriteTimeUtc` with native-UTC vs legacy-local normalization — same-instant files no longer produce false backdated verdicts (review-probed across UTC-5/UTC+3).
+- `Summary.Source` is initialized on every path (`Unavailable` when no evidence), so strict-mode reads never crash on non-Windows/failed collections.
+- Native `Reason` text now uses the same `0x...: FLAG | FLAG` format as the fsutil path (consistent CSV output).
+- DriveLetter is validated as exactly one ASCII letter before native or fsutil collection.
+- Path-resolution cap note now fires only when an eligible 64-bit record was actually skipped (no more false cap notes for V3-only evidence).
+
+### Added
+
+- 22 additional USN tests (47 total): scripted read-chunk coverage (continuation, regression, ERROR_MORE_DATA growth, mid-stream MaxRecords), V3 scalar assertions, public filename mapping, negative-shape pins, UTC-offset timestomp cases, drive validation, Source availability. Elevated Windows smoke test now asserts `Summary.Source='Native'` or the explicit fallback note instead of shape-only.
+
+### Notes
+
+- Non-advancing continuation (`NextUsn == StartUsn`) intentionally remains a successful break: Microsoft documents it as the normal 'no records available' condition, not an error.
+
 ## [1.7.0] - 2026-11-03
 
 ### Added
@@ -172,7 +190,8 @@ Post-release audit hardening. Every finding below was verified against the code 
 - Cloud Security: Azure AD risky sign-ins, M365 security posture, cloud compliance status.
 - Hardening: audit policies, PowerShell security (logging, transcription), security baseline enforcement — all with `-WhatIf` support.
 
-[Unreleased]: https://github.com/okanyildiz/WindowsSecurityAudit/compare/v1.7.0...HEAD
+[Unreleased]: https://github.com/okanyildiz/WindowsSecurityAudit/compare/v1.7.1...HEAD
+[1.7.1]: https://github.com/okanyildiz/WindowsSecurityAudit/releases/tag/v1.7.1
 [1.7.0]: https://github.com/okanyildiz/WindowsSecurityAudit/releases/tag/v1.7.0
 [1.6.2]: https://github.com/okanyildiz/WindowsSecurityAudit/releases/tag/v1.6.2
 [1.6.1]: https://github.com/okanyildiz/WindowsSecurityAudit/releases/tag/v1.6.1

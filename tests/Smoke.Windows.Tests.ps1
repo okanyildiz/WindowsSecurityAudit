@@ -268,10 +268,34 @@ Describe 'WindowsSecurityAudit real-Windows smoke tests' -Tag @('Smoke', 'Window
         $result.Mode | Should -Be 'MFTSummary'
     }
 
-    It 'Get-FileSystemJournal -Mode USNJournal returns journal data (fsutil, admin)' {
+    It 'Get-FileSystemJournal -Mode USNJournal proves native collection or a documented fallback' {
         $result = Get-FileSystemJournal -Mode USNJournal
         Assert-ResultShape -Object $result -Names @('CollectionDate', 'ComputerName', 'DriveLetter', 'Mode', 'IsElevated', 'Records', 'Summary', 'Notes', 'Recommendations')
         $result.Mode | Should -Be 'USNJournal'
+        $result.Summary.ContainsKey('Source') | Should -BeTrue
+
+        if ($result.IsElevated) {
+            if ($result.Summary.Source -eq 'Native') {
+                $result.Summary.Source | Should -Be 'Native'
+                $nativeNote = 'Journal records were read through binary FSCTL_QUERY_USN_JOURNAL and FSCTL_READ_USN_JOURNAL calls; no localized text parsing was used.'
+                $result.Notes | Should -Contain $nativeNote
+            }
+            else {
+                $result.Summary.Source | Should -BeIn @('Fsutil', 'Unavailable')
+                $fallbackNote = 'native journal read unavailable; using fsutil (English-locale output required)'
+                $result.Notes | Should -Contain $fallbackNote
+            }
+        }
+        else {
+            $result.Summary.Source | Should -BeIn @('Fsutil', 'Unavailable')
+            if ($result.Summary.Source -eq 'Unavailable') {
+                $failureNotes = @($result.Notes | Where-Object {
+                    $_ -match '^USN journal read failed:' -or
+                    $_ -match '^USN journal collection failed:'
+                })
+                $failureNotes.Count | Should -BeGreaterThan 0
+            }
+        }
     }
 
     # -------------------------------------------------------------- Reporting

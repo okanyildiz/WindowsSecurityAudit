@@ -59,7 +59,11 @@ function Get-FileSystemJournal {
         Write-Host "Max Records: $MaxRecords" -ForegroundColor Yellow
         Write-Host "Start Time: $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')" -ForegroundColor Yellow
 
-        $drive = $DriveLetter.Trim().TrimEnd(':', '\').ToUpper()
+        $drive = $DriveLetter.Trim().TrimEnd(':', '\')
+        $driveIsValid = ($drive -cmatch '^[A-Za-z]$')
+        if ($driveIsValid) {
+            $drive = $drive.ToUpperInvariant()
+        }
 
         $isWindowsPlatform = ($env:OS -eq 'Windows_NT')
 
@@ -75,11 +79,14 @@ function Get-FileSystemJournal {
             Mode           = $Mode
             IsElevated     = $isAdmin
             Records        = @()
-            Summary        = @{}
+            Summary        = @{ Source = 'Unavailable' }
             Notes          = @()
             Recommendations = @()
         }
 
+        if (-not $driveIsValid) {
+            Write-Warning "Invalid DriveLetter '$drive': exactly one ASCII letter is required. Collection will be skipped."
+        }
         if (-not $isWindowsPlatform) {
             Write-Warning "Get-FileSystemJournal requires Windows (NTFS volume + fsutil.exe). Current platform is not Windows."
         }
@@ -102,7 +109,11 @@ function Get-FileSystemJournal {
 
     process {
         try {
-            if (-not $isWindowsPlatform) {
+            if (-not $driveIsValid) {
+                $result.Notes += "Invalid DriveLetter '$drive': exactly one ASCII letter is required. Collection was skipped."
+                $result.Recommendations += "Provide one ASCII drive letter, such as C or D."
+            }
+            elseif (-not $isWindowsPlatform) {
                 $result.Notes += "Platform check failed: NTFS journal and fsutil.exe are only available on Windows. No data was collected."
                 $result.Recommendations += "Run this function on a Windows host against an NTFS volume."
             }
@@ -136,6 +147,7 @@ function Get-FileSystemJournal {
                                 $resolveCap = 250
                                 $resolveCount = 0
                                 $skipped128BitPaths = 0
+                                $capped64BitPathSkipped = $false
                                 $pathCache = @{}
                                 foreach ($record in $journalRecords) {
                                     if ($null -eq $record.FileReferenceNumber) { continue }
@@ -147,7 +159,10 @@ function Get-FileSystemJournal {
                                         $record.FullPath = $pathCache[$record.FileReferenceNumber]
                                         continue
                                     }
-                                    if ($resolveCount -ge $resolveCap) { continue }
+                                    if ($resolveCount -ge $resolveCap) {
+                                        $capped64BitPathSkipped = $true
+                                        continue
+                                    }
                                     $resolveCount++
                                     $resolvedPath = Resolve-UsnJournalPath -DriveLetter $drive -FileReferenceNumber $record.FileReferenceNumber
                                     $pathCache[$record.FileReferenceNumber] = $resolvedPath
@@ -159,7 +174,7 @@ function Get-FileSystemJournal {
                                 if ($skipped128BitPaths -gt 0) {
                                     $result.Notes += "Full-path resolution was skipped for $skipped128BitPaths records with 128-bit file identifiers; the existing fsutil resolver is validated only for 64-bit NTFS identifiers."
                                 }
-                                if ($journalRecords.Count -gt $resolveCap) {
+                                if ($capped64BitPathSkipped) {
                                     $result.Notes += "Full-path resolution was capped at $resolveCap unique file reference numbers; the USN journal stores names, not paths, so remaining records have no directory context."
                                 }
 
@@ -335,7 +350,7 @@ function Get-FileSystemJournal {
                         Write-Host "`n[*] Scanning for timestomp indicators..." -ForegroundColor Cyan
 
                         $creationRecords = @()
-                        $journalSource = $null
+                        $journalSource = 'Unavailable'
                         if ($isAdmin) {
                             try {
                                 Write-Host "  Reading USN journal for creation-record comparison..." -ForegroundColor Gray
@@ -560,6 +575,24 @@ function Get-UsnJournalCollection {
 
     $notes = @()
     $nativeAttempted = $false
+    $drive = $DriveLetter.Trim().TrimEnd(':', '\')
+    if ($drive -cnotmatch '^[A-Za-z]$') {
+        $validationMessage = "Invalid DriveLetter '$drive': exactly one ASCII letter is required. Collection was skipped."
+        Write-Warning $validationMessage
+        return [PSCustomObject]@{
+            Records          = @()
+            Success          = $false
+            Error            = $validationMessage
+            Source           = 'Unavailable'
+            NextUsn          = [long]0
+            FsutilExitCode   = $null
+            AccessDenied     = $false
+            NativeAttempted  = $false
+            Incomplete       = $false
+            Notes            = @($validationMessage)
+        }
+    }
+    $DriveLetter = $drive.ToUpperInvariant()
 
     if ($Elevated) {
         $nativeAttempted = $true
@@ -667,12 +700,18 @@ function ConvertTo-UsnJournalNativeRecord {
         $parentReference = '0x' + ([uint64]$NativeRecord.ParentFileReferenceNumber).ToString('x')
     }
 
+    $reasonFlags = @(Get-UsnReasonFlagNames -Mask $reasonMask)
+    $reason = '0x' + $reasonMask.ToString('x8')
+    if ($reasonFlags.Count -gt 0) {
+        $reason += ': ' + ($reasonFlags -join ' | ')
+    }
+
     return [PSCustomObject]@{
         FileName                  = [string]$NativeRecord.FileName
         FullPath                  = $null
-        Reason                    = '0x' + $reasonMask.ToString('x8')
+        Reason                    = $reason
         ReasonMask                = $reasonMask
-        ReasonFlags               = @(Get-UsnReasonFlagNames -Mask $reasonMask)
+        ReasonFlags               = $reasonFlags
         TimeStamp                 = $timeStamp
         TimeStampText             = $timeStampText
         Usn                       = '0x' + ([long]$NativeRecord.Usn).ToString('x')
@@ -956,9 +995,22 @@ function Test-TimestompSignature {
 
     $indicators = @()
 
-    $lastWrite = $null
-    if ($null -ne $FileInfo.PSObject.Properties['LastWriteTime'] -and $null -ne $FileInfo.LastWriteTime) {
-        $lastWrite = $FileInfo.LastWriteTime
+    $lastWriteUtc = $null
+    if ($null -ne $FileInfo.PSObject.Properties['LastWriteTimeUtc'] -and $null -ne $FileInfo.LastWriteTimeUtc) {
+        $lastWriteUtc = [datetime]$FileInfo.LastWriteTimeUtc
+        if ($lastWriteUtc.Kind -eq [DateTimeKind]::Local) {
+            $lastWriteUtc = $lastWriteUtc.ToUniversalTime()
+        }
+        elseif ($lastWriteUtc.Kind -eq [DateTimeKind]::Unspecified) {
+            $lastWriteUtc = [datetime]::SpecifyKind($lastWriteUtc, [DateTimeKind]::Utc)
+        }
+    }
+    elseif ($null -ne $FileInfo.PSObject.Properties['LastWriteTime'] -and $null -ne $FileInfo.LastWriteTime) {
+        $lastWriteUtc = [datetime]$FileInfo.LastWriteTime
+        if ($lastWriteUtc.Kind -eq [DateTimeKind]::Unspecified) {
+            $lastWriteUtc = [datetime]::SpecifyKind($lastWriteUtc, [DateTimeKind]::Local)
+        }
+        $lastWriteUtc = $lastWriteUtc.ToUniversalTime()
     }
 
     $fileName = $null
@@ -971,25 +1023,37 @@ function Test-TimestompSignature {
     }
 
     $journalCreationTime = $null
+    $journalCreationTimeUtc = $null
     foreach ($record in @($CreationRecords)) {
         if ($null -eq $record -or $null -eq $record.TimeStamp) { continue }
 
         $pathMatch = ($null -ne $record.FullPath -and $null -ne $fullName -and $record.FullPath -ieq $fullName)
         $nameMatch = ($null -eq $record.FullPath -and $null -ne $record.FileName -and $null -ne $fileName -and $record.FileName -ieq $fileName)
+        if (-not ($pathMatch -or $nameMatch)) { continue }
 
-        if (($pathMatch -or $nameMatch) -and ($null -eq $journalCreationTime -or $record.TimeStamp -gt $journalCreationTime)) {
+        $recordTimeUtc = [datetime]$record.TimeStamp
+        if ($recordTimeUtc.Kind -eq [DateTimeKind]::Unspecified) {
+            $recordTimeUtc = [datetime]::SpecifyKind($recordTimeUtc, [DateTimeKind]::Local)
+        }
+        if ($recordTimeUtc.Kind -ne [DateTimeKind]::Utc) {
+            $recordTimeUtc = $recordTimeUtc.ToUniversalTime()
+        }
+
+        if ($null -eq $journalCreationTimeUtc -or [DateTime]::Compare($recordTimeUtc, $journalCreationTimeUtc) -gt 0) {
             $journalCreationTime = $record.TimeStamp
+            $journalCreationTimeUtc = $recordTimeUtc
         }
     }
 
-    if ($null -ne $lastWrite) {
-        if ($null -ne $journalCreationTime -and $lastWrite -lt $journalCreationTime) {
+    if ($null -ne $lastWriteUtc) {
+        if ($null -ne $journalCreationTimeUtc -and [DateTime]::Compare($lastWriteUtc, $journalCreationTimeUtc) -lt 0) {
             $indicators += 'BACKDATED_SI_TIMESTAMP'
         }
-        if ($lastWrite -lt [datetime]'2000-01-01') {
+        $pre2000Utc = [datetime]::SpecifyKind([datetime]'2000-01-01', [DateTimeKind]::Utc)
+        if ([DateTime]::Compare($lastWriteUtc, $pre2000Utc) -lt 0) {
             $indicators += 'PRE_2000_TIMESTAMP'
         }
-        if ($lastWrite -gt (Get-Date)) {
+        if ([DateTime]::Compare($lastWriteUtc, [DateTime]::UtcNow) -gt 0) {
             $indicators += 'FUTURE_TIMESTAMP'
         }
     }
