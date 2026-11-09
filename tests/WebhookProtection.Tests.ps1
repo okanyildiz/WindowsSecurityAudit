@@ -1,12 +1,7 @@
 ﻿#Requires -Modules @{ ModuleName = 'Pester'; ModuleVersion = '5.0.0' }
 
 BeforeDiscovery {
-    if ($PSVersionTable.PSVersion.Major -ge 6) {
-        $script:IsWindowsHost = [bool]$IsWindows
-    }
-    else {
-        $script:IsWindowsHost = ($env:OS -eq 'Windows_NT')
-    }
+    $script:IsWindowsHost = [Environment]::OSVersion.Platform -eq [PlatformID]::Win32NT
 }
 
 BeforeAll {
@@ -19,12 +14,16 @@ BeforeAll {
 
     Import-Module -Name $script:ModulePath -Force
     InModuleScope -ModuleName $script:ModuleName -ScriptBlock {
-        foreach ($commandName in @(
-            'New-ScheduledTaskTrigger', 'New-ScheduledTaskAction', 'New-ScheduledTaskPrincipal',
-            'New-ScheduledTaskSettingsSet', 'Register-ScheduledTask'
-        )) {
+        $commandDefinitions = @{
+            'New-ScheduledTaskTrigger' = { param([switch]$Daily, [switch]$Weekly, $DaysOfWeek, $At) }
+            'New-ScheduledTaskAction' = { param($Execute, $Argument) }
+            'New-ScheduledTaskPrincipal' = { param($UserId, $LogonType, $RunLevel) }
+            'New-ScheduledTaskSettingsSet' = { param([switch]$StartWhenAvailable, [switch]$AllowStartIfOnBatteries, [switch]$DontStopIfGoingOnBatteries) }
+            'Register-ScheduledTask' = { param($TaskName, $Action, $Trigger, $Principal, $Settings, $Description, $Force, $ErrorAction) }
+        }
+        foreach ($commandName in $commandDefinitions.Keys) {
             if (-not (Get-Command -Name $commandName -ErrorAction SilentlyContinue)) {
-                Set-Item -Path "Function:\script:$commandName" -Value { }
+                Set-Item -Path "Function:\script:$commandName" -Value $commandDefinitions[$commandName]
             }
         }
     }
@@ -87,16 +86,9 @@ Describe 'Scheduled scan webhook protection' {
             Mock Register-WsaScheduledTask { }
 
             $outputPath = Join-Path $testRoot 'DpapiRegistration'
-            $savedOs = $env:OS
-            try {
-                $env:OS = 'NotWindows'
-                $hostOutput = @()
-                $warningOutput = @()
-                $result = Register-ScheduledSecurityScan -OutputPath $outputPath -WebhookUrl $expectedUrl -Confirm:$false -InformationVariable +hostOutput -WarningVariable +warningOutput
-            }
-            finally {
-                $env:OS = $savedOs
-            }
+            $hostOutput = @()
+            $warningOutput = @()
+            $result = Register-ScheduledSecurityScan -OutputPath $outputPath -WebhookUrl $expectedUrl -Confirm:$false -InformationVariable +hostOutput -WarningVariable +warningOutput
 
             $scanContent = Get-Content -Path $result.ScriptPath -Raw
             $consoleText = (@($hostOutput) + @($warningOutput) | Out-String)
@@ -128,14 +120,11 @@ Describe 'Scheduled scan webhook protection' {
             }
             $secret.MakeReadOnly()
             $outputPath = Join-Path $testRoot 'SecretRegistration'
-            $savedOs = $env:OS
+            $hostOutput = @()
             try {
-                $env:OS = 'NotWindows'
-                $hostOutput = @()
                 $result = Register-ScheduledSecurityScan -OutputPath $outputPath -WebhookSecret $secret -Confirm:$false -InformationVariable +hostOutput
             }
             finally {
-                $env:OS = $savedOs
                 $secret.Dispose()
             }
 
@@ -170,15 +159,8 @@ Describe 'Scheduled scan webhook protection' {
             Mock Protect-WsaDpapiData { throw 'Simulated DPAPI failure' }
             Mock Register-WsaScheduledTask { }
             $outputPath = Join-Path $testRoot 'FailedProtection'
-            $savedOs = $env:OS
-            try {
-                $env:OS = 'NotWindows'
-                { Register-ScheduledSecurityScan -OutputPath $outputPath -WebhookUrl $expectedUrl -Confirm:$false -ErrorAction SilentlyContinue } |
-                    Should -Throw '*aborted without plaintext fallback*'
-            }
-            finally {
-                $env:OS = $savedOs
-            }
+            { Register-ScheduledSecurityScan -OutputPath $outputPath -WebhookUrl $expectedUrl -Confirm:$false -ErrorAction SilentlyContinue } |
+                Should -Throw '*aborted without plaintext fallback*'
 
             Test-Path -Path $outputPath | Should -BeFalse
             Should -Invoke Register-WsaScheduledTask -Times 0 -Exactly
@@ -216,15 +198,8 @@ Describe 'Scheduled scan webhook protection' {
             Mock Register-WsaScheduledTask { }
 
             $outputPath = Join-Path $testRoot 'PlainTextRegistration'
-            $savedOs = $env:OS
-            try {
-                $env:OS = 'NotWindows'
-                $warningOutput = @()
-                $result = Register-ScheduledSecurityScan -OutputPath $outputPath -WebhookUrl $expectedUrl -WebhookProtection PlainText -Confirm:$false -WarningVariable +warningOutput
-            }
-            finally {
-                $env:OS = $savedOs
-            }
+            $warningOutput = @()
+            $result = Register-ScheduledSecurityScan -OutputPath $outputPath -WebhookUrl $expectedUrl -WebhookProtection PlainText -Confirm:$false -WarningVariable +warningOutput
 
             (@($warningOutput) | Out-String) | Should -Match 'SECURITY WARNING: WebhookProtection PlainText'
             (Get-Content -Path $result.ScriptPath -Raw).Contains($expectedUrl) | Should -BeTrue
@@ -244,14 +219,7 @@ Describe 'Scheduled scan webhook protection' {
             Mock Register-WsaScheduledTask { }
 
             $outputPath = Join-Path $testRoot 'DecryptionFailure'
-            $savedOs = $env:OS
-            try {
-                $env:OS = 'NotWindows'
-                $result = Register-ScheduledSecurityScan -OutputPath $outputPath -WebhookUrl $expectedUrl -Confirm:$false
-            }
-            finally {
-                $env:OS = $savedOs
-            }
+            $result = Register-ScheduledSecurityScan -OutputPath $outputPath -WebhookUrl $expectedUrl -Confirm:$false
 
             $mockModulePath = Join-Path $testRoot 'WindowsSecurityAudit.psm1'
             $mockModuleContent = @'
@@ -293,6 +261,248 @@ Export-ModuleMember -Function Invoke-SecurityAssessment, Invoke-RestMethod
             $summary = Get-Content -Path $summaryFile.FullName -Raw | ConvertFrom-Json
             $summary.AlertSent | Should -BeFalse
             $summary.CriticalFindings | Should -Be 1
+        }
+    }
+}
+
+Describe 'Scheduled scan replacement protection' {
+    It 'forwards the task name, action, SYSTEM principal, settings, and description' {
+        InModuleScope -ModuleName $script:ModuleName -ArgumentList $TestDrive -ScriptBlock {
+            param($testRoot)
+            Mock New-ScheduledTaskTrigger {
+                [PSCustomObject]@{
+                    Daily = [bool]$Daily
+                    Weekly = [bool]$Weekly
+                    DaysOfWeek = $DaysOfWeek
+                    At = $At
+                }
+            }
+            Mock New-ScheduledTaskAction {
+                [PSCustomObject]@{ Execute = $Execute; Argument = $Argument }
+            }
+            Mock New-ScheduledTaskPrincipal {
+                [PSCustomObject]@{ UserId = $UserId; LogonType = $LogonType; RunLevel = $RunLevel }
+            }
+            Mock New-ScheduledTaskSettingsSet {
+                [PSCustomObject]@{
+                    StartWhenAvailable = [bool]$StartWhenAvailable
+                    AllowStartIfOnBatteries = [bool]$AllowStartIfOnBatteries
+                    DontStopIfGoingOnBatteries = [bool]$DontStopIfGoingOnBatteries
+                }
+            }
+            Mock Register-WsaScheduledTask { }
+
+            $outputPath = Join-Path $testRoot 'TaskForwarding'
+            $expectedScriptPath = Join-Path $outputPath 'Invoke-ScheduledSecurityScan.ps1'
+            $expectedActionArgs = "-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File `"$expectedScriptPath`""
+            $expectedDescription = 'WindowsSecurityAudit Full scan (Advanced) runs every day at 22:30. Alerts on Critical findings (alert dedup: on, re-alert after 14 days). Managed by Register-ScheduledSecurityScan.'
+            $result = Register-ScheduledSecurityScan -OutputPath $outputPath -ScanType Full -Frequency Daily -Time '22:30' -RealertAfterDays 14 -Confirm:$false
+
+            $result.Status | Should -Be 'Registered'
+            Should -Invoke New-ScheduledTaskAction -Times 1 -Exactly -ParameterFilter {
+                $Execute -eq 'powershell.exe' -and $Argument -eq $expectedActionArgs
+            }
+            Should -Invoke New-ScheduledTaskPrincipal -Times 1 -Exactly -ParameterFilter {
+                $UserId -eq 'SYSTEM' -and $LogonType -eq 'ServiceAccount' -and $RunLevel -eq 'Highest'
+            }
+            Should -Invoke New-ScheduledTaskSettingsSet -Times 1 -Exactly -ParameterFilter {
+                $StartWhenAvailable -and $AllowStartIfOnBatteries -and $DontStopIfGoingOnBatteries
+            }
+            Should -Invoke Register-WsaScheduledTask -Times 1 -Exactly -ParameterFilter {
+                $TaskName -eq 'WindowsSecurityAudit-ScheduledScan' -and
+                $Action.Execute -eq 'powershell.exe' -and
+                $Action.Argument -eq $expectedActionArgs -and
+                $Trigger.Daily -and
+                $Principal.UserId -eq 'SYSTEM' -and
+                $Principal.LogonType -eq 'ServiceAccount' -and
+                $Principal.RunLevel -eq 'Highest' -and
+                $Settings.StartWhenAvailable -and
+                $Settings.AllowStartIfOnBatteries -and
+                $Settings.DontStopIfGoingOnBatteries -and
+                $Description -eq $expectedDescription
+            }
+        }
+    }
+
+    It 'restores the known-good script when the replacement move fails' {
+        InModuleScope -ModuleName $script:ModuleName -ArgumentList $TestDrive -ScriptBlock {
+            param($testRoot)
+            Mock Register-WsaScheduledTask { }
+            Mock Move-Item {
+                if ($Path -like '*.tmp') {
+                    throw 'Simulated replacement move failure'
+                }
+            }
+
+            $outputPath = Join-Path $testRoot 'MoveFailure'
+            $null = New-Item -Path $outputPath -ItemType Directory -Force
+            $scriptPath = Join-Path $outputPath 'Invoke-ScheduledSecurityScan.ps1'
+            $knownGoodContent = "# Known-good scheduled scan`n"
+            Set-Content -Path $scriptPath -Value $knownGoodContent -NoNewline
+
+            { Register-ScheduledSecurityScan -OutputPath $outputPath -Confirm:$false -ErrorAction SilentlyContinue } |
+                Should -Throw '*Simulated replacement move failure*'
+
+            Get-Content -Path $scriptPath -Raw | Should -Be $knownGoodContent
+            @(Get-ChildItem -Path $outputPath -Filter '*.tmp' -File).Count | Should -Be 0
+            @(Get-ChildItem -Path $outputPath -Filter '*.bak' -File).Count | Should -Be 0
+            Should -Invoke Move-Item -Times 1 -Exactly -ParameterFilter {
+                $Path -like '*.tmp' -and $Destination -eq $scriptPath
+            }
+            Should -Invoke Register-WsaScheduledTask -Times 0 -Exactly
+        }
+    }
+
+    It 'quarantines the replacement and restores the backup after post-rename ACL failure' {
+        InModuleScope -ModuleName $script:ModuleName -ArgumentList $TestDrive -ScriptBlock {
+            param($testRoot)
+            Mock Register-WsaScheduledTask { }
+            Mock Write-Warning { }
+            Mock Test-AdminOnlyOwnership { $true }
+            $script:failScriptWriteCheck = $true
+            Mock Test-NoNonAdminWriteAccess {
+                if ($Path -eq $scriptPath -and $script:failScriptWriteCheck) {
+                    $script:failScriptWriteCheck = $false
+                    return $false
+                }
+                return $true
+            }
+
+            $outputPath = Join-Path $testRoot 'PostRenameAclFailure'
+            $null = New-Item -Path $outputPath -ItemType Directory -Force
+            $scriptPath = Join-Path $outputPath 'Invoke-ScheduledSecurityScan.ps1'
+            $knownGoodContent = "# Known-good scheduled scan`n"
+            Set-Content -Path $scriptPath -Value $knownGoodContent -NoNewline
+
+            { Register-ScheduledSecurityScan -OutputPath $outputPath -Confirm:$false -ErrorAction SilentlyContinue } |
+                Should -Throw '*Post-rename verification failed*'
+
+            Get-Content -Path $scriptPath -Raw | Should -Be $knownGoodContent
+            $quarantineFiles = @(Get-ChildItem -Path $outputPath -Filter '*.quarantine' -File)
+            $quarantineFiles.Count | Should -Be 1
+            Get-Content -Path $quarantineFiles[0].FullName -Raw | Should -Match 'Generated by Register-ScheduledSecurityScan'
+            Should -Invoke Write-Warning -Times 1 -Exactly -ParameterFilter {
+                $Message -like 'Unverified replacement scan script quarantined*'
+            }
+            @(Get-ChildItem -Path $outputPath -Filter '*.bak' -File).Count | Should -Be 0
+            $script:failScriptWriteCheck | Should -BeFalse
+            Should -Invoke Register-WsaScheduledTask -Times 0 -Exactly
+        }
+    }
+
+    It 'warns and verifies the residual ACL when temporary-file cleanup fails' {
+        InModuleScope -ModuleName $script:ModuleName -ArgumentList $TestDrive -ScriptBlock {
+            param($testRoot)
+            Mock Register-WsaScheduledTask { }
+            Mock Write-Warning { }
+            Mock Move-Item { throw 'Simulated move failure for cleanup test' }
+            Mock Remove-Item {
+                if ($Path -like '*.tmp') {
+                    throw 'Simulated cleanup failure'
+                }
+            }
+            Mock Test-AdminOnlyOwnership { $true }
+            Mock Test-NoNonAdminWriteAccess { $true }
+
+            $outputPath = Join-Path $testRoot 'CleanupFailure'
+            { Register-ScheduledSecurityScan -OutputPath $outputPath -Confirm:$false -ErrorAction SilentlyContinue } |
+                Should -Throw '*Simulated move failure for cleanup test*'
+
+            Should -Invoke Write-Warning -Times 1 -Exactly -ParameterFilter {
+                $Message -like 'SECURITY WARNING: Failed to remove residual protected file*'
+            }
+            $tempFiles = @(Get-ChildItem -Path $outputPath -Filter '*.tmp' -File)
+            $tempFiles.Count | Should -Be 1
+            Should -Invoke Test-AdminOnlyOwnership -Times 2 -Exactly -ParameterFilter { $Path -like '*.tmp' }
+            Should -Invoke Test-NoNonAdminWriteAccess -Times 2 -Exactly -ParameterFilter { $Path -like '*.tmp' }
+            Should -Invoke Remove-Item -Times 1 -Exactly -ParameterFilter { $Path -like '*.tmp' }
+            Should -Invoke Register-WsaScheduledTask -Times 0 -Exactly
+            [System.IO.File]::Delete($tempFiles[0].FullName)
+        }
+    }
+
+    It 'refuses insecure pre-existing and newly created directories before any file write' {
+        InModuleScope -ModuleName $script:ModuleName -ArgumentList $TestDrive -ScriptBlock {
+            param($testRoot)
+            Mock Test-AdminOnlyOwnership { $true }
+            Mock Test-NoNonAdminWriteAccess { $false }
+            Mock New-WsaPrivateFile { }
+            Mock Out-File { }
+            Mock Register-WsaScheduledTask { }
+
+            foreach ($preExisting in @($false, $true)) {
+                $outputPath = Join-Path $testRoot "DirectoryRefusal_$preExisting"
+                if ($preExisting) {
+                    $null = New-Item -Path $outputPath -ItemType Directory -Force
+                }
+
+                { Register-ScheduledSecurityScan -OutputPath $outputPath -Confirm:$false -ErrorAction SilentlyContinue } |
+                    Should -Throw '*failed ownership or non-admin write-access validation*'
+                Test-Path -Path $outputPath -PathType Container | Should -BeTrue
+                @(Get-ChildItem -Path $outputPath -Recurse -File).Count | Should -Be 0
+            }
+
+            Should -Invoke Test-AdminOnlyOwnership -Times 2 -Exactly
+            Should -Invoke Test-NoNonAdminWriteAccess -Times 2 -Exactly
+            Should -Invoke New-WsaPrivateFile -Times 0 -Exactly
+            Should -Invoke Out-File -Times 0 -Exactly
+            Should -Invoke Register-WsaScheduledTask -Times 0 -Exactly
+        }
+    }
+
+    It 'sanitizes webhook delivery errors for alarm and resolved notifications' {
+        InModuleScope -ModuleName $script:ModuleName -ArgumentList $script:TestWebhookUrl, $script:ModuleManifest, $TestDrive -ScriptBlock {
+            param($expectedUrl, $moduleManifest, $testRoot)
+            Mock New-ScheduledTaskTrigger { [PSCustomObject]@{} }
+            Mock New-ScheduledTaskAction { [PSCustomObject]@{} }
+            Mock New-ScheduledTaskPrincipal { [PSCustomObject]@{} }
+            Mock New-ScheduledTaskSettingsSet { [PSCustomObject]@{} }
+            Mock Register-WsaScheduledTask { }
+
+            $outputPath = Join-Path $testRoot 'SanitizedWebhookErrors'
+            $result = Register-ScheduledSecurityScan -OutputPath $outputPath -WebhookUrl $expectedUrl -WebhookProtection PlainText -Confirm:$false
+            $mockModulePath = Join-Path $testRoot 'WindowsSecurityAudit.psm1'
+            $mockModuleContent = @'
+function Invoke-SecurityAssessment {
+    param($AssessmentType, $OutputPath)
+    $scenarioPath = Join-Path (Split-Path -Parent $OutputPath) 'scenario.txt'
+    $resolved = (Test-Path $scenarioPath) -and ((Get-Content -Path $scenarioPath -Raw).Trim() -eq 'resolved')
+    $findings = @()
+    if (-not $resolved) {
+        $findings = @(
+            [PSCustomObject]@{ Category = 'Test'; Finding = 'Synthetic critical finding'; Severity = 'Critical' }
+        )
+    }
+    [PSCustomObject]@{ OverallScore = 0; Findings = $findings }
+}
+function Invoke-RestMethod {
+    param($Uri, $Method, $Body, $ContentType, $ErrorAction)
+    throw "Webhook endpoint rejected $Uri"
+}
+Export-ModuleMember -Function Invoke-SecurityAssessment, Invoke-RestMethod
+'@
+            Set-Content -Path $mockModulePath -Value $mockModuleContent -Encoding UTF8
+            $originalModuleLine = "`$modulePath = '$($moduleManifest -replace "'", "''")'"
+            $mockModuleLine = "`$modulePath = '$($mockModulePath -replace "'", "''")'"
+            $scanContent = Get-Content -Path $result.ScriptPath -Raw
+            $scanContent = $scanContent.Replace($originalModuleLine, $mockModuleLine)
+            Set-Content -Path $result.ScriptPath -Value $scanContent -Encoding UTF8
+            $scenarioPath = Join-Path $outputPath 'scenario.txt'
+            Set-Content -Path $scenarioPath -Value 'alarm'
+
+            $powerShellPath = (Get-Process -Id $PID).Path
+            $alarmOutput = (& $powerShellPath -NoLogo -NoProfile -ExecutionPolicy Bypass -File $result.ScriptPath 2>&1 | Out-String)
+            $LASTEXITCODE | Should -Be 0 -Because $alarmOutput
+            $alarmOutput | Should -Match 'Failed to send webhook alert\.'
+            $alarmOutput | Should -Not -Match 'Webhook endpoint rejected'
+            $alarmOutput.Contains($expectedUrl) | Should -BeFalse
+
+            Set-Content -Path $scenarioPath -Value 'resolved'
+            $resolvedOutput = (& $powerShellPath -NoLogo -NoProfile -ExecutionPolicy Bypass -File $result.ScriptPath 2>&1 | Out-String)
+            $LASTEXITCODE | Should -Be 0 -Because $resolvedOutput
+            $resolvedOutput | Should -Match 'Failed to send webhook alert\.'
+            $resolvedOutput | Should -Not -Match 'Webhook endpoint rejected'
+            $resolvedOutput.Contains($expectedUrl) | Should -BeFalse
         }
     }
 }

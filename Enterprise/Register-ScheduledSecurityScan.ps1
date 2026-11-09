@@ -537,7 +537,7 @@ try {
                 $runSummary.AlertSent = $true
             }
             catch {
-                Write-Warning "Failed to send webhook alert: $($_.Exception.Message)"
+                Write-Warning 'Failed to send webhook alert.'
             }
         }
 
@@ -616,7 +616,7 @@ $mailRows
                 $runSummary.AlertSent = $true
             }
             catch {
-                Write-Warning "Failed to send webhook alert: $($_.Exception.Message)"
+                Write-Warning 'Failed to send webhook alert.'
             }
         }
 
@@ -711,6 +711,9 @@ exit 0
         if ($PSCmdlet.ShouldProcess($machineName, "Register scheduled security scan '$taskName' ($Frequency at $($Time.ToString('HH:mm')))")) {
             # Section 1: Create the scan script
             $tempScriptPath = $null
+            $backupScriptPath = $null
+            $preserveBackup = $false
+            $moveAttempted = $false
             try {
                 Write-Host "`nCreating scan script..." -ForegroundColor Cyan
 
@@ -747,20 +750,20 @@ exit 0
                 $safeWebhookValue = if ($webhookConfigured) { $webhookProtectedValue -replace "'", "''" } else { '' }
 
                 if (Test-Path $OutputPath) {
-                    # A pre-existing output folder must be owned by SYSTEM/Administrators:
-                    # its owner retains WRITE_DAC even when removed from the ACL and could
-                    # reopen write access to tamper with the SYSTEM-run scan script
-                    if ($env:OS -eq 'Windows_NT') {
-                        if (-not (Test-AdminOnlyOwnership -Path $OutputPath)) {
-                            throw "OutputPath '$OutputPath' is not owned by SYSTEM/Administrators; refusing to place a SYSTEM-run script there. Remove it or choose another -OutputPath."
-                        }
-                    }
-                    else {
-                        Write-Verbose "Non-Windows host: skipping output folder ownership check for '$OutputPath'."
+                    if (-not (Test-Path $OutputPath -PathType Container)) {
+                        throw "OutputPath '$OutputPath' is not a directory; refusing to place a SYSTEM-run script there."
                     }
                 }
                 else {
-                    New-Item -Path $OutputPath -ItemType Directory -Force | Out-Null
+                    New-Item -Path $OutputPath -ItemType Directory -Force -ErrorAction Stop | Out-Null
+                }
+
+                # Validate the directory itself before creating any file. The owner can
+                # reopen WRITE_DAC, and directory write/delete-child rights allow file replacement.
+                $outputOwnerSecure = Test-AdminOnlyOwnership -Path $OutputPath
+                $outputWriteSecure = Test-NoNonAdminWriteAccess -Path $OutputPath
+                if (-not $outputOwnerSecure -or -not $outputWriteSecure) {
+                    throw "OutputPath '$OutputPath' failed ownership or non-admin write-access validation; refusing to place a SYSTEM-run script there. Secure it or choose another -OutputPath."
                 }
 
                 $scanScript = $scanScriptTemplate.
@@ -778,42 +781,14 @@ exit 0
                 $webhookProtectedValue = $null
                 $safeWebhookValue = $null
 
-                # Build the replacement in the same directory so the final rename does
-                # not cross volumes. The temporary file is empty when it is locked to
-                # Administrators and SYSTEM; content is written only after verification.
+                # Create the empty replacement with its final ACL atomically on Windows.
+                # The random same-directory path also keeps the final rename on one volume.
                 $tempScriptPath = Join-Path $OutputPath ([System.IO.Path]::GetRandomFileName() + '.tmp')
-                New-Item -Path $tempScriptPath -ItemType File -Force -ErrorAction Stop | Out-Null
-                if ($env:OS -eq 'Windows_NT') {
-                    try {
-                        $scriptAcl = Get-Acl -Path $tempScriptPath -ErrorAction Stop
-                        $scriptAcl.SetAccessRuleProtection($true, $false)
-                        foreach ($existingRule in @($scriptAcl.Access)) {
-                            $null = $scriptAcl.RemoveAccessRule($existingRule)
-                        }
-                        $aclIdentities = @(
-                            (New-Object System.Security.Principal.SecurityIdentifier('S-1-5-18')),
-                            (New-Object System.Security.Principal.SecurityIdentifier('S-1-5-32-544'))
-                        )
-                        foreach ($identity in $aclIdentities) {
-                            $accessRule = New-Object System.Security.AccessControl.FileSystemAccessRule(
-                                $identity,
-                                [System.Security.AccessControl.FileSystemRights]::FullControl,
-                                [System.Security.AccessControl.AccessControlType]::Allow)
-                            $scriptAcl.AddAccessRule($accessRule)
-                        }
-                        $scriptAcl.SetOwner([System.Security.Principal.SecurityIdentifier]'S-1-5-32-544')
-                        Set-Acl -Path $tempScriptPath -AclObject $scriptAcl -ErrorAction Stop
-                        if (-not (Test-AdminOnlyOwnership -Path $tempScriptPath) -or -not (Test-NoNonAdminWriteAccess -Path $tempScriptPath)) {
-                            throw "Post-lockdown verification failed for '$tempScriptPath': owner or write access is not restricted to SYSTEM/Administrators."
-                        }
-                    }
-                    catch {
-                        # Fail closed before content is written or the task is registered.
-                        throw "Could not restrict permissions on '$tempScriptPath'; refusing to write webhook ciphertext or plaintext for a SYSTEM-run script: $_"
-                    }
-                }
-                else {
-                    Write-Verbose "Non-Windows host: skipping ACL lockdown and ownership verification for '$tempScriptPath'."
+                New-WsaPrivateFile -Path $tempScriptPath -ErrorAction Stop
+                $tempOwnerSecure = Test-AdminOnlyOwnership -Path $tempScriptPath
+                $tempWriteSecure = Test-NoNonAdminWriteAccess -Path $tempScriptPath
+                if (-not $tempOwnerSecure -or -not $tempWriteSecure) {
+                    throw "Post-creation verification failed for '$tempScriptPath': owner or write access is not restricted to SYSTEM/Administrators."
                 }
 
                 $scanScript | Out-File $tempScriptPath -Encoding UTF8 -Force -ErrorAction Stop
@@ -824,18 +799,83 @@ exit 0
                     throw 'Generated scan script validation failed; the existing script was left unchanged.'
                 }
 
-                # Keep the old script until its validated replacement is ready. Renaming
-                # the locked temporary file also resets ownership from a legacy file.
+                # Copy a known-good script into a pre-locked same-volume backup before
+                # removing it. The backup remains available until the replacement is verified.
                 if (Test-Path $scriptPath) {
-                    Remove-Item -Path $scriptPath -Force -ErrorAction Stop
+                    $backupScriptPath = Join-Path $OutputPath ([System.IO.Path]::GetRandomFileName() + '.bak')
+                    New-WsaPrivateFile -Path $backupScriptPath -ErrorAction Stop
+                    Copy-Item -Path $scriptPath -Destination $backupScriptPath -Force -ErrorAction Stop
+                    Set-WsaPrivateFileAcl -Path $backupScriptPath -ErrorAction Stop
+                    $backupOwnerSecure = Test-AdminOnlyOwnership -Path $backupScriptPath
+                    $backupWriteSecure = Test-NoNonAdminWriteAccess -Path $backupScriptPath
+                    if (-not $backupOwnerSecure -or -not $backupWriteSecure) {
+                        throw "Backup verification failed for '$backupScriptPath': owner or write access is not restricted to SYSTEM/Administrators."
+                    }
                 }
-                Move-Item -Path $tempScriptPath -Destination $scriptPath -Force -ErrorAction Stop
-                $tempScriptPath = $null
 
-                if ($env:OS -eq 'Windows_NT') {
-                    if (-not (Test-AdminOnlyOwnership -Path $scriptPath) -or -not (Test-NoNonAdminWriteAccess -Path $scriptPath)) {
+                try {
+                    if (Test-Path $scriptPath) {
+                        Remove-Item -Path $scriptPath -Force -ErrorAction Stop
+                    }
+                    $moveAttempted = $true
+                    Move-Item -Path $tempScriptPath -Destination $scriptPath -Force -ErrorAction Stop
+                    $tempScriptPath = $null
+
+                    $scriptOwnerSecure = Test-AdminOnlyOwnership -Path $scriptPath
+                    $scriptWriteSecure = Test-NoNonAdminWriteAccess -Path $scriptPath
+                    if (-not $scriptOwnerSecure -or -not $scriptWriteSecure) {
                         throw "Post-rename verification failed for '$scriptPath': owner or write access is not restricted to SYSTEM/Administrators."
                     }
+
+                    if ($null -ne $backupScriptPath -and (Test-Path $backupScriptPath)) {
+                        Remove-Item -Path $backupScriptPath -Force -ErrorAction Stop
+                        $backupScriptPath = $null
+                    }
+                }
+                catch {
+                    $replacementError = $_
+                    try {
+                        if ($moveAttempted -and (Test-Path $scriptPath)) {
+                            $quarantinePath = Join-Path $OutputPath ([System.IO.Path]::GetRandomFileName() + '.quarantine')
+                            try {
+                                Move-Item -Path $scriptPath -Destination $quarantinePath -Force -ErrorAction Stop
+                                Set-WsaPrivateFileAcl -Path $quarantinePath -ErrorAction Stop
+                                $quarantineOwnerSecure = Test-AdminOnlyOwnership -Path $quarantinePath
+                                $quarantineWriteSecure = Test-NoNonAdminWriteAccess -Path $quarantinePath
+                                if (-not $quarantineOwnerSecure -or -not $quarantineWriteSecure) {
+                                    throw "Quarantine verification failed for '$quarantinePath'."
+                                }
+                                Write-Warning "Unverified replacement scan script quarantined at '$quarantinePath'."
+                            }
+                            catch {
+                                Write-Warning "Could not securely quarantine the unverified replacement; removing it instead. $($_.Exception.Message)"
+                                if (Test-Path $quarantinePath) {
+                                    Remove-Item -Path $quarantinePath -Force -ErrorAction Stop
+                                }
+                                if (Test-Path $scriptPath) {
+                                    Remove-Item -Path $scriptPath -Force -ErrorAction Stop
+                                }
+                            }
+                        }
+
+                        if ($null -ne $backupScriptPath -and (Test-Path $backupScriptPath) -and ($moveAttempted -or -not (Test-Path $scriptPath))) {
+                            New-WsaPrivateFile -Path $scriptPath -ErrorAction Stop
+                            Copy-Item -Path $backupScriptPath -Destination $scriptPath -Force -ErrorAction Stop
+                            Set-WsaPrivateFileAcl -Path $scriptPath -ErrorAction Stop
+                            $restoreOwnerSecure = Test-AdminOnlyOwnership -Path $scriptPath
+                            $restoreWriteSecure = Test-NoNonAdminWriteAccess -Path $scriptPath
+                            if (-not $restoreOwnerSecure -or -not $restoreWriteSecure) {
+                                throw "Restored script verification failed for '$scriptPath'."
+                            }
+                            Remove-Item -Path $backupScriptPath -Force -ErrorAction Stop
+                            $backupScriptPath = $null
+                        }
+                    }
+                    catch {
+                        $preserveBackup = ($null -ne $backupScriptPath -and (Test-Path $backupScriptPath))
+                        Write-Warning "Failed to restore the original scan script. Registration is aborted; the locked backup is retained when available. $($_.Exception.Message)"
+                    }
+                    throw $replacementError
                 }
 
                 Write-Host "Scan script created: $scriptPath" -ForegroundColor Green
@@ -845,8 +885,32 @@ exit 0
                 throw
             }
             finally {
-                if ($null -ne $tempScriptPath -and (Test-Path $tempScriptPath)) {
-                    Remove-Item -Path $tempScriptPath -Force -ErrorAction SilentlyContinue
+                $residualPaths = @($tempScriptPath)
+                if (-not $preserveBackup) {
+                    $residualPaths += $backupScriptPath
+                }
+                foreach ($residualPath in @($residualPaths | Where-Object { -not [string]::IsNullOrWhiteSpace($_) })) {
+                    if (Test-Path $residualPath) {
+                        try {
+                            Remove-Item -Path $residualPath -Force -ErrorAction Stop
+                        }
+                        catch {
+                            Write-Warning "SECURITY WARNING: Failed to remove residual protected file '$residualPath'. It may contain webhook secret material; remove it with an elevated administrator account."
+                            try {
+                                $residualOwnerSecure = Test-AdminOnlyOwnership -Path $residualPath
+                                $residualWriteSecure = Test-NoNonAdminWriteAccess -Path $residualPath
+                                if (-not $residualOwnerSecure -or -not $residualWriteSecure) {
+                                    Write-Warning "SECURITY WARNING: Residual file '$residualPath' does not have admin/SYSTEM-only ownership and write access."
+                                }
+                                else {
+                                    Write-Verbose "Residual file '$residualPath' remains restricted to Administrators and SYSTEM."
+                                }
+                            }
+                            catch {
+                                Write-Warning "SECURITY WARNING: Could not verify the ACL on residual file '$residualPath'. Treat it as exposed and remove it manually."
+                            }
+                        }
+                    }
                 }
             }
 
@@ -964,8 +1028,79 @@ exit 0
 
 # Non-exported helpers (module-internal; only the file basename is exported)
 
+function New-WsaAdminFileSecurity {
+    $fileSecurity = New-Object System.Security.AccessControl.FileSecurity
+    $fileSecurity.SetAccessRuleProtection($true, $false)
+    $aclIdentities = @(
+        (New-Object System.Security.Principal.SecurityIdentifier('S-1-5-18')),
+        (New-Object System.Security.Principal.SecurityIdentifier('S-1-5-32-544'))
+    )
+    foreach ($identity in $aclIdentities) {
+        $accessRule = New-Object System.Security.AccessControl.FileSystemAccessRule(
+            $identity,
+            [System.Security.AccessControl.FileSystemRights]::FullControl,
+            [System.Security.AccessControl.AccessControlType]::Allow)
+        $fileSecurity.AddAccessRule($accessRule)
+    }
+    $fileSecurity.SetOwner([System.Security.Principal.SecurityIdentifier]'S-1-5-32-544')
+    return $fileSecurity
+}
+
+function New-WsaPrivateFile {
+    [CmdletBinding()]
+    param([Parameter(Mandatory)][string]$Path)
+
+    $stream = $null
+    try {
+        if ([Environment]::OSVersion.Platform -eq [PlatformID]::Win32NT) {
+            # Supplying FileSecurity to this creation overload applies the restrictive
+            # ACL with the create operation, before a handle or any content exists.
+            $fileSecurity = New-WsaAdminFileSecurity
+            $stream = New-Object -TypeName System.IO.FileStream -ArgumentList @(
+                $Path,
+                [System.IO.FileMode]::CreateNew,
+                [System.Security.AccessControl.FileSystemRights]::FullControl,
+                [System.IO.FileShare]::None,
+                4096,
+                [System.IO.FileOptions]::None,
+                $fileSecurity
+            )
+        }
+        else {
+            $stream = New-Object -TypeName System.IO.FileStream -ArgumentList @(
+                $Path,
+                [System.IO.FileMode]::CreateNew,
+                [System.IO.FileAccess]::Write,
+                [System.IO.FileShare]::None
+            )
+        }
+    }
+    finally {
+        if ($null -ne $stream) {
+            $stream.Dispose()
+        }
+    }
+}
+
+function Set-WsaPrivateFileAcl {
+    [CmdletBinding()]
+    param([Parameter(Mandatory)][string]$Path)
+
+    if ([Environment]::OSVersion.Platform -eq [PlatformID]::Win32NT) {
+        $fileSecurity = New-WsaAdminFileSecurity
+        Set-Acl -Path $Path -AclObject $fileSecurity -ErrorAction Stop
+    }
+    else {
+        Write-Verbose "Windows ACLs are not applicable on this host for '$Path'."
+    }
+}
+
 function Test-AdminOnlyOwnership {
     param([Parameter(Mandatory)][string]$Path)
+    if ([Environment]::OSVersion.Platform -ne [PlatformID]::Win32NT) {
+        Write-Verbose "Windows ownership validation is not applicable on this host for '$Path'."
+        return $true
+    }
     $acl = Get-Acl -Path $Path -ErrorAction Stop
     $allowedOwners = @('S-1-5-18', 'S-1-5-32-544', [System.Security.Principal.WindowsIdentity]::GetCurrent().User.Value)
     $ownerSid = $acl.GetOwner([System.Security.Principal.SecurityIdentifier]).Value
@@ -974,6 +1109,10 @@ function Test-AdminOnlyOwnership {
 
 function Test-NoNonAdminWriteAccess {
     param([Parameter(Mandatory)][string]$Path)
+    if ([Environment]::OSVersion.Platform -ne [PlatformID]::Win32NT) {
+        Write-Verbose "Windows write-access validation is not applicable on this host for '$Path'."
+        return $true
+    }
     $acl = Get-Acl -Path $Path -ErrorAction Stop
     $adminSids = @('S-1-5-18', 'S-1-5-32-544')
     $fsr = [System.Security.AccessControl.FileSystemRights]
