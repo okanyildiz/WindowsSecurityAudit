@@ -887,7 +887,7 @@ exit 0
                 $dedupNote = if ($alertDedupEnabled) { "on, re-alert after $RealertAfterDays days" } else { 'off' }
                 $taskDescription = "WindowsSecurityAudit $ScanType scan ($assessmentType) runs $frequencyNote at $($Time.ToString('HH:mm')). Alerts on Critical findings (alert dedup: $dedupNote). Managed by Register-ScheduledSecurityScan."
 
-                Register-ScheduledTask -TaskName $taskName -Action $action -Trigger $trigger -Principal $principal -Settings $settings -Description $taskDescription -Force -ErrorAction Stop | Out-Null
+                Register-WsaScheduledTask -TaskName $taskName -Action $action -Trigger $trigger -Principal $principal -Settings $settings -Description $taskDescription | Out-Null
 
                 Write-Host "Scheduled task '$taskName' registered (runs as SYSTEM)." -ForegroundColor Green
             }
@@ -983,4 +983,17 @@ function Test-NoNonAdminWriteAccess {
         $_.AccessControlType -eq 'Allow' -and $adminSids -notcontains $_.IdentityReference.Value -and (([int64]$_.FileSystemRights -band $writeMask) -ne 0)
     })
     return ($foreign.Count -eq 0)
+}
+
+function Register-WsaScheduledTask {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)][string]$TaskName,
+        [Parameter(Mandatory = $true)]$Action,
+        [Parameter(Mandatory = $true)]$Trigger,
+        [Parameter(Mandatory = $true)]$Principal,
+        [Parameter(Mandatory = $true)]$Settings,
+        [Parameter(Mandatory = $true)][string]$Description
+    )
+    Register-ScheduledTask -TaskName $TaskName -Action $Action -Trigger $Trigger -Principal $Principal -Settings $Settings -Description $Description -Force -ErrorAction Stop
 }

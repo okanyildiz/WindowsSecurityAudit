@@ -1,4 +1,4 @@
-﻿$script:SiemProfileStoreRoot = $null
+$script:SiemProfileStoreRoot = $null
 
 function Assert-SiemProfileName {
     [CmdletBinding()]
@@ -316,12 +316,10 @@ function Write-SiemProfileJson {
                 throw 'SIEM profile was created by another process. Use -Force to replace it.'
             }
             Protect-SiemProfileAcl -Path $Path -Scope $Scope
-            if ($env:OS -eq 'Windows_NT') {
-                [IO.File]::Replace($temporaryPath, $Path, $null)
-            }
-            else {
-                [IO.File]::Move($temporaryPath, $Path, $true)
-            }
+            # Remove+move instead of [IO.File]::Replace (which fails with
+            # 'path is empty' on some .NET/PS combinations in CI)
+            Remove-Item -LiteralPath $Path -Force -ErrorAction Stop
+            [IO.File]::Move($temporaryPath, $Path)
         }
         else {
             [IO.File]::Move($temporaryPath, $Path)

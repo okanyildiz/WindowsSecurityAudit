@@ -84,7 +84,7 @@ Describe 'Scheduled scan webhook protection' {
             Mock New-ScheduledTaskAction { [PSCustomObject]@{} }
             Mock New-ScheduledTaskPrincipal { [PSCustomObject]@{} }
             Mock New-ScheduledTaskSettingsSet { [PSCustomObject]@{} }
-            Mock Register-ScheduledTask { }
+            Mock Register-WsaScheduledTask { }
 
             $outputPath = Join-Path $testRoot 'DpapiRegistration'
             $savedOs = $env:OS
@@ -120,7 +120,7 @@ Describe 'Scheduled scan webhook protection' {
             Mock New-ScheduledTaskAction { [PSCustomObject]@{} }
             Mock New-ScheduledTaskPrincipal { [PSCustomObject]@{} }
             Mock New-ScheduledTaskSettingsSet { [PSCustomObject]@{} }
-            Mock Register-ScheduledTask { }
+            Mock Register-WsaScheduledTask { }
 
             $secret = [System.Security.SecureString]::new()
             foreach ($character in $expectedUrl.ToCharArray()) {
@@ -168,7 +168,7 @@ Describe 'Scheduled scan webhook protection' {
         InModuleScope -ModuleName $script:ModuleName -ArgumentList $script:TestWebhookUrl, $TestDrive -ScriptBlock {
             param($expectedUrl, $testRoot)
             Mock Protect-WsaDpapiData { throw 'Simulated DPAPI failure' }
-            Mock Register-ScheduledTask { }
+            Mock Register-WsaScheduledTask { }
             $outputPath = Join-Path $testRoot 'FailedProtection'
             $savedOs = $env:OS
             try {
@@ -181,7 +181,7 @@ Describe 'Scheduled scan webhook protection' {
             }
 
             Test-Path -Path $outputPath | Should -BeFalse
-            Should -Invoke Register-ScheduledTask -Times 0 -Exactly
+            Should -Invoke Register-WsaScheduledTask -Times 0 -Exactly
         }
     }
 
@@ -213,7 +213,7 @@ Describe 'Scheduled scan webhook protection' {
             Mock New-ScheduledTaskAction { [PSCustomObject]@{} }
             Mock New-ScheduledTaskPrincipal { [PSCustomObject]@{} }
             Mock New-ScheduledTaskSettingsSet { [PSCustomObject]@{} }
-            Mock Register-ScheduledTask { }
+            Mock Register-WsaScheduledTask { }
 
             $outputPath = Join-Path $testRoot 'PlainTextRegistration'
             $savedOs = $env:OS
@@ -241,7 +241,7 @@ Describe 'Scheduled scan webhook protection' {
             Mock New-ScheduledTaskAction { [PSCustomObject]@{} }
             Mock New-ScheduledTaskPrincipal { [PSCustomObject]@{} }
             Mock New-ScheduledTaskSettingsSet { [PSCustomObject]@{} }
-            Mock Register-ScheduledTask { }
+            Mock Register-WsaScheduledTask { }
 
             $outputPath = Join-Path $testRoot 'DecryptionFailure'
             $savedOs = $env:OS
