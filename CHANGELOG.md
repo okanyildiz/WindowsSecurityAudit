@@ -1,4 +1,4 @@
-# Changelog
+﻿# Changelog
 
 All notable changes to this project are documented in this file.
 
@@ -6,6 +6,29 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+
+## [1.8.0] - 2026-11-09
+
+### Security
+
+- `Register-ScheduledSecurityScan` now protects webhook URLs with `ProtectedData` and `DataProtectionScope.LocalMachine`, versioned entropy `WindowsSecurityAudit/ScheduledScan/Webhook/v1`, and the `wsa-dpapi-lm-v1:` marker. Unlike `ConvertFrom-SecureString` CurrentUser encryption, the elevated registering administrator and SYSTEM task can use different identities. DPAPI failure aborts registration without plaintext downgrade.
+- Generated scan scripts resolve protected webhooks once in memory before alert branches. Decryption failure emits a sanitized warning, disables webhook delivery without plaintext fallback, and still writes scan results with `AlertSent=false` when no other alert channel succeeds.
+- Replacement scripts are written to a locked temporary file and syntax-checked before the old script is replaced; Administrators+SYSTEM ownership/write-access checks remain fail-closed.
+- New SIEM profiles store secrets only as scope- and profile/purpose-bound DPAPI `secretRef`/`uriRef` values. Files are ACL-locked before JSON is written and atomically replaced; LocalMachine allows SYSTEM+Administrators and CurrentUser allows only the owning user. `Get-SiemProfile` exposes metadata such as `HasSecret`, never protected or plaintext secret material.
+- `Send-SiemEvent` no longer logs full endpoint paths/queries or raw transport errors, preventing webhook URLs and credentials from being reflected in logs. OAuth client secrets remain SecureString inputs, access tokens are memory-only, and Logs Ingestion requires HTTPS plus a validated DCR/stream URI.
+
+### Added
+
+- New `-WebhookSecret` SecureString input (preferred via `Read-Host -AsSecureString`) and `-WebhookProtection DpapiLocalMachine|PlainText`; the explicit PlainText compatibility mode warns loudly. Registration results expose `WebhookProtection`, never secret material, and `-WhatIf` does not protect, emit, or write webhook secrets.
+- New private `SecretProtection.ps1` wrappers and 11 cross-platform Pester tests for marker/Base64 validation, wrong scope, no plaintext fallback, secret-output hygiene, protection failure, WhatIf, and scan continuation after decryption failure. Existing tasks keep legacy plaintext scripts until explicitly re-registered; no automatic migration parser was added.
+- New `Set-SiemProfile`, `Get-SiemProfile`, and `Remove-SiemProfile` commands (75 exported functions plus the existing alias), with CurrentUser/LocalMachine stores and deterministic Auto lookup that rejects duplicate names.
+- `Send-SiemEvent` now has Direct and Profile parameter sets. `SentinelLogsIngestion` uses raw Entra v2 client-credentials REST requests for `https://monitor.azure.com/.default`, cached tokens with a five-minute expiry margin, one 401 re-auth/retry, transient backoff, and JSON-array splitting by actual UTF-8 bytes (`-MaxBatchBytes 900000`). The legacy `Sentinel` SharedKey path remains compatible but warns that Data Collector support ended September 14, 2026.
+- `Export-SecurityReport` adds `-StreamProfileName/-StreamProfileScope` and recognizes `SentinelLogsIngestion`; profiles are the report-export OAuth route. New `tests/SiemProfiles.Tests.ps1` adds 29 mocked, cross-platform tests for storage, secret hygiene, OAuth, retries, batching, legacy compatibility, and report pass-through.
+
+### Notes
+
+- LocalMachine DPAPI is machine-bound and does not defend against a malicious administrator or any local account that obtains the ciphertext; the Administrators+SYSTEM ACL remains essential. Real SYSTEM-task, PowerShell 5.1, wrong-machine, and ACL integration verification remains Windows-only.
+- SIEM DPAPI and HTTP are mocked on macOS/Linux. Real CurrentUser/LocalMachine ACL and DPAPI round trips, SYSTEM consumption, PowerShell 5.1, and a disposable Entra app/DCR/table ingestion/query require Windows/Azure integration verification. Logs Ingestion does not provision DCEs, DCRs, tables, or transformations; schema and downstream KQL/parser migration remain deployment tasks.
 
 ## [1.7.1] - 2026-11-04
 
@@ -190,7 +213,8 @@ Post-release audit hardening. Every finding below was verified against the code 
 - Cloud Security: Azure AD risky sign-ins, M365 security posture, cloud compliance status.
 - Hardening: audit policies, PowerShell security (logging, transcription), security baseline enforcement — all with `-WhatIf` support.
 
-[Unreleased]: https://github.com/okanyildiz/WindowsSecurityAudit/compare/v1.7.1...HEAD
+[Unreleased]: https://github.com/okanyildiz/WindowsSecurityAudit/compare/v1.8.0...HEAD
+[1.8.0]: https://github.com/okanyildiz/WindowsSecurityAudit/releases/tag/v1.8.0
 [1.7.1]: https://github.com/okanyildiz/WindowsSecurityAudit/releases/tag/v1.7.1
 [1.7.0]: https://github.com/okanyildiz/WindowsSecurityAudit/releases/tag/v1.7.0
 [1.6.2]: https://github.com/okanyildiz/WindowsSecurityAudit/releases/tag/v1.6.2

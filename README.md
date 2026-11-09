@@ -5,9 +5,9 @@
 [![PowerShell](https://img.shields.io/badge/PowerShell-5.1%2B-blue.svg)](https://github.com/PowerShell/PowerShell)
 [![Windows](https://img.shields.io/badge/Windows-10%2F11%2FServer%202016%2B-blue.svg)](https://www.microsoft.com/windows)
 [![License](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
-[![Version](https://img.shields.io/badge/Version-1.7.1-orange.svg)](https://github.com/okanyildiz/WindowsSecurityAudit/releases)
+[![Version](https://img.shields.io/badge/Version-1.8.0-orange.svg)](https://github.com/okanyildiz/WindowsSecurityAudit/releases)
 [![PowerShell Gallery](https://img.shields.io/powershellgallery/v/WindowsSecurityAudit.svg?label=PSGallery)](https://www.powershellgallery.com/packages/WindowsSecurityAudit)
-[![Functions](https://img.shields.io/badge/Functions-72-brightgreen.svg)](https://github.com/okanyildiz/WindowsSecurityAudit)
+[![Functions](https://img.shields.io/badge/Functions-75-brightgreen.svg)](https://github.com/okanyildiz/WindowsSecurityAudit)
 [![Modules](https://img.shields.io/badge/Modules-14-blue.svg)](https://github.com/okanyildiz/WindowsSecurityAudit)
 [![CI](https://github.com/okanyildiz/WindowsSecurityAudit/actions/workflows/ci.yml/badge.svg)](https://github.com/okanyildiz/WindowsSecurityAudit/actions/workflows/ci.yml)
 [![Tests](https://img.shields.io/badge/Tests-CI_Gated-brightgreen.svg)](https://github.com/okanyildiz/WindowsSecurityAudit/tree/main/tests)
@@ -28,14 +28,14 @@
 
 ## 🧰 Full Feature Overview
 
-**72 functions across 14 modules** — the complete toolkit at a glance:
+**75 functions across 14 modules** — the complete toolkit at a glance:
 
 | Module | Functions | Scope |
 |--------|:---------:|-------|
 | 🧱 **Core Security** | 5 | Security baseline scoring (0-100), system inventory, SFC/DISM integrity checks, Event ID context, baseline drift diffing |
 | 🕵️ **Detection** | 7 | Persistence mechanisms, suspicious processes, network anomalies, authentication attacks, credential-access events (Kerberoasting/spray/golden-ticket heuristic), defense-evasion & tamper detection, Sysmon log analytics (process chains/beaconing/LSASS access) |
 | 🔬 **Analysis** | 4 | Deep-dive analysis of event logs, registry, process memory, and file system |
-| 🚨 **Response** | 5 | Incident response orchestration, forensic evidence collection, HTML/JSON/CSV/NDJSON/CEF report export, SIEM event conversion, SIEM live streaming (Splunk HEC/Sentinel/webhook) |
+| 🚨 **Response** | 8 | Incident response orchestration, forensic evidence collection, HTML/JSON/CSV/NDJSON/CEF report export, SIEM event conversion, DPAPI SIEM auth profiles, SIEM live streaming (Splunk HEC/Sentinel Logs Ingestion/legacy Sentinel/webhook) |
 | 🏢 **Enterprise** | 4 | Multi-system parallel scanning, full assessment orchestration, scheduled scans with Teams/Slack/email alerts |
 | 🔒 **Hardening** | 4 | Audit policies, PowerShell security, baseline enforcement, curated auto-remediation (WhatIf-first, with rollback) |
 | 🛡️ **Windows Defender** | 3 | Defender health monitoring, custom scans, configuration optimization |
@@ -473,17 +473,54 @@ Get-CredentialAccessEvents -IncludeLSASSAccess
 Export-SecurityReport -ReportType Technical -Format NDJSON -NoAutoOpen
 ```
 
+### SIEM Auth Profiles & Sentinel Logs Ingestion (Unreleased)
+```powershell
+$ingestionUri = 'https://example.ingest.monitor.azure.com/dataCollectionRules/dcr-immutable-id/streams/Custom-Wsa?api-version=2023-03-01'
+$clientSecret = Read-Host 'Entra client secret' -AsSecureString
+
+# Store only DPAPI ciphertext and non-secret connection metadata.
+Set-SiemProfile -Name sentinel-prod -Destination SentinelLogsIngestion `
+    -Uri $ingestionUri -TenantId $tenantId -ClientId $clientId `
+    -Secret $clientSecret -Scope LocalMachine
+
+# Metadata includes HasSecret/IsUriProtected, never secretRef/uriRef or plaintext.
+Get-SiemProfile
+$findings | Send-SiemEvent -ProfileName sentinel-prod -ProfileScope LocalMachine
+Export-SecurityReport -ReportType Technical -Format JSON -NoAutoOpen `
+    -StreamProfileName sentinel-prod -StreamProfileScope LocalMachine
+Remove-SiemProfile -Name sentinel-prod -Scope LocalMachine -WhatIf
+```
+
+- `SentinelLogsIngestion` acquires an Entra client-credentials token for `https://monitor.azure.com/.default`, caches it with a five-minute expiry margin, and retries the first ingestion HTTP 401 once with a fresh token. HTTP 429/5xx retain exponential backoff; HTTP 400/403 are not retried. Direct OAuth calls accept `-TenantId`, `-ClientId`, and `-ClientSecret`.
+- Prerequisites are an Entra application, DCR and ingestion endpoint, a destination table with the matching schema, and **Monitoring Metrics Publisher** on the DCR. A DCE is optional when the DCR exposes its own ingestion endpoint, except for configurations such as Private Link that require one. The URI must include `/dataCollectionRules/{dcrImmutableId}/streams/{stream}?api-version=...`.
+- Logs Ingestion payloads are JSON arrays split by event count and actual UTF-8 bytes. `-MaxBatchBytes` defaults to 900000, conservatively below the service 1 MB request limit. Plan DCR/table schema migration and downstream KQL/parser changes; the module does not provision DCEs, DCRs, tables, or transformations.
+- `Set-SiemProfile` also supports `SplunkHEC`, legacy `Sentinel`, and `GenericWebhook` (including `-ProtectUri` for a secret webhook URL). Profiles are stored under `%ProgramData%\WindowsSecurityAudit\SiemProfiles` (LocalMachine) or `%APPDATA%\WindowsSecurityAudit\SiemProfiles` (CurrentUser), with ACL-first file creation and atomic replacement. Arbitrary webhook headers are not stored.
+- LocalMachine files are restricted to SYSTEM+Administrators; CurrentUser files are restricted to their owning user. DPAPI uses the same scope and profile-name/purpose entropy. Create a service-account CurrentUser profile while running as that account. Renaming a profile requires re-entering its secret.
+- `Auto` lookup checks CurrentUser then LocalMachine and rejects duplicate names rather than silently selecting one. Use `Get-SiemProfile`/`Remove-SiemProfile -Scope` or `Send-SiemEvent -ProfileScope` to disambiguate.
+- Legacy `Sentinel` still uses the SharedKey Data Collector implementation for compatibility but warns on every call: that API is deprecated and support ended **September 14, 2026**. Migrate to `SentinelLogsIngestion`; existing direct `StreamTo/StreamUri/StreamToken` behavior remains available for legacy destinations.
+
 ### Fleet Scanning & Smart Alerts (New in v1.5.0)
 ```powershell
 # Deploy the module to remote hosts and run a curated function set
 # (zip -> Copy-Item -ToSession -> remote Import-Module)
 Invoke-EnterpriseSecurityScan -ComputerName srv1, srv2 -UseModuleFunctions -RemoteFunctionSet Standard
 
-# Schedule a daily full scan with webhook alerts. Alert dedup is ON by
-# default: findings are fingerprinted (State\last-findings.json) and
-# classified New/Persisting/Resolved, so repeat alerts are suppressed
-# until -RealertAfterDays (default 7) elapses
-Register-ScheduledSecurityScan -ScanType Full -Frequency Daily -WebhookUrl $url
+# Schedule a daily full scan with webhook alerts. The preferred interactive
+# input avoids echoing the URL or retaining it in command-line history.
+$webhookSecret = Read-Host 'Webhook URL' -AsSecureString
+Register-ScheduledSecurityScan -ScanType Full -Frequency Daily -WebhookSecret $webhookSecret
+
+# New registrations store only LocalMachine DPAPI ciphertext (versioned context
+# WindowsSecurityAudit/ScheduledScan/Webhook/v1), which the SYSTEM task can
+# decrypt even though an elevated administrator performed registration. The
+# ciphertext is machine-bound: re-register after rebuild/cloning or URL rotation.
+# -WebhookProtection PlainText is an explicit, loudly warned compatibility mode.
+# Keep the Administrators+SYSTEM ACL: any local account that obtains LocalMachine
+# ciphertext can decrypt it, and DPAPI does not defend against malicious admins.
+# Alert dedup is ON by default: findings are fingerprinted (State\last-findings.json)
+# and classified New/Persisting/Resolved, so repeat alerts are suppressed until
+# -RealertAfterDays (default 7) elapses. Existing plaintext scripts are unchanged
+# until registration is re-run with a webhook; no automatic migration is attempted.
 ```
 
 ### One Report to Rule Them All (New in v1.1.0)
@@ -553,7 +590,7 @@ The Analysis module performs deep forensic examination of system components to u
 
 ---
 
-### 4️⃣ Response Module (5 Functions)
+### 4️⃣ Response Module (8 Functions)
 
 The Response module provides automated incident response capabilities, enabling rapid containment of threats and systematic evidence collection. These functions follow industry-standard incident response procedures while maintaining forensic integrity.
 
@@ -561,9 +598,12 @@ The Response module provides automated incident response capabilities, enabling 
 |----------|---------|------------------|----------------|
 | **`Invoke-IncidentResponse`** | Orchestrates a guided incident response procedure | • Step 1: quick security baseline<br>• Step 2: active-threat scan<br>• Step 3: optional network isolation (`-IsolateSystem`, automatic on Critical severity)<br>• Step 4: suspicious-process termination<br>• Step 5: forensic evidence collection<br>• Step 6: incident report generation | Response timeline<br>Actions taken<br>System state<br>Threat indicators |
 | **`Invoke-ForensicCollection`** | Systematically collects forensic evidence | • System, process and network state capture<br>• Event log extraction<br>• Registry artifact collection (incl. USB history)<br>• File-system artifacts (Comprehensive profile)<br>• Timeline generation<br>• Memory dump: writes an instructions file pointing to external tools (WinPMEM, DumpIt, Magnet RAM Capture) — no in-module memory acquisition | State captures<br>Event logs<br>System artifacts<br>Timeline data |
-| **`Export-SecurityReport`** | Generates professional security reports | • HTML interactive dashboards<br>• JSON for SIEM integration<br>• CSV for data analysis<br>• NDJSON/CEF SIEM-ready exports (`-Format NDJSON/CEF`; `All` writes .ndjson + .cef too)<br>• `-NoAutoOpen` for headless/SYSTEM-context runs | Multi-format reports<br>Executive summaries<br>Technical details<br>Recommendations |
+| **`Export-SecurityReport`** | Generates professional security reports | • HTML interactive dashboards<br>• JSON for SIEM integration<br>• CSV for data analysis<br>• NDJSON/CEF SIEM-ready exports (`-Format NDJSON/CEF`; `All` writes .ndjson + .cef too)<br>• `-NoAutoOpen` for headless/SYSTEM-context runs<br>• Direct legacy streaming or `-StreamProfileName/-StreamProfileScope` for stored profiles and OAuth ingestion | Multi-format reports<br>Executive summaries<br>Technical details<br>Recommendations |
 | **`ConvertTo-SiemEvent`** | Converts findings into SIEM-ready event strings | • Pipeline conversion of findings to NDJSON (one compact JSON object per line) or CEF (`CEF:0` strings)<br>• Severity-to-number mapping and heuristic CEF `act` field<br>• MITRE technique ID passthrough when present<br>• `-HostName` / `-ProductVersion` stamping<br>• Splunk / Sentinel / QRadar / ArcSight ingestion ready | NDJSON lines<br>CEF strings |
-| **`Send-SiemEvent`** | Streams findings directly to SIEM HTTP endpoints | • Splunk HEC (`Splunk <token>` auth header), Microsoft Sentinel (Log Analytics API with HMAC-SHA256 SharedKey signature), or generic webhook with custom headers<br>• NDJSON or CEF payloads via ConvertTo-SiemEvent<br>• Batching (`-BatchSize`) with exponential-backoff retry on HTTP 429/5xx (`-MaxRetries`, `-ThrottleMs`)<br>• Token always masked in console output<br>• Also wired into `Export-SecurityReport -StreamTo/-StreamUri/-StreamToken/-StreamFormat` | BatchesSent / EventsSent / Failed / DurationSec summary |
+| **`Send-SiemEvent`** | Streams findings directly to SIEM HTTP endpoints or stored profiles | • Splunk HEC, Sentinel Logs Ingestion (Entra OAuth2/DCR), legacy Sentinel SharedKey with deprecation warning, or generic webhook<br>• NDJSON or CEF payloads via ConvertTo-SiemEvent<br>• Direct/Profile parameter sets; cached OAuth tokens and one 401 re-auth retry<br>• Count and actual UTF-8 byte batching for Logs Ingestion (`-MaxBatchBytes 900000`)<br>• Exponential-backoff retry on HTTP 429/5xx; credentials and full endpoint paths are not logged | BatchesSent / EventsSent / Failed / DurationSec summary |
+| **`Set-SiemProfile`** | Creates or replaces a SIEM auth profile | • CurrentUser/LocalMachine DPAPI secretRefs<br>• Strict destination/name/URI validation<br>• ACL-first file creation and atomic replacement<br>• Optional protected generic-webhook URI | Secret-free profile metadata |
+| **`Get-SiemProfile`** | Lists SIEM profile metadata | • Lists both scopes or resolves one name<br>• Rejects ambiguous duplicate names in Auto scope<br>• Never returns plaintext, secretRef, or uriRef | Metadata with HasSecret/IsUriProtected |
+| **`Remove-SiemProfile`** | Removes a stored SIEM profile | • Supports WhatIf/Confirm<br>• Explicit scope selection and ambiguous-duplicate rejection | None |
 
 ---
 
@@ -989,8 +1029,8 @@ Found this useful? You can support development via [Buy Me a Coffee](https://buy
 - [ ] **Raw $MFT record parsing** — go beyond fsutil summary output for full file-system timelines
 - [x] **Native USN journal reads** — `FSCTL_READ_USN_JOURNAL` P/Invoke replaces fsutil text parsing (v1.7.0; locale-invariant, V2/V3 records, 25 cross-platform fixture tests)
 - [ ] **JEA endpoint support** — run remote scans through Just Enough Administration constrained endpoints (CLM-safe: precompiled helpers, no Add-Type dependency)
-- [ ] **Alert webhook DPAPI protection** — encrypt stored webhook URLs at rest
-- [ ] **SIEM streaming auth profiles** — named credential profiles and OAuth flows for Send-SiemEvent
+- [x] **Alert webhook DPAPI protection** — scheduled-scan webhooks use versioned LocalMachine DPAPI ciphertext by default, with SecureString input and an explicit PlainText compatibility mode (Unreleased)
+- [x] **SIEM streaming auth profiles** — DPAPI-backed named profiles and Entra client-credentials OAuth for the Sentinel Logs Ingestion API (Unreleased)
 
 ### Version 1.6 (Released)
 - [x] **Locale-invariant core checks** — localized `auditpol` / `net accounts` / `netsh` / SFC-DISM parsing and name-based identity lookups replaced by APIs, GUIDs and SIDs; correct results on non-English Windows with honest "unable to determine" states (exception: `Get-FileSystemJournal` fsutil parsing, see [Known Limitations](#-known-limitations))
