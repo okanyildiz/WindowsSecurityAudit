@@ -97,6 +97,13 @@ function Get-LocalPasswordPolicy {
     [OutputType([PSCustomObject])]
     param()
 
+    $effectiveLanguageMode = Get-WsaEffectiveLanguageMode
+    $dynamicCompilationExpected = Test-WsaDynamicCompilationExpected
+    $nativeUnavailableReason = $null
+    if (-not $dynamicCompilationExpected) {
+        $nativeUnavailableReason = 'ConstrainedLanguage'
+    }
+
     $policy = [PSCustomObject]@{
         MinPasswordLength               = $null
         MaxPasswordAgeDays              = $null
@@ -109,6 +116,9 @@ function Get-LocalPasswordPolicy {
         PasswordComplexity              = $null
         ClearTextPassword               = $null
         Source                          = 'Unavailable'
+        EffectiveLanguageMode           = $effectiveLanguageMode
+        DynamicCompilationExpected      = $dynamicCompilationExpected
+        UnavailableReason               = $nativeUnavailableReason
     }
 
     $isWindowsHost = $false
@@ -125,11 +135,15 @@ function Get-LocalPasswordPolicy {
         return $policy
     }
 
+    if (-not $dynamicCompilationExpected) {
+        Write-Warning "Get-LocalPasswordPolicy: native NetApi policy lookup is unavailable in effective language mode '$effectiveLanguageMode'; using the secedit fallback."
+    }
+
     # --- Primary: NetUserModalsGet levels 0 and 3 ---
     $netApiOk = $false
     $modals0 = $null
     $modals3 = $null
-    if (-not ([bool]('NetApiModals' -as [type]))) {
+    if ($dynamicCompilationExpected -and -not ([bool]('NetApiModals' -as [type]))) {
         $netApiModalsSource = @'
 using System;
 using System.Runtime.InteropServices;
@@ -171,12 +185,12 @@ public static class NetApiModals {
             Add-Type -TypeDefinition $netApiModalsSource -ErrorAction Stop
         }
         catch {
-            # Add-Type -TypeDefinition is blocked under Constrained Language Mode (JEA)
-            Write-Verbose "Get-LocalPasswordPolicy: Add-Type NetApiModals failed: $($_.Exception.Message)"
+            $policy.UnavailableReason = 'NativeCompilationFailed'
+            Write-Warning "Get-LocalPasswordPolicy: native NetApi compilation failed; using the secedit fallback: $($_.Exception.Message)"
         }
     }
 
-    if ([bool]('NetApiModals' -as [type])) {
+    if ($dynamicCompilationExpected -and [bool]('NetApiModals' -as [type])) {
         $level0Error = [uint32]0
         try {
             $level0 = [NetApiModals]::GetLevel0([ref]$level0Error)

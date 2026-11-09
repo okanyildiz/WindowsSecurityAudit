@@ -14,11 +14,27 @@
 #>
 
 $script:UsnJournalNativeTypeError = $null
+$script:UsnJournalNativeUnavailableReason = $null
+$script:UsnJournalNativeEffectiveLanguageMode = 'Unavailable'
+$script:UsnJournalNativeDynamicCompilationExpected = $false
 
 function Initialize-UsnJournalNativeType {
     [CmdletBinding()]
     [OutputType([bool])]
     param()
+
+    $effectiveLanguageMode = Get-WsaEffectiveLanguageMode
+    $dynamicCompilationExpected = Test-WsaDynamicCompilationExpected
+    $script:UsnJournalNativeEffectiveLanguageMode = $effectiveLanguageMode
+    $script:UsnJournalNativeDynamicCompilationExpected = $dynamicCompilationExpected
+    $script:UsnJournalNativeUnavailableReason = $null
+
+    if (-not $dynamicCompilationExpected) {
+        $script:UsnJournalNativeUnavailableReason = 'ConstrainedLanguage'
+        $script:UsnJournalNativeTypeError = "Dynamic compilation is not expected in effective language mode '$effectiveLanguageMode'."
+        Write-Warning "Initialize-UsnJournalNativeType: native USN journal reading is unavailable in effective language mode '$effectiveLanguageMode'; callers must use the fsutil fallback."
+        return $false
+    }
 
     if ([bool]('UsnJournalNative' -as [type])) {
         return $true
@@ -752,9 +768,9 @@ public static class UsnJournalNative {
         return $true
     }
     catch {
-        # Add-Type can be blocked by Constrained Language Mode; callers use fsutil.
         $script:UsnJournalNativeTypeError = $_.Exception.Message
-        Write-Verbose "Initialize-UsnJournalNativeType: Add-Type failed: $($_.Exception.Message)"
+        $script:UsnJournalNativeUnavailableReason = 'NativeCompilationFailed'
+        Write-Warning "Initialize-UsnJournalNativeType: native USN compilation failed; callers must use the fsutil fallback: $($_.Exception.Message)"
         return $false
     }
 }
@@ -777,13 +793,16 @@ function Get-UsnJournalNative {
 
     if (-not (Initialize-UsnJournalNativeType)) {
         return [PSCustomObject]@{
-            Records    = @()
-            Success    = $false
-            Error      = "Native USN journal type initialization failed: $script:UsnJournalNativeTypeError"
-            Source     = 'Native'
-            NextUsn    = [long]0
-            Notes      = @()
-            Incomplete = $false
+            Records                    = @()
+            Success                    = $false
+            Error                      = "Native USN journal type initialization failed: $script:UsnJournalNativeTypeError"
+            Source                     = 'Native'
+            NextUsn                    = [long]0
+            Notes                      = @()
+            Incomplete                 = $false
+            EffectiveLanguageMode      = $script:UsnJournalNativeEffectiveLanguageMode
+            DynamicCompilationExpected = $script:UsnJournalNativeDynamicCompilationExpected
+            UnavailableReason          = $script:UsnJournalNativeUnavailableReason
         }
     }
 
@@ -798,13 +817,16 @@ function Get-UsnJournalNative {
 
     if (-not $isWindowsHost) {
         return [PSCustomObject]@{
-            Records    = @()
-            Success    = $false
-            Error      = 'Native USN journal reading is only available on Windows.'
-            Source     = 'Native'
-            NextUsn    = [long]0
-            Notes      = @()
-            Incomplete = $false
+            Records                    = @()
+            Success                    = $false
+            Error                      = 'Native USN journal reading is only available on Windows.'
+            Source                     = 'Native'
+            NextUsn                    = [long]0
+            Notes                      = @()
+            Incomplete                 = $false
+            EffectiveLanguageMode      = $script:UsnJournalNativeEffectiveLanguageMode
+            DynamicCompilationExpected = $script:UsnJournalNativeDynamicCompilationExpected
+            UnavailableReason          = $script:UsnJournalNativeUnavailableReason
         }
     }
 
@@ -818,24 +840,30 @@ function Get-UsnJournalNative {
         }
 
         return [PSCustomObject]@{
-            Records    = $records
-            Success    = [bool]$nativeResult.Success
-            Error      = if ($null -ne $nativeResult.Error) { [string]$nativeResult.Error } else { $null }
-            Source     = 'Native'
-            NextUsn    = [long]$nativeResult.NextUsn
-            Notes      = $notes
-            Incomplete = $incomplete
+            Records                    = $records
+            Success                    = [bool]$nativeResult.Success
+            Error                      = if ($null -ne $nativeResult.Error) { [string]$nativeResult.Error } else { $null }
+            Source                     = 'Native'
+            NextUsn                    = [long]$nativeResult.NextUsn
+            Notes                      = $notes
+            Incomplete                 = $incomplete
+            EffectiveLanguageMode      = $script:UsnJournalNativeEffectiveLanguageMode
+            DynamicCompilationExpected = $script:UsnJournalNativeDynamicCompilationExpected
+            UnavailableReason          = $script:UsnJournalNativeUnavailableReason
         }
     }
     catch {
         return [PSCustomObject]@{
-            Records    = @()
-            Success    = $false
-            Error      = "Native USN journal invocation failed: $($_.Exception.Message)"
-            Source     = 'Native'
-            NextUsn    = [long]0
-            Notes      = @()
-            Incomplete = $false
+            Records                    = @()
+            Success                    = $false
+            Error                      = "Native USN journal invocation failed: $($_.Exception.Message)"
+            Source                     = 'Native'
+            NextUsn                    = [long]0
+            Notes                      = @()
+            Incomplete                 = $false
+            EffectiveLanguageMode      = $script:UsnJournalNativeEffectiveLanguageMode
+            DynamicCompilationExpected = $script:UsnJournalNativeDynamicCompilationExpected
+            UnavailableReason          = $script:UsnJournalNativeUnavailableReason
         }
     }
 }

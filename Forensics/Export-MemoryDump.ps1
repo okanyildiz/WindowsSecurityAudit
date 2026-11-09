@@ -70,6 +70,9 @@ function Export-MemoryDump {
             }
         }
         
+        $effectiveLanguageMode = Get-WsaEffectiveLanguageMode
+        $dynamicCompilationExpected = Test-WsaDynamicCompilationExpected
+
         $result = [PSCustomObject]@{
             Timestamp = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
             ComputerName = $env:COMPUTERNAME
@@ -81,6 +84,9 @@ function Export-MemoryDump {
             Success = $false
             Method = $null
             ErrorMessage = $null
+            EffectiveLanguageMode = $effectiveLanguageMode
+            DynamicCompilationExpected = $dynamicCompilationExpected
+            UnavailableReason = $null
         }
 
         # Memory dumps (LSASS especially) can contain plaintext credentials, so restrict
@@ -246,7 +252,11 @@ function Export-MemoryDump {
             }
             
             # METHOD 2: Use MiniDumpWriteDump with proper handle
-            if (-not $result.Success -and $PSCmdlet.ShouldProcess($dumpTarget, 'Create memory dump')) {
+            if (-not $result.Success -and -not $dynamicCompilationExpected) {
+                $result.UnavailableReason = 'ConstrainedLanguage'
+                Write-Warning "Export-MemoryDump: MiniDumpWriteDump is unavailable in effective language mode '$effectiveLanguageMode'; trying the existing external-tool fallback when applicable."
+            }
+            if (-not $result.Success -and $dynamicCompilationExpected -and $PSCmdlet.ShouldProcess($dumpTarget, 'Create memory dump')) {
                 Write-Host "`n[2/3] Attempting MiniDumpWriteDump method..." -ForegroundColor Cyan
                 
                 $processHandle = [IntPtr]::Zero
@@ -408,6 +418,10 @@ public class ProcessDump {
                 }
             }
             
+            if (-not $result.Success -and $result.UnavailableReason -eq 'ConstrainedLanguage' -and [string]::IsNullOrEmpty($result.ErrorMessage)) {
+                $result.ErrorMessage = "MiniDumpWriteDump was skipped because dynamic compilation is not expected in effective language mode '$effectiveLanguageMode'."
+            }
+
             # Check final result
             if ($result.Success -and (Test-Path $dumpFilePath)) {
                 $dumpFile = Get-Item $dumpFilePath

@@ -443,6 +443,22 @@ function Invoke-SecurityAssessment {
                     Details = "$($wifiProfiles.Count) WiFi profiles configured"
                 }
             }
+            else {
+                $wlanStatus = Get-Variable -Name WlanProfileListStatus -Scope Script -ValueOnly -ErrorAction SilentlyContinue
+                $wlanReason = Get-Variable -Name WlanProfileListUnavailableReason -Scope Script -ValueOnly -ErrorAction SilentlyContinue
+                if ($wlanStatus -eq 'Unavailable') {
+                    $wlanDetails = 'WiFi profile enumeration is unavailable; an empty profile list cannot be inferred.'
+                    if (-not [string]::IsNullOrWhiteSpace("$wlanReason")) {
+                        $wlanDetails += " Reason: $wlanReason."
+                    }
+                    $networkSecurity.Checks += [PSCustomObject]@{
+                        Check = 'WiFi Profiles'
+                        Status = 'Warning'
+                        Score = 0
+                        Details = $wlanDetails
+                    }
+                }
+            }
             
             # Network Level Authentication for RDP
             $rdpNLAProps = Get-ItemProperty "HKLM:\SYSTEM\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp" -ErrorAction SilentlyContinue

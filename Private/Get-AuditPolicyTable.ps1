@@ -240,15 +240,25 @@ function Get-AuditPolicyTable {
         $guidToName[$key] = $name
     }
 
+    $effectiveLanguageMode = Get-WsaEffectiveLanguageMode
+    $dynamicCompilationExpected = Test-WsaDynamicCompilationExpected
+    $nativeUnavailableReason = $null
+    if (-not $dynamicCompilationExpected) {
+        $nativeUnavailableReason = 'ConstrainedLanguage'
+    }
+
     $table = @{}
     foreach ($key in $guidToName.Keys) {
         $table[$key] = [PSCustomObject]@{
-            Guid    = ('{' + $key.ToUpperInvariant() + '}')
-            Name    = $guidToName[$key]
-            Value   = $null
-            Success = $false
-            Failure = $false
-            Source  = 'Unavailable'
+            Guid                       = ('{' + $key.ToUpperInvariant() + '}')
+            Name                       = $guidToName[$key]
+            Value                      = $null
+            Success                    = $false
+            Failure                    = $false
+            Source                     = 'Unavailable'
+            EffectiveLanguageMode      = $effectiveLanguageMode
+            DynamicCompilationExpected = $dynamicCompilationExpected
+            UnavailableReason          = $nativeUnavailableReason
         }
     }
 
@@ -267,11 +277,15 @@ function Get-AuditPolicyTable {
         return $table
     }
 
+    if (-not $dynamicCompilationExpected) {
+        Write-Warning "Get-AuditPolicyTable: native audit-policy lookup is unavailable in effective language mode '$effectiveLanguageMode'; using the auditpol fallback."
+    }
+
     $resolved = $false
     $auditpol = $null
 
     # --- Strategy 1: AuditQuerySystemPolicy API (HardeningLens pattern) ---
-    if (-not ([bool]('AuditPolicyNative' -as [type]))) {
+    if ($dynamicCompilationExpected -and -not ([bool]('AuditPolicyNative' -as [type]))) {
         $auditPolicyNativeSource = @'
 using System;
 using System.Runtime.InteropServices;
@@ -310,12 +324,14 @@ public static class AuditPolicyNative {
             Add-Type -TypeDefinition $auditPolicyNativeSource -ErrorAction Stop
         }
         catch {
-            # Add-Type -TypeDefinition is blocked under Constrained Language Mode (JEA)
-            Write-Verbose "Get-AuditPolicyTable: Add-Type AuditPolicyNative failed: $($_.Exception.Message)"
+            foreach ($entry in $table.Values) {
+                $entry.UnavailableReason = 'NativeCompilationFailed'
+            }
+            Write-Warning "Get-AuditPolicyTable: native audit-policy compilation failed; using the auditpol fallback: $($_.Exception.Message)"
         }
     }
 
-    if ([bool]('AuditPolicyNative' -as [type])) {
+    if ($dynamicCompilationExpected -and [bool]('AuditPolicyNative' -as [type])) {
         try {
             $guidList = New-Object 'System.Collections.Generic.List[guid]'
             foreach ($key in $guidToName.Keys) { $guidList.Add([guid]$key) }

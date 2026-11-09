@@ -7,6 +7,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.8.1] - 2026-11-09
+
+### Added
+
+- Live $MFT SI/FN timestomp scanning: new `Get-FileSystemJournal -Mode MftTimestompScan` uses `FSCTL_GET_NTFS_VOLUME_DATA` / `FSCTL_GET_NTFS_FILE_RECORD` to enumerate in-use FILE records natively (elevated), decoding $STANDARD_INFORMATION and $FILE_NAME timestamps and flagging SI/FN mismatches with directional reasons. Includes `-IncludeAll` and `-MaxSeconds`, record/time caps with honest Truncated/Incomplete/StopReason states, and ordinal-gap notes that never claim deleted-file evidence.
+- New private `Get-MftNative.ps1` with a pure `ParseFileRecord` seam (explicit fixup handling for offline records only) and 27 synthetic parser/enumeration/integration tests.
+
+### Added
+
+- Narrow JEA scan support: the new public `Invoke-WsaRemoteFunctionSet` exposes only the existing Quick, Standard, and Deep curated lists with Results/Errors and effective-language diagnostics. `Invoke-EnterpriseSecurityScan -ConfigurationName` uses a preinstalled endpoint module and a literal enum-selected command, skips all ZIP/deployment steps, rejects `-ModulePath`, and preserves the legacy deployment path when omitted.
+- Added `RoleCapabilities/WindowsSecurityAudit.Scan.psrc`, `JEA/WindowsSecurityAudit.Sample.pssc`, and installation/security guidance. The role exposes only the qualified wrapper, with no providers, external commands, arbitrary code/path parameters, hardening functions, or memory-dump functions. Publish staging now includes both folders.
+- Added effective-language capability checks and CLM-tolerant loader arrays. Password policy, audit policy, WLAN, USN, and process-dump helpers skip runtime compilation when dynamic compilation is not expected, record explicit reasons, and retain their existing fallbacks. WLAN assessment and USN notes now distinguish unavailable enumeration from an empty result.
+- Added 27 cross-platform JEA tests covering simulated ConstrainedLanguage, role/session data safety, fixed-list mapping and rejection of elevated primitives, exact remote command text, ConfigurationName propagation, deployment suppression, and WhatIf behavior. Module export count is now 76 functions plus one alias.
+
+### Notes
+
+- JEA `NoLanguage` and effective `ConstrainedLanguage` are different execution modes. A visible trusted function can compile native helpers in `FullLanguage`; effective CLM takes the documented fallback path. This is a curated scan scenario, not a claim that all 76 functions are CLM-compatible. `Get-MultiSystemAudit` remains outside this scenario.
+- Real endpoint registration, NoLanguage invocation from Windows PowerShell 5.1 and PowerShell 7, ACL/transcript/RunAs behavior, and WDAC-enforced ConstrainedLanguage still require Windows integration verification.
+
 ## [1.8.0] - 2026-11-09
 
 ### Security
@@ -213,7 +232,8 @@ Post-release audit hardening. Every finding below was verified against the code 
 - Cloud Security: Azure AD risky sign-ins, M365 security posture, cloud compliance status.
 - Hardening: audit policies, PowerShell security (logging, transcription), security baseline enforcement — all with `-WhatIf` support.
 
-[Unreleased]: https://github.com/okanyildiz/WindowsSecurityAudit/compare/v1.8.0...HEAD
+[Unreleased]: https://github.com/okanyildiz/WindowsSecurityAudit/compare/v1.8.1...HEAD
+[1.8.1]: https://github.com/okanyildiz/WindowsSecurityAudit/releases/tag/v1.8.1
 [1.8.0]: https://github.com/okanyildiz/WindowsSecurityAudit/releases/tag/v1.8.0
 [1.7.1]: https://github.com/okanyildiz/WindowsSecurityAudit/releases/tag/v1.7.1
 [1.7.0]: https://github.com/okanyildiz/WindowsSecurityAudit/releases/tag/v1.7.0

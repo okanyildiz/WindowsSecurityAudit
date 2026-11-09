@@ -6,7 +6,7 @@ function Invoke-EnterpriseSecurityScan {
         Executes comprehensive security assessments on multiple remote computers simultaneously,
         collecting and aggregating results for enterprise-wide security analysis.
 
-        Two execution modes are available:
+        Three execution modes are available:
 
         Built-in checks (default): a fixed set of native-cmdlet checks (Defender, firewall,
         UAC, updates, local admins, event log and disk health) runs on each target and a
@@ -24,6 +24,11 @@ function Invoke-EnterpriseSecurityScan {
         heuristic convenience, not a detection guarantee. Remote targets require PowerShell
         5.1+ with remoting enabled and Expand-Archive available.
 
+        Preinstalled JEA (-UseModuleFunctions -ConfigurationName): connects to the named
+        endpoint and invokes only Invoke-WsaRemoteFunctionSet with the selected literal
+        FunctionSet. The endpoint loads its preinstalled module; no archive, module path,
+        remote extraction, remote import, or temporary-directory cleanup is used.
+
         Fleet hardening: connectivity is probed in parallel through the runspace pool before
         any scan job is queued (-ProbeTimeoutSec bounds each probe), and every scan job is
         bounded by -HostTimeoutSec; jobs exceeding the limit are stopped, disposed, and
@@ -38,8 +43,9 @@ function Invoke-EnterpriseSecurityScan {
     .PARAMETER ScanType
         Type of built-in scan: Quick, Standard, or Comprehensive
     .PARAMETER UseModuleFunctions
-        Deploy the WindowsSecurityAudit module to each target and run the real module
-        functions selected by -RemoteFunctionSet instead of the built-in native-cmdlet checks
+        Run the real module functions selected by -RemoteFunctionSet instead of the built-in
+        checks. Without ConfigurationName the module is deployed; with ConfigurationName the
+        endpoint's preinstalled module is used.
     .PARAMETER RemoteFunctionSet
         Curated module function bundle to run remotely: Quick (Get-SecurityBaseline,
         Get-DefenderStatus), Standard (Quick + Find-SuspiciousProcesses,
@@ -48,7 +54,11 @@ function Invoke-EnterpriseSecurityScan {
         Get-VulnerabilityAssessment). Default: Standard
     .PARAMETER ModulePath
         Explicit path to the WindowsSecurityAudit module root to package. When omitted, the
-        root is resolved from the running module (or the parent of this script's folder)
+        root is resolved from the running module (or the parent of this script's folder).
+        This parameter is rejected with ConfigurationName.
+    .PARAMETER ConfigurationName
+        Name of a preinstalled JEA session configuration. Requires UseModuleFunctions and
+        invokes only the fixed Invoke-WsaRemoteFunctionSet wrapper on the endpoint.
     .PARAMETER ProbeTimeoutSec
         Maximum seconds to wait for each parallel connectivity probe (default: 3)
     .PARAMETER HostTimeoutSec
@@ -64,6 +74,9 @@ function Invoke-EnterpriseSecurityScan {
     .EXAMPLE
         Invoke-EnterpriseSecurityScan -TargetFile targets.csv -UseModuleFunctions -RemoteFunctionSet Deep -Credential $cred -HostTimeoutSec 600
         Deploys the module to every host listed in targets.csv and runs the Deep function bundle
+    .EXAMPLE
+        Invoke-EnterpriseSecurityScan -ComputerName srv1 -ConfigurationName WindowsSecurityAudit -UseModuleFunctions -RemoteFunctionSet Standard
+        Runs the Standard set through the preinstalled WindowsSecurityAudit JEA endpoint.
     .EXAMPLE
         Invoke-EnterpriseSecurityScan -ComputerName "SERVER01" -UseModuleFunctions -WhatIf
         Shows what would be packaged, deployed, and executed without changing anything
@@ -97,6 +110,9 @@ function Invoke-EnterpriseSecurityScan {
         [string]$ModulePath,
 
         [Parameter()]
+        [string]$ConfigurationName,
+
+        [Parameter()]
         [ValidateRange(1, 3600)]
         [int]$ProbeTimeoutSec = 3,
 
@@ -117,6 +133,22 @@ function Invoke-EnterpriseSecurityScan {
         $zipLeafName = $null
         $moduleRoot = $null
         $remoteFunctions = @()
+        $configurationNameSupplied = $PSBoundParameters.ContainsKey('ConfigurationName')
+
+        if ($configurationNameSupplied) {
+            if ([string]::IsNullOrWhiteSpace($ConfigurationName)) {
+                Write-Error 'ConfigurationName cannot be empty.'
+                throw 'ConfigurationName cannot be empty'
+            }
+            if (-not $UseModuleFunctions) {
+                Write-Error 'ConfigurationName requires -UseModuleFunctions.'
+                throw 'ConfigurationName requires -UseModuleFunctions'
+            }
+            if ($PSBoundParameters.ContainsKey('ModulePath')) {
+                Write-Error 'ModulePath cannot be used with ConfigurationName; the JEA endpoint loads its preinstalled module.'
+                throw 'ModulePath is not supported in PreinstalledJea mode'
+            }
+        }
 
         # Assemble the target list from -ComputerName and/or -TargetFile
         $targetComputers = @()
@@ -202,48 +234,54 @@ function Invoke-EnterpriseSecurityScan {
         }
 
         if ($UseModuleFunctions) {
-            Write-Host "Mode: Module function deployment ($RemoteFunctionSet set)" -ForegroundColor Yellow
-            Write-Host "Remote Functions: $($remoteFunctions -join ', ')" -ForegroundColor Yellow
-
-            # Resolve the module root from -ModulePath, the running module, or this script's parent folder
-            if (-not [string]::IsNullOrWhiteSpace($ModulePath)) {
-                $moduleRoot = $ModulePath
+            if ($configurationNameSupplied) {
+                Write-Host "Mode: Preinstalled JEA module functions ($RemoteFunctionSet set, configuration '$ConfigurationName')" -ForegroundColor Yellow
+                Write-Host "Remote Functions: $($remoteFunctions -join ', ')" -ForegroundColor Yellow
             }
             else {
-                $owningModule = $MyInvocation.MyCommand.Module
-                if ($null -ne $owningModule -and -not [string]::IsNullOrEmpty($owningModule.ModuleBase)) {
-                    $moduleRoot = $owningModule.ModuleBase
-                }
-                elseif (-not [string]::IsNullOrEmpty($PSScriptRoot)) {
-                    $moduleRoot = Split-Path -Path $PSScriptRoot -Parent
-                }
-            }
+                Write-Host "Mode: Module function deployment ($RemoteFunctionSet set)" -ForegroundColor Yellow
+                Write-Host "Remote Functions: $($remoteFunctions -join ', ')" -ForegroundColor Yellow
 
-            if ([string]::IsNullOrEmpty($moduleRoot) -or -not (Test-Path -Path $moduleRoot -PathType Container)) {
-                Write-Error "Unable to locate the WindowsSecurityAudit module root. Provide -ModulePath."
-                throw "Module root not found"
-            }
-
-            $moduleEntryPoints = @(Get-ChildItem -Path $moduleRoot -File -ErrorAction SilentlyContinue | Where-Object { $_.Extension -in @('.psd1', '.psm1') })
-            if ($moduleEntryPoints.Count -eq 0) {
-                Write-Error "No .psd1 or .psm1 found under module root '$moduleRoot'"
-                throw "No module entry point found under '$moduleRoot'"
-            }
-
-            # Package the module into a temporary zip archive for deployment
-            $zipLeafName = "WindowsSecurityAudit_$([guid]::NewGuid().ToString('N')).zip"
-            $candidateZipPath = Join-Path -Path ([System.IO.Path]::GetTempPath()) -ChildPath $zipLeafName
-            if ($PSCmdlet.ShouldProcess($moduleRoot, "Package module to temporary archive '$candidateZipPath' for deployment to $($targetComputers.Count) system(s)")) {
-                try {
-                    $moduleContent = @(Get-ChildItem -Path $moduleRoot -Force -ErrorAction Stop | Where-Object { $_.Name -ne '.git' })
-                    Compress-Archive -Path $moduleContent.FullName -DestinationPath $candidateZipPath -Force -ErrorAction Stop
-                    $zipPath = $candidateZipPath
-                    $zipSizeKB = [math]::Round((Get-Item -Path $zipPath).Length / 1KB, 1)
-                    Write-Host "Module packaged: $zipPath ($zipSizeKB KB)" -ForegroundColor Yellow
+                # Resolve the module root from -ModulePath, the running module, or this script's parent folder
+                if (-not [string]::IsNullOrWhiteSpace($ModulePath)) {
+                    $moduleRoot = $ModulePath
                 }
-                catch {
-                    Write-Error "Failed to package module from '$moduleRoot': $_"
-                    throw
+                else {
+                    $owningModule = $MyInvocation.MyCommand.Module
+                    if ($null -ne $owningModule -and -not [string]::IsNullOrEmpty($owningModule.ModuleBase)) {
+                        $moduleRoot = $owningModule.ModuleBase
+                    }
+                    elseif (-not [string]::IsNullOrEmpty($PSScriptRoot)) {
+                        $moduleRoot = Split-Path -Path $PSScriptRoot -Parent
+                    }
+                }
+
+                if ([string]::IsNullOrEmpty($moduleRoot) -or -not (Test-Path -Path $moduleRoot -PathType Container)) {
+                    Write-Error "Unable to locate the WindowsSecurityAudit module root. Provide -ModulePath."
+                    throw "Module root not found"
+                }
+
+                $moduleEntryPoints = @(Get-ChildItem -Path $moduleRoot -File -ErrorAction SilentlyContinue | Where-Object { $_.Extension -in @('.psd1', '.psm1') })
+                if ($moduleEntryPoints.Count -eq 0) {
+                    Write-Error "No .psd1 or .psm1 found under module root '$moduleRoot'"
+                    throw "No module entry point found under '$moduleRoot'"
+                }
+
+                # Package the module into a temporary zip archive for deployment
+                $zipLeafName = "WindowsSecurityAudit_$([guid]::NewGuid().ToString('N')).zip"
+                $candidateZipPath = Join-Path -Path ([System.IO.Path]::GetTempPath()) -ChildPath $zipLeafName
+                if ($PSCmdlet.ShouldProcess($moduleRoot, "Package module to temporary archive '$candidateZipPath' for deployment to $($targetComputers.Count) system(s)")) {
+                    try {
+                        $moduleContent = @(Get-ChildItem -Path $moduleRoot -Force -ErrorAction Stop | Where-Object { $_.Name -ne '.git' })
+                        Compress-Archive -Path $moduleContent.FullName -DestinationPath $candidateZipPath -Force -ErrorAction Stop
+                        $zipPath = $candidateZipPath
+                        $zipSizeKB = [math]::Round((Get-Item -Path $zipPath).Length / 1KB, 1)
+                        Write-Host "Module packaged: $zipPath ($zipSizeKB KB)" -ForegroundColor Yellow
+                    }
+                    catch {
+                        Write-Error "Failed to package module from '$moduleRoot': $_"
+                        throw
+                    }
                 }
             }
         }
@@ -409,10 +447,10 @@ function Invoke-EnterpriseSecurityScan {
             return $result
         }
 
-        # Worker for one host: deploy the module over a PS session, run the selected module
-        # functions remotely, and remove the remote temp directory on every path
+        # Worker for one host: either deploy the module or invoke the fixed wrapper
+        # through a preinstalled JEA endpoint. Only deployment mode uses remote temp files.
         $moduleWorker = {
-            param($Computer, $Cred, [bool]$HasCredential, $ZipPath, $ZipFileName, [string[]]$FunctionNames)
+            param($Computer, $Cred, [bool]$HasCredential, $ZipPath, $ZipFileName, [string[]]$FunctionNames, [string]$FunctionSet, [string]$JeaConfigurationName, [bool]$UsePreinstalledJea)
 
             $result = [PSCustomObject]@{
                 ComputerName = $Computer
@@ -422,61 +460,79 @@ function Invoke-EnterpriseSecurityScan {
                 Findings = @()
                 Details = @{}
             }
+            if ($UsePreinstalledJea) {
+                $result.Details.ExecutionMode = 'PreinstalledJea'
+                $result.Details.ConfigurationName = $JeaConfigurationName
+                $result.Details.ModuleDeployed = $false
+            }
 
             $session = $null
             $remoteTempDir = $null
             try {
                 $sessionParams = @{ ComputerName = $Computer; ErrorAction = 'Stop' }
                 if ($HasCredential) { $sessionParams['Credential'] = $Cred }
+                if ($UsePreinstalledJea) { $sessionParams['ConfigurationName'] = $JeaConfigurationName }
                 $session = New-PSSession @sessionParams
 
-                $remoteTempDir = Invoke-Command -Session $session -ErrorAction Stop -ScriptBlock {
-                    $dir = Join-Path -Path ([System.IO.Path]::GetTempPath()) -ChildPath ("WSA_Scan_" + [guid]::NewGuid().ToString('N'))
-                    New-Item -Path $dir -ItemType Directory -Force | Out-Null
-                    $dir
+                if ($UsePreinstalledJea) {
+                    $remoteCommand = $null
+                    switch ($FunctionSet) {
+                        'Quick' { $remoteCommand = { Invoke-WsaRemoteFunctionSet -FunctionSet Quick } }
+                        'Standard' { $remoteCommand = { Invoke-WsaRemoteFunctionSet -FunctionSet Standard } }
+                        'Deep' { $remoteCommand = { Invoke-WsaRemoteFunctionSet -FunctionSet Deep } }
+                    }
+                    if ($null -eq $remoteCommand) { throw "Unsupported remote function set '$FunctionSet'" }
+                    $remoteResult = Invoke-Command -Session $session -ErrorAction Stop -ScriptBlock $remoteCommand
                 }
+                else {
+                    $remoteTempDir = Invoke-Command -Session $session -ErrorAction Stop -ScriptBlock {
+                        $dir = Join-Path -Path ([System.IO.Path]::GetTempPath()) -ChildPath ("WSA_Scan_" + [guid]::NewGuid().ToString('N'))
+                        New-Item -Path $dir -ItemType Directory -Force | Out-Null
+                        $dir
+                    }
 
-                # Never feed a host-supplied path straight into Copy-Item or Remove-Item:
-                # only accept the exact temp shape this script asked the host to create
-                if ($remoteTempDir -isnot [string] -or $remoteTempDir -notmatch 'WSA_Scan_[0-9a-fA-F]{32}$') {
-                    $remoteTempDir = $null
-                    throw "Remote host returned an unexpected temp path; aborting deployment before any copy or cleanup runs."
-                }
+                    # Never feed a host-supplied path straight into Copy-Item or Remove-Item:
+                    # only accept the exact temp shape this script asked the host to create
+                    if ($remoteTempDir -isnot [string] -or $remoteTempDir -notmatch 'WSA_Scan_[0-9a-fA-F]{32}$') {
+                        $remoteTempDir = $null
+                        throw "Remote host returned an unexpected temp path; aborting deployment before any copy or cleanup runs."
+                    }
 
-                Copy-Item -Path $ZipPath -Destination $remoteTempDir -ToSession $session -Force -ErrorAction Stop
+                    Copy-Item -Path $ZipPath -Destination $remoteTempDir -ToSession $session -Force -ErrorAction Stop
 
-                $remoteResult = Invoke-Command -Session $session -ErrorAction Stop -ScriptBlock {
-                    param($TempDir, $ZipFileName, $FunctionNames)
+                    $remoteResult = Invoke-Command -Session $session -ErrorAction Stop -ScriptBlock {
+                        param($TempDir, $ZipFileName, $FunctionNames)
 
-                    $runOutput = [PSCustomObject]@{ Results = [ordered]@{}; Errors = @() }
-                    try {
-                        $zipFile = Join-Path -Path $TempDir -ChildPath $ZipFileName
-                        $extractDir = Join-Path -Path $TempDir -ChildPath 'Module'
-                        Expand-Archive -Path $zipFile -DestinationPath $extractDir -Force -ErrorAction Stop
+                        $runOutput = [PSCustomObject]@{ Results = [ordered]@{}; Errors = @() }
+                        try {
+                            $zipFile = Join-Path -Path $TempDir -ChildPath $ZipFileName
+                            $extractDir = Join-Path -Path $TempDir -ChildPath 'Module'
+                            Expand-Archive -Path $zipFile -DestinationPath $extractDir -Force -ErrorAction Stop
 
-                        $manifest = @(Get-ChildItem -Path $extractDir -Filter '*.psd1' -Recurse -File | Select-Object -First 1)
-                        $rootModule = @(Get-ChildItem -Path $extractDir -Filter '*.psm1' -Recurse -File | Select-Object -First 1)
-                        $importTarget = $null
-                        if ($manifest.Count -gt 0) { $importTarget = $manifest[0].FullName }
-                        elseif ($rootModule.Count -gt 0) { $importTarget = $rootModule[0].FullName }
-                        if ($null -eq $importTarget) { throw "No .psd1 or .psm1 found in the deployed module archive" }
+                            $manifest = @(Get-ChildItem -Path $extractDir -Filter '*.psd1' -Recurse -File | Select-Object -First 1)
+                            $rootModule = @(Get-ChildItem -Path $extractDir -Filter '*.psm1' -Recurse -File | Select-Object -First 1)
+                            $importTarget = $null
+                            if ($manifest.Count -gt 0) { $importTarget = $manifest[0].FullName }
+                            elseif ($rootModule.Count -gt 0) { $importTarget = $rootModule[0].FullName }
+                            if ($null -eq $importTarget) { throw "No .psd1 or .psm1 found in the deployed module archive" }
 
-                        Import-Module $importTarget -Force -ErrorAction Stop
+                            Import-Module $importTarget -Force -ErrorAction Stop
 
-                        foreach ($functionName in $FunctionNames) {
-                            try {
-                                $runOutput.Results[$functionName] = & $functionName
-                            }
-                            catch {
-                                $runOutput.Errors += ("{0}: {1}" -f $functionName, $_.Exception.Message)
+                            foreach ($functionName in $FunctionNames) {
+                                try {
+                                    $runOutput.Results[$functionName] = & $functionName
+                                }
+                                catch {
+                                    $runOutput.Errors += ("{0}: {1}" -f $functionName, $_.Exception.Message)
+                                }
                             }
                         }
-                    }
-                    finally {
-                        Remove-Item -Path $TempDir -Recurse -Force -ErrorAction SilentlyContinue
-                    }
-                    return $runOutput
-                } -ArgumentList $remoteTempDir, $ZipFileName, $FunctionNames
+                        finally {
+                            Remove-Item -Path $TempDir -Recurse -Force -ErrorAction SilentlyContinue
+                        }
+                        return $runOutput
+                    } -ArgumentList $remoteTempDir, $ZipFileName, $FunctionNames
+                }
 
                 $moduleResults = $null
                 $functionErrors = @()
@@ -485,7 +541,17 @@ function Invoke-EnterpriseSecurityScan {
                     if ($null -ne $remoteResult.PSObject.Properties['Errors'] -and $null -ne $remoteResult.Errors) { $functionErrors = @($remoteResult.Errors) }
                 }
 
-                $result.Details.ModuleDeployed = $true
+                if ($UsePreinstalledJea) {
+                    if ($null -ne $remoteResult -and $null -ne $remoteResult.PSObject.Properties['EffectiveLanguageMode']) {
+                        $result.Details.EffectiveLanguageMode = $remoteResult.EffectiveLanguageMode
+                    }
+                    if ($null -ne $remoteResult -and $null -ne $remoteResult.PSObject.Properties['DynamicCompilationExpected']) {
+                        $result.Details.DynamicCompilationExpected = $remoteResult.DynamicCompilationExpected
+                    }
+                }
+                else {
+                    $result.Details.ModuleDeployed = $true
+                }
                 $result.Details.RemoteFunctionSet = ($FunctionNames -join ', ')
                 $result.Details.ModuleResults = $moduleResults
                 $result.Details.FunctionErrors = $functionErrors
@@ -667,21 +733,32 @@ function Invoke-EnterpriseSecurityScan {
             # Phase 2: queue one scan job per reachable host
             foreach ($computer in $reachableHosts) {
                 if ($UseModuleFunctions) {
-                    if (-not $PSCmdlet.ShouldProcess($computer, "Deploy WindowsSecurityAudit module and run '$RemoteFunctionSet' function set ($($remoteFunctions -join ', '))")) {
+                    $moduleAction = "Deploy WindowsSecurityAudit module and run '$RemoteFunctionSet' function set ($($remoteFunctions -join ', '))"
+                    $plannedAction = "Deploy module archive and run '$RemoteFunctionSet' function set"
+                    $whatIfDetails = @{
+                        PlannedAction = $plannedAction
+                        Functions = ($remoteFunctions -join ', ')
+                    }
+                    if ($configurationNameSupplied) {
+                        $moduleAction = "Run '$RemoteFunctionSet' function set through preinstalled JEA configuration '$ConfigurationName' on $computer"
+                        $plannedAction = "Run '$RemoteFunctionSet' function set through preinstalled JEA configuration '$ConfigurationName'"
+                        $whatIfDetails.PlannedAction = $plannedAction
+                        $whatIfDetails.ExecutionMode = 'PreinstalledJea'
+                        $whatIfDetails.ConfigurationName = $ConfigurationName
+                        $whatIfDetails.ModuleDeployed = $false
+                    }
+                    if (-not $PSCmdlet.ShouldProcess($computer, $moduleAction)) {
                         $results.SystemResults += [PSCustomObject]@{
                             ComputerName = $computer
                             ScanDate = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
                             Status = 'WhatIf'
                             SecurityScore = 0
                             Findings = @()
-                            Details = @{
-                                PlannedAction = "Deploy module archive and run '$RemoteFunctionSet' function set"
-                                Functions = ($remoteFunctions -join ', ')
-                            }
+                            Details = $whatIfDetails
                         }
                         continue
                     }
-                    Write-Verbose "Queuing module deployment scan for: $computer"
+                    Write-Verbose "Queuing module function scan for: $computer"
                     $powershell = [powershell]::Create()
                     $powershell.RunspacePool = $runspacePool
                     $powershell.AddScript($moduleWorker).
@@ -690,7 +767,10 @@ function Invoke-EnterpriseSecurityScan {
                         AddArgument(($null -ne $Credential)).
                         AddArgument($zipPath).
                         AddArgument($zipLeafName).
-                        AddArgument([string[]]$remoteFunctions) | Out-Null
+                        AddArgument([string[]]$remoteFunctions).
+                        AddArgument($RemoteFunctionSet).
+                        AddArgument($ConfigurationName).
+                        AddArgument([bool]$configurationNameSupplied) | Out-Null
 
                     $jobs += [PSCustomObject]@{
                         Computer = $computer
@@ -835,13 +915,19 @@ function Invoke-EnterpriseSecurityScan {
                             ComputerName = $job.Computer
                             Reason = "Timeout after $HostTimeoutSec seconds"
                         }
+                        $timeoutDetails = @{ Error = "Host execution exceeded the $HostTimeoutSec second limit" }
+                        if ($configurationNameSupplied) {
+                            $timeoutDetails.ExecutionMode = 'PreinstalledJea'
+                            $timeoutDetails.ConfigurationName = $ConfigurationName
+                            $timeoutDetails.ModuleDeployed = $false
+                        }
                         $results.SystemResults += [PSCustomObject]@{
                             ComputerName = $job.Computer
                             ScanDate = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
                             Status = 'Timeout'
                             SecurityScore = 0
                             Findings = @()
-                            Details = @{ Error = "Host execution exceeded the $HostTimeoutSec second limit" }
+                            Details = $timeoutDetails
                         }
                         $completed++
                     }

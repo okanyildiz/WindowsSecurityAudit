@@ -1,0 +1,10 @@
+﻿@{
+    SessionType = 'RestrictedRemoteServer'
+    RunAsVirtualAccount = $true
+    TranscriptDirectory = 'C:\ProgramData\JEAConfiguration\Transcripts'
+    RoleDefinitions = @{
+        'CONTOSO\WSA-Scan-Operators' = @{
+            RoleCapabilities = 'WindowsSecurityAudit.Scan'
+        }
+    }
+}

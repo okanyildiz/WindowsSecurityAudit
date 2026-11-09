@@ -5,9 +5,9 @@
 [![PowerShell](https://img.shields.io/badge/PowerShell-5.1%2B-blue.svg)](https://github.com/PowerShell/PowerShell)
 [![Windows](https://img.shields.io/badge/Windows-10%2F11%2FServer%202016%2B-blue.svg)](https://www.microsoft.com/windows)
 [![License](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
-[![Version](https://img.shields.io/badge/Version-1.8.0-orange.svg)](https://github.com/okanyildiz/WindowsSecurityAudit/releases)
+[![Version](https://img.shields.io/badge/Version-1.8.1-orange.svg)](https://github.com/okanyildiz/WindowsSecurityAudit/releases)
 [![PowerShell Gallery](https://img.shields.io/powershellgallery/v/WindowsSecurityAudit.svg?label=PSGallery)](https://www.powershellgallery.com/packages/WindowsSecurityAudit)
-[![Functions](https://img.shields.io/badge/Functions-75-brightgreen.svg)](https://github.com/okanyildiz/WindowsSecurityAudit)
+[![Functions](https://img.shields.io/badge/Functions-76-brightgreen.svg)](https://github.com/okanyildiz/WindowsSecurityAudit)
 [![Modules](https://img.shields.io/badge/Modules-14-blue.svg)](https://github.com/okanyildiz/WindowsSecurityAudit)
 [![CI](https://github.com/okanyildiz/WindowsSecurityAudit/actions/workflows/ci.yml/badge.svg)](https://github.com/okanyildiz/WindowsSecurityAudit/actions/workflows/ci.yml)
 [![Tests](https://img.shields.io/badge/Tests-CI_Gated-brightgreen.svg)](https://github.com/okanyildiz/WindowsSecurityAudit/tree/main/tests)
@@ -28,7 +28,7 @@
 
 ## 🧰 Full Feature Overview
 
-**75 functions across 14 modules** — the complete toolkit at a glance:
+**76 functions across 14 modules** — the complete toolkit at a glance:
 
 | Module | Functions | Scope |
 |--------|:---------:|-------|
@@ -36,7 +36,7 @@
 | 🕵️ **Detection** | 7 | Persistence mechanisms, suspicious processes, network anomalies, authentication attacks, credential-access events (Kerberoasting/spray/golden-ticket heuristic), defense-evasion & tamper detection, Sysmon log analytics (process chains/beaconing/LSASS access) |
 | 🔬 **Analysis** | 4 | Deep-dive analysis of event logs, registry, process memory, and file system |
 | 🚨 **Response** | 8 | Incident response orchestration, forensic evidence collection, HTML/JSON/CSV/NDJSON/CEF report export, SIEM event conversion, DPAPI SIEM auth profiles, SIEM live streaming (Splunk HEC/Sentinel Logs Ingestion/legacy Sentinel/webhook) |
-| 🏢 **Enterprise** | 4 | Multi-system parallel scanning, full assessment orchestration, scheduled scans with Teams/Slack/email alerts |
+| 🏢 **Enterprise** | 5 | Multi-system parallel scanning, curated JEA scans, full assessment orchestration, scheduled scans with Teams/Slack/email alerts |
 | 🔒 **Hardening** | 4 | Audit policies, PowerShell security, baseline enforcement, curated auto-remediation (WhatIf-first, with rollback) |
 | 🛡️ **Windows Defender** | 3 | Defender health monitoring, custom scans, configuration optimization |
 | 🎯 **Threat Hunting** | 7 | APT indicators, data exfiltration, lateral movement, LOLBins, ATT&CK mapping/Navigator export, threat intel (MISP/TAXII/STIX) |
@@ -70,7 +70,7 @@ If you find this tool valuable for your security operations, consider supporting
 
 In today's rapidly evolving threat landscape, organizations face unprecedented challenges in maintaining robust security postures across their Windows infrastructure. Traditional security tools often fall short, requiring multiple expensive licenses, complex integrations, and specialized expertise. The **Windows Security Audit Module** addresses this by offering enterprise-grade security capabilities through a unified, open-source PowerShell framework.
 
-The toolkit bundles **72 functions across 14 specialized modules** covering the audit lifecycle end-to-end: baseline scoring, threat detection, forensic collection, hardening, compliance validation, vulnerability assessment and reporting. Capabilities that usually require stitching together several single-purpose tools ship here as one cohesive, MIT-licensed module — with a CI-gated Pester test suite on both PowerShell 7 and Windows PowerShell 5.1, and locale-invariant core checks that return correct results on non-English Windows systems (see [Known Limitations](#-known-limitations)).
+The toolkit bundles **76 functions across 14 specialized modules** covering the audit lifecycle end-to-end: baseline scoring, threat detection, forensic collection, hardening, compliance validation, vulnerability assessment and reporting. Capabilities that usually require stitching together several single-purpose tools ship here as one cohesive, MIT-licensed module — with a CI-gated Pester test suite on both PowerShell 7 and Windows PowerShell 5.1, and locale-invariant core checks that return correct results on non-English Windows systems (see [Known Limitations](#-known-limitations)).
 
 ### 🎯 The Vision
 
@@ -221,10 +221,11 @@ WindowsSecurityAudit/
 │   ├── Get-CredentialAccessEvents.ps1
 │   └── Get-SysmonAnalytics.ps1
 │
-├── 📁 Enterprise/                      # Enterprise (4 functions)
+├── 📁 Enterprise/                      # Enterprise (5 functions)
 │   ├── Get-MultiSystemAudit.ps1
 │   ├── Invoke-EnterpriseSecurityScan.ps1
 │   ├── Invoke-SecurityAssessment.ps1
+│   ├── Invoke-WsaRemoteFunctionSet.ps1
 │   └── Register-ScheduledSecurityScan.ps1
 │
 ├── 📁 Forensics/                       # Digital Forensics (7 functions)
@@ -504,6 +505,14 @@ Remove-SiemProfile -Name sentinel-prod -Scope LocalMachine -WhatIf
 # Deploy the module to remote hosts and run a curated function set
 # (zip -> Copy-Item -ToSession -> remote Import-Module)
 Invoke-EnterpriseSecurityScan -ComputerName srv1, srv2 -UseModuleFunctions -RemoteFunctionSet Standard
+
+# Or invoke the same curated set through a preinstalled narrow JEA endpoint.
+# See JEA/README.md; this mode performs no ZIP deployment or remote import.
+Invoke-EnterpriseSecurityScan `
+    -ComputerName srv1 `
+    -ConfigurationName WindowsSecurityAudit `
+    -UseModuleFunctions `
+    -RemoteFunctionSet Standard
 
 # Schedule a daily full scan with webhook alerts. The preferred interactive
 # input avoids echoing the URL or retaining it in command-line history.
@@ -955,6 +964,7 @@ Actual scan times depend on the target's hardware, event-log sizes and the modul
 
 - **DISM/SFC verdicts rely on CBS.log markers** — `Test-SystemIntegrity` interprets servicing-log markers rather than performing a full image analysis.
 - **USN journal reads are native binary since v1.7.0** — `Get-FileSystemJournal` uses `FSCTL_READ_USN_JOURNAL` (locale-invariant) when elevated; the `fsutil` text fallback still requires English-locale output. Raw `$MFT` record carving remains out of scope (summary-level metadata only).
+- **JEA support is a narrow curated scenario** — the sample role exposes only `Invoke-WsaRemoteFunctionSet`; `Get-MultiSystemAudit` and arbitrary module functions are not exposed. JEA `NoLanguage` is not ConstrainedLanguage. Native helpers use existing fallbacks when the effective language mode blocks compilation, but full-module CLM/WDAC compatibility is not claimed. Endpoint registration, NoLanguage, ACL, RunAs, and WDAC behavior require Windows integration testing (see `JEA/README.md`).
 - **Cloud compliance is a catalog, not an evaluation** — `Get-CloudComplianceStatus` returns `NotEvaluated` until framework-specific Microsoft Graph queries are implemented.
 - **No in-module memory acquisition** — full RAM capture requires external tools (WinPMEM, DumpIt, Magnet RAM Capture); `Export-MemoryDump` creates per-process dumps.
 
@@ -964,7 +974,7 @@ Actual scan times depend on the target's hardware, event-log sizes and the modul
 
 ### Community Edition - Forever FREE
 - ✅ **Price**: 100% FREE - No hidden costs
-- ✅ **Functions**: All 72 functions included
+- ✅ **Functions**: All 76 functions included
 - ✅ **Source Code**: Full access on GitHub
 - ✅ **Updates**: Regular security updates
 - ✅ **License**: MIT (commercial use allowed)
@@ -1028,7 +1038,7 @@ Found this useful? You can support development via [Buy Me a Coffee](https://buy
 ### Version 1.8 (Next)
 - [ ] **Raw $MFT record parsing** — go beyond fsutil summary output for full file-system timelines
 - [x] **Native USN journal reads** — `FSCTL_READ_USN_JOURNAL` P/Invoke replaces fsutil text parsing (v1.7.0; locale-invariant, V2/V3 records, 25 cross-platform fixture tests)
-- [ ] **JEA endpoint support** — run remote scans through Just Enough Administration constrained endpoints (CLM-safe: precompiled helpers, no Add-Type dependency)
+- [x] **Narrow JEA endpoint scenario** — preinstalled Quick/Standard/Deep scans through a single visible wrapper, sample role/session files, and effective-language native fallbacks (Unreleased; Windows endpoint and WDAC integration verification still required, not full-module CLM support)
 - [x] **Alert webhook DPAPI protection** — scheduled-scan webhooks use versioned LocalMachine DPAPI ciphertext by default, with SecureString input and an explicit PlainText compatibility mode (Unreleased)
 - [x] **SIEM streaming auth profiles** — DPAPI-backed named profiles and Entra client-credentials OAuth for the Sentinel Logs Ingestion API (Unreleased)
 

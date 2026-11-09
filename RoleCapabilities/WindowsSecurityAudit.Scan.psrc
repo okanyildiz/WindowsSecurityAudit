@@ -1,0 +1,7 @@
+﻿@{
+    Description = 'Read-only curated WindowsSecurityAudit scans'
+    ModulesToImport = @('WindowsSecurityAudit')
+    VisibleFunctions = @(
+        'WindowsSecurityAudit\Invoke-WsaRemoteFunctionSet'
+    )
+}

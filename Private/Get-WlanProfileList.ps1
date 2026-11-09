@@ -19,6 +19,18 @@ function Get-WlanProfileList {
     param()
 
     $result = @()
+    $effectiveLanguageMode = Get-WsaEffectiveLanguageMode
+    $dynamicCompilationExpected = Test-WsaDynamicCompilationExpected
+    $script:WlanProfileListStatus = 'Unavailable'
+    $script:WlanProfileListUnavailableReason = $null
+    $script:WlanProfileListEffectiveLanguageMode = $effectiveLanguageMode
+    $script:WlanProfileListDynamicCompilationExpected = $dynamicCompilationExpected
+
+    if (-not $dynamicCompilationExpected) {
+        $script:WlanProfileListUnavailableReason = 'ConstrainedLanguage'
+        Write-Warning "Get-WlanProfileList: native WLAN enumeration is unavailable in effective language mode '$effectiveLanguageMode'; no profiles can be reported."
+        return $result
+    }
 
     # Cheap pre-check so macOS/Linux dev boxes degrade silently
     $isWindowsHost = $false
@@ -31,6 +43,7 @@ function Get-WlanProfileList {
         $isWindowsHost = ($env:OS -eq 'Windows_NT')
     }
     if (-not $isWindowsHost) {
+        $script:WlanProfileListStatus = 'NotApplicable'
         Write-Verbose 'Get-WlanProfileList: not a Windows host; WLAN not applicable'
         return $result
     }
@@ -116,8 +129,8 @@ public static class WlanNative {
             Add-Type -TypeDefinition $wlanNativeSource -ErrorAction Stop
         }
         catch {
-            # Add-Type -TypeDefinition is blocked under Constrained Language Mode (JEA)
-            Write-Verbose "Get-WlanProfileList: Add-Type WlanNative failed: $($_.Exception.Message)"
+            $script:WlanProfileListUnavailableReason = 'NativeCompilationFailed'
+            Write-Warning "Get-WlanProfileList: native WLAN compilation failed; no profiles can be reported: $($_.Exception.Message)"
             return $result
         }
     }
@@ -127,6 +140,7 @@ public static class WlanNative {
         $profiles = [WlanNative]::GetProfiles([ref]$win32Error)
         if ($null -eq $profiles) {
             # 1062 = WlanSvc not running; any nonzero is 'not applicable', not an error
+            $script:WlanProfileListStatus = 'NotApplicable'
             Write-Verbose "Get-WlanProfileList: WLAN API unavailable (win32 $win32Error)"
             return $result
         }
@@ -140,9 +154,10 @@ public static class WlanNative {
                 InterfaceDescription = $wlanProfile.InterfaceDescription
             }
         }
+        $script:WlanProfileListStatus = 'Available'
     }
     catch {
-        # wlanapi.dll missing etc.: 'not applicable', not an error
+        $script:WlanProfileListStatus = 'NotApplicable'
         Write-Verbose "Get-WlanProfileList: enumeration failed: $($_.Exception.Message)"
         $result = @()
     }

@@ -74,7 +74,7 @@ jobs:
             'Core', 'Detection', 'Analysis', 'Response', 'Enterprise',
             'Hardening', 'WindowsDefender', 'ThreatHunting', 'Compliance',
             'ActiveDirectory', 'Vulnerability', 'Forensics', 'CloudSecurity',
-            'Reporting', 'Private'
+            'Reporting', 'Private', 'RoleCapabilities', 'JEA'
           )
           foreach ($item in $items) {
             Copy-Item -Path (Join-Path . $item) -Destination $staging -Recurse -Force -ErrorAction Stop

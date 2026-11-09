@@ -4,7 +4,7 @@
 .DESCRIPTION
     Comprehensive Windows security audit toolkit for threat detection and incident response
 .VERSION
-    1.8.0 (keep in sync with WindowsSecurityAudit.psd1 ModuleVersion)
+    1.8.1 (keep in sync with WindowsSecurityAudit.psd1 ModuleVersion)
 .AUTHOR
     Okan YILDIZ (keep in sync with WindowsSecurityAudit.psd1 Author)
 #>
@@ -15,7 +15,7 @@ Set-StrictMode -Version Latest
 # Module variables
 # NOTE: keep ModuleVersion in sync with the ModuleVersion field in WindowsSecurityAudit.psd1
 $script:ModuleRoot = $PSScriptRoot
-$script:ModuleVersion = '1.8.0'
+$script:ModuleVersion = '1.8.1'
 
 # Import all function files
 $Public = @(Get-ChildItem -Path "$PSScriptRoot\Core\*.ps1" -ErrorAction SilentlyContinue)
@@ -38,18 +38,18 @@ $Private = @(Get-ChildItem -Path "$PSScriptRoot\Private\*.ps1" -ErrorAction Sile
 
 # Import all function files, tracking failures so a broken file does not
 # silently export a missing function
-$script:FailedImports = [System.Collections.Generic.List[object]]::new()
-$script:LoadedPublic = [System.Collections.Generic.List[object]]::new()
+$script:FailedImports = @()
+$script:LoadedPublic = @()
 foreach ($import in @($Public + $Private)) {
     try {
         . $import.FullName
         if ($Public -contains $import) {
-            $script:LoadedPublic.Add($import)
+            $script:LoadedPublic += $import
         }
     }
     catch {
         Write-Error "Failed to import function $($import.FullName): $_"
-        $script:FailedImports.Add($import)
+        $script:FailedImports += $import
     }
 }
 
