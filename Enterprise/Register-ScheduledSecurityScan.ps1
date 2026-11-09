@@ -1114,7 +1114,7 @@ function Test-NoNonAdminWriteAccess {
         return $true
     }
     $acl = Get-Acl -Path $Path -ErrorAction Stop
-    $adminSids = @('S-1-5-18', 'S-1-5-32-544')
+    $adminSids = @('S-1-5-18', 'S-1-5-32-544', [System.Security.Principal.WindowsIdentity]::GetCurrent().User.Value)
     $fsr = [System.Security.AccessControl.FileSystemRights]
     $writeMask = [int64]($fsr::WriteData -bor $fsr::AppendData -bor $fsr::WriteAttributes -bor $fsr::WriteExtendedAttributes -bor $fsr::Delete -bor $fsr::DeleteSubdirectoriesAndFiles -bor $fsr::ChangePermissions -bor $fsr::TakeOwnership) -bor 0x40000000 -bor 0x10000000
     $rules = @($acl.GetAccessRules($true, $true, [System.Security.Principal.SecurityIdentifier]))
