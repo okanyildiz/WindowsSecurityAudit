@@ -272,6 +272,32 @@ function Initialize-SiemProfileDirectory {
     return $directory
 }
 
+function Move-SiemProfileFile {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$TemporaryPath,
+
+        [Parameter(Mandatory = $true)]
+        [string]$Path,
+
+        [Parameter()]
+        [switch]$Replace
+    )
+
+    if ($Replace.IsPresent) {
+        if ($env:OS -eq 'Windows_NT') {
+            [IO.File]::Replace($TemporaryPath, $Path, [NullString]::Value)
+        }
+        else {
+            [IO.File]::Move($TemporaryPath, $Path, $true)
+        }
+    }
+    else {
+        [IO.File]::Move($TemporaryPath, $Path)
+    }
+}
+
 function Write-SiemProfileJson {
     [CmdletBinding()]
     param(
@@ -316,13 +342,10 @@ function Write-SiemProfileJson {
                 throw 'SIEM profile was created by another process. Use -Force to replace it.'
             }
             Protect-SiemProfileAcl -Path $Path -Scope $Scope
-            # Remove+move instead of [IO.File]::Replace (which fails with
-            # 'path is empty' on some .NET/PS combinations in CI)
-            Remove-Item -LiteralPath $Path -Force -ErrorAction Stop
-            [IO.File]::Move($temporaryPath, $Path)
+            Move-SiemProfileFile -TemporaryPath $temporaryPath -Path $Path -Replace
         }
         else {
-            [IO.File]::Move($temporaryPath, $Path)
+            Move-SiemProfileFile -TemporaryPath $temporaryPath -Path $Path
         }
         Protect-SiemProfileAcl -Path $Path -Scope $Scope
     }

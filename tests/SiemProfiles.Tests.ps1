@@ -38,6 +38,7 @@ BeforeEach {
     $script:TestIngestionRequests = @()
     $script:TestTokenStatusSequence = @()
     $script:TestIngestionStatusSequence = @()
+    $script:TestTokenExpiresIn = 3600
     InModuleScope -ModuleName 'WindowsSecurityAudit' {
         $script:SiemTokenCache.Clear()
     }
@@ -90,7 +91,7 @@ BeforeEach {
             }
             return [PSCustomObject]@{
                 access_token = "test-token-$requestNumber"
-                expires_in   = 3600
+                expires_in   = $script:TestTokenExpiresIn
                 token_type   = 'Bearer'
             }
         }
@@ -109,11 +110,12 @@ BeforeEach {
             $bodyBytes = [Text.Encoding]::UTF8.GetByteCount($bodyText)
         }
         $script:TestIngestionRequests += [PSCustomObject]@{
-            Uri       = [string]$Uri
-            Method    = $Method
-            Headers   = $headerCopy
-            BodyText  = $bodyText
-            ByteCount = $bodyBytes
+            Uri         = [string]$Uri
+            Method      = $Method
+            ContentType = [string]$ContentType
+            Headers     = $headerCopy
+            BodyText    = $bodyText
+            ByteCount   = $bodyBytes
         }
         $status = 200
         if ($script:TestIngestionStatusSequence.Count -ge $requestNumber) {
@@ -242,6 +244,26 @@ Describe 'SIEM profile store' {
         Should -Invoke Protect-SiemSecret -ModuleName 'WindowsSecurityAudit' -Times 0 -Exactly
     }
 
+    It 'preserves the old profile and cleans temporary files when replacement fails' {
+        Set-SiemProfile -Name replace-failure -Destination GenericWebhook -Uri 'https://old.invalid' -Confirm:$false | Out-Null
+        $path = Join-Path $script:ProfileTestRoot 'CurrentUser/replace-failure.json'
+        $expectedPath = $path
+        $originalJson = [IO.File]::ReadAllText($path)
+        Mock -ModuleName 'WindowsSecurityAudit' Move-SiemProfileFile {
+            throw 'Injected profile replacement failure.'
+        }
+
+        {
+            Set-SiemProfile -Name replace-failure -Destination GenericWebhook -Uri 'https://new.invalid' -Force -Confirm:$false -ErrorAction Stop
+        } | Should -Throw '*Injected profile replacement failure*'
+        [IO.File]::ReadAllText($path) | Should -Be $originalJson
+        (Get-SiemProfile -Name replace-failure -Scope CurrentUser).Uri | Should -Be 'https://old.invalid'
+        @(Get-ChildItem -LiteralPath (Split-Path -Parent $path) -Filter '*.tmp' -File -Force).Count | Should -Be 0
+        Should -Invoke Move-SiemProfileFile -ModuleName 'WindowsSecurityAudit' -Times 1 -Exactly -ParameterFilter {
+            $Replace.IsPresent -and $Path -eq $expectedPath
+        }
+    }
+
     It 'does not remove a profile under WhatIf' {
         Set-SiemProfile -Name keep-me -Destination GenericWebhook -Uri 'https://example.invalid' -Confirm:$false | Out-Null
         Remove-SiemProfile -Name keep-me -WhatIf
@@ -291,17 +313,16 @@ Describe 'Sentinel Logs Ingestion authentication and transport' {
     }
 
     It 'refreshes a token inside the five-minute expiry margin' {
-        InModuleScope -ModuleName 'WindowsSecurityAudit' {
-            $key = '11111111-1111-1111-1111-111111111111|22222222-2222-2222-2222-222222222222|https://monitor.azure.com/.default'
-            $script:SiemTokenCache[$key] = [PSCustomObject]@{
-                AccessToken = 'stale-token'
-                ExpiresAt   = [DateTimeOffset]::UtcNow.AddSeconds(-1)
-            }
-        }
-        New-TestFinding | Send-SiemEvent -Destination SentinelLogsIngestion -Uri $script:IngestionUri -TenantId $script:TenantId -ClientId $script:ClientId -ClientSecret (New-TestSecret) -ThrottleMs 0 | Out-Null
+        $script:TestTokenExpiresIn = 299
+        $secret = New-TestSecret
+        New-TestFinding -Message first | Send-SiemEvent -Destination SentinelLogsIngestion -Uri $script:IngestionUri -TenantId $script:TenantId -ClientId $script:ClientId -ClientSecret $secret -ThrottleMs 0 | Out-Null
+        New-TestFinding -Message second | Send-SiemEvent -Destination SentinelLogsIngestion -Uri $script:IngestionUri -TenantId $script:TenantId -ClientId $script:ClientId -ClientSecret $secret -ThrottleMs 0 | Out-Null
+
+        @($script:TestTokenRequests).Count | Should -Be 2
         $ingestion = @($script:TestIngestionRequests)
+        $ingestion.Count | Should -Be 2
         $ingestion[0].Headers.Authorization | Should -Be 'Bearer test-token-1'
-        @($script:TestTokenRequests).Count | Should -Be 1
+        $ingestion[1].Headers.Authorization | Should -Be 'Bearer test-token-2'
     }
 
     It 're-authenticates once and retries the first ingestion HTTP 401' {
@@ -345,12 +366,13 @@ Describe 'Sentinel Logs Ingestion authentication and transport' {
     It 'keeps every request within the UTF-8 byte budget and delivers each event once' {
         $expected = @()
         $findings = @()
+        $multibyte = [string][char]0x00E9 + [char]::ConvertFromUtf32(0x1F642) + [string][char]0x6F22 + [string][char]0x5B57
         for ($index = 0; $index -lt 12; $index++) {
-            $message = 'event-{0:D2}-{1}' -f $index, ('x' * 120)
+            $message = 'event-{0:D2}-{1}' -f $index, ($multibyte * 20)
             $expected += $message
             $findings += New-TestFinding -Message $message
         }
-        $result = $findings | Send-SiemEvent -Destination SentinelLogsIngestion -Uri $script:IngestionUri -TenantId $script:TenantId -ClientId $script:ClientId -ClientSecret (New-TestSecret) -MaxBatchBytes 1000 -ThrottleMs 0
+        $result = $findings | Send-SiemEvent -Destination SentinelLogsIngestion -Uri $script:IngestionUri -TenantId $script:TenantId -ClientId $script:ClientId -ClientSecret (New-TestSecret) -HostName 'batch-host' -MaxBatchBytes 1000 -ThrottleMs 0
         $result.EventsSent | Should -Be 12
         $result.Failed | Should -Be 0
         $requests = @($script:TestIngestionRequests)
@@ -373,6 +395,63 @@ Describe 'Sentinel Logs Ingestion authentication and transport' {
         $result.EventsSent | Should -Be 0
         $result.Failed | Should -Be 1
         @($script:TestIngestionRequests).Count | Should -Be 0
+    }
+
+    It 'sends direct Splunk HEC requests with the token and wrapped event' {
+        $result = New-TestFinding -Message 'splunk-direct' | Send-SiemEvent -Destination SplunkHEC -Uri 'https://splunk.invalid:8088/services/collector' -Token 'direct-hec-token' -Headers @{ 'X-Trace' = 'trace-value' } -HostName 'splunk-host' -ThrottleMs 0
+        $result.EventsSent | Should -Be 1
+        $result.Failed | Should -Be 0
+        $requests = @($script:TestIngestionRequests)
+        $requests.Count | Should -Be 1
+        $requests[0].Uri | Should -Be 'https://splunk.invalid:8088/services/collector'
+        $requests[0].Method | Should -Be 'Post'
+        $requests[0].ContentType | Should -Be 'application/json'
+        $requests[0].Headers.Authorization | Should -Be 'Splunk direct-hec-token'
+        $requests[0].Headers['X-Trace'] | Should -Be 'trace-value'
+        $hecEvents = @(($requests[0].BodyText -split "`n") | ForEach-Object { $_ | ConvertFrom-Json })
+        $hecEvents.Count | Should -Be 1
+        $hecEvents[0].host | Should -Be 'splunk-host'
+        $hecEvents[0].sourcetype | Should -Be 'windowsecurityaudit:finding'
+        $hecEvents[0].event.message | Should -Be 'splunk-direct'
+        $hecEvents[0].time | Should -Not -BeNullOrEmpty
+    }
+
+    It 'sends direct generic webhook requests with custom headers and NDJSON' {
+        $result = New-TestFinding -Message 'webhook-direct' | Send-SiemEvent -Destination GenericWebhook -Uri 'https://webhook.invalid/ingest' -Headers @{ 'X-Api-Key' = 'direct-webhook-key' } -HostName 'webhook-host' -ThrottleMs 0
+        $result.EventsSent | Should -Be 1
+        $result.Failed | Should -Be 0
+        $requests = @($script:TestIngestionRequests)
+        $requests.Count | Should -Be 1
+        $requests[0].Uri | Should -Be 'https://webhook.invalid/ingest'
+        $requests[0].Method | Should -Be 'Post'
+        $requests[0].ContentType | Should -Be 'application/x-ndjson; charset=utf-8'
+        $requests[0].Headers['X-Api-Key'] | Should -Be 'direct-webhook-key'
+        $requests[0].Headers.ContainsKey('Authorization') | Should -BeFalse
+        $webhookEvent = $requests[0].BodyText | ConvertFrom-Json
+        $webhookEvent.host | Should -Be 'webhook-host'
+        $webhookEvent.message | Should -Be 'webhook-direct'
+        @($script:TestTokenRequests).Count | Should -Be 0
+    }
+
+    It 'clears protocols below TLS 1.2 and retains newer protocol flags' {
+        $originalProtocol = [Net.ServicePointManager]::SecurityProtocol
+        $tls13 = $null
+        try { $tls13 = [Net.SecurityProtocolType]::Tls13 } catch { $tls13 = $null }
+        try {
+            [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls -bor [Net.SecurityProtocolType]::Tls11 -bor [Net.SecurityProtocolType]::Tls12
+            New-TestFinding | Send-SiemEvent -Destination GenericWebhook -Uri 'https://webhook.invalid/ingest' -ThrottleMs 0 | Out-Null
+            $appliedProtocol = [Net.ServicePointManager]::SecurityProtocol
+            foreach ($lowerProtocol in @([Net.SecurityProtocolType]::Ssl3, [Net.SecurityProtocolType]::Tls, [Net.SecurityProtocolType]::Tls11)) {
+                ($appliedProtocol -band $lowerProtocol) | Should -Be 0
+            }
+            ($appliedProtocol -band [Net.SecurityProtocolType]::Tls12) | Should -Be ([int][Net.SecurityProtocolType]::Tls12)
+            if ($null -ne $tls13) {
+                ($appliedProtocol -band $tls13) | Should -Be ([int]$tls13)
+            }
+        }
+        finally {
+            [Net.ServicePointManager]::SecurityProtocol = $originalProtocol
+        }
     }
 
     It 'warns for legacy Sentinel while retaining SharedKey headers' {

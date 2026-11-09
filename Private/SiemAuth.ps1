@@ -28,11 +28,20 @@ function ConvertTo-SiemSecureString {
     )
 
     $secure = New-Object System.Security.SecureString
-    foreach ($character in $PlainText.ToCharArray()) {
-        $secure.AppendChar($character)
+    $characters = $null
+    try {
+        $characters = $PlainText.ToCharArray()
+        foreach ($character in $characters) {
+            $secure.AppendChar($character)
+        }
+        $secure.MakeReadOnly()
+        return $secure
     }
-    $secure.MakeReadOnly()
-    return $secure
+    finally {
+        if ($null -ne $characters) {
+            [Array]::Clear($characters, 0, $characters.Length)
+        }
+    }
 }
 
 function Get-SiemHttpStatusCode {

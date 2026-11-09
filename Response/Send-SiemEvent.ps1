@@ -163,13 +163,16 @@
                 [Parameter(Mandatory = $true)][string]$Rfc1123Date
             )
             $stringToSign = "POST`n$ContentLength`napplication/json`nx-ms-date:$Rfc1123Date`n/api/logs"
-            $keyBytes = [Convert]::FromBase64String($SharedKey)
-            $hmac = New-Object System.Security.Cryptography.HMACSHA256 -ArgumentList (, $keyBytes)
+            $keyBytes = $null
+            $hmac = $null
             try {
+                $keyBytes = [Convert]::FromBase64String($SharedKey)
+                $hmac = New-Object System.Security.Cryptography.HMACSHA256 -ArgumentList (, $keyBytes)
                 $signatureBytes = $hmac.ComputeHash([Text.Encoding]::UTF8.GetBytes($stringToSign))
             }
             finally {
-                $hmac.Dispose()
+                if ($null -ne $hmac) { $hmac.Dispose() }
+                if ($null -ne $keyBytes) { [Array]::Clear($keyBytes, 0, $keyBytes.Length) }
             }
             $signature = [Convert]::ToBase64String($signatureBytes)
             return "SharedKey ${WorkspaceId}:$signature"
@@ -215,10 +218,24 @@
         }
 
         try {
-            [Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12
+            $tls12 = [Net.SecurityProtocolType]::Tls12
+            $lowerProtocols = [Net.SecurityProtocolType]::Ssl3 -bor [Net.SecurityProtocolType]::Tls -bor [Net.SecurityProtocolType]::Tls11
+            $protocol = [Net.ServicePointManager]::SecurityProtocol
+            $protocol = ($protocol -band (-bnot $lowerProtocols)) -bor $tls12
+            try {
+                $protocol = $protocol -bor [Net.SecurityProtocolType]::Tls13
+            }
+            catch {
+                Write-Verbose 'TLS 1.3 is unavailable; retaining TLS 1.2 as the minimum.'
+            }
+            [Net.ServicePointManager]::SecurityProtocol = $protocol
+            $appliedProtocol = [Net.ServicePointManager]::SecurityProtocol
+            if (($appliedProtocol -band $lowerProtocols) -ne 0 -or ($appliedProtocol -band $tls12) -ne [int]$tls12) {
+                throw 'Transport security policy verification failed.'
+            }
         }
         catch {
-            Write-Verbose "Could not enforce TLS 1.2: $($_.Exception.GetType().Name)"
+            throw "Could not enforce TLS 1.2 or newer: $($_.Exception.GetType().Name)"
         }
 
         $requireHttps = $Destination -in @('SplunkHEC', 'Sentinel', 'SentinelLogsIngestion') -or
