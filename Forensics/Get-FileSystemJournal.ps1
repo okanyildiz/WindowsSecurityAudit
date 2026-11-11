@@ -6,19 +6,28 @@ function Get-FileSystemJournal {
         Reads the NTFS USN change journal through binary native APIs, with an
         English-locale fsutil fallback, to surface file creation, deletion, and
         rename activity. Also summarizes MFT statistics from fsutil volume
-        metadata, scans targeted paths for timestomp indicators, and compares
-        SI/FN timestamps in live in-use FILE records through native NTFS FSCTLs.
-        Raw-volume $MFT acquisition and deleted-record recovery are out of scope.
+        metadata, scans targeted paths for timestomp indicators, compares SI/FN
+        timestamps in live FILE records, and parses an already acquired $MFT file.
+        Live raw-volume acquisition is out of scope. Offline not-in-use records are
+        previous-existence evidence, not proof of deletion time or deleted content.
     .PARAMETER DriveLetter
-        NTFS volume to analyze (default: C)
+        NTFS volume to analyze (default: C; not used by OfflineMftAnalysis)
     .PARAMETER Mode
-        Analysis mode: USNJournal, MFTSummary, TimestompScan, or MftTimestompScan (default: USNJournal)
+        Analysis mode: USNJournal, MFTSummary, TimestompScan, MftTimestompScan, or OfflineMftAnalysis
     .PARAMETER MaxRecords
-        Maximum journal records, files, or live MFT records to scan (default: 10000)
+        Maximum journal records, files, live MFT records, or offline FILE records to scan
     .PARAMETER MaxSeconds
-        Maximum live MFT enumeration time in seconds (default: 300)
+        Maximum live or offline MFT scan time in seconds (default: 300)
     .PARAMETER IncludeAll
-        Return every parsed live MFT base record instead of only timestomp suspects
+        Return every parsed live or offline in-use MFT base record instead of only timestomp suspects
+    .PARAMETER MftPath
+        Already acquired $MFT file. Required when Mode is OfflineMftAnalysis.
+    .PARAMETER TimelineCsvPath
+        Optional timestamp-sorted SI/FN timeline CSV for OfflineMftAnalysis.
+    .PARAMETER RecordSizeBytes
+        Optional offline FILE record size override. Zero detects the size from the first FILE header.
+    .PARAMETER IncludeDeleted
+        Include not-in-use records as previous-existence evidence in OfflineMftAnalysis (default: true)
     .PARAMETER ScanPaths
         Paths scanned in TimestompScan mode (default: user Desktop, Downloads, Temp)
     .PARAMETER OutputPath
@@ -29,8 +38,10 @@ function Get-FileSystemJournal {
         Get-FileSystemJournal -Mode TimestompScan -ScanPaths "C:\Users\victim\Downloads" -OutputPath "C:\IR\timestomp.csv"
     .EXAMPLE
         Get-FileSystemJournal -Mode MftTimestompScan -DriveLetter C -MaxRecords 50000 -MaxSeconds 300
+    .EXAMPLE
+        Get-FileSystemJournal -Mode OfflineMftAnalysis -MftPath "D:\Evidence\MFT.bin" -TimelineCsvPath "D:\IR\mft-timeline.csv"
     .OUTPUTS
-        PSCustomObject with Mode, Records, Summary, Notes, and Recommendations
+        PSCustomObject with Mode, Records, PreviousRecords, Summary, Notes, and Recommendations
     #>
 
     [CmdletBinding()]
@@ -40,7 +51,7 @@ function Get-FileSystemJournal {
         [string]$DriveLetter = 'C',
 
         [Parameter()]
-        [ValidateSet('USNJournal', 'MFTSummary', 'TimestompScan', 'MftTimestompScan')]
+        [ValidateSet('USNJournal', 'MFTSummary', 'TimestompScan', 'MftTimestompScan', 'OfflineMftAnalysis')]
         [string]$Mode = 'USNJournal',
 
         [Parameter()]
@@ -55,6 +66,20 @@ function Get-FileSystemJournal {
         [switch]$IncludeAll,
 
         [Parameter()]
+        [ValidateNotNullOrEmpty()]
+        [string]$MftPath,
+
+        [Parameter()]
+        [string]$TimelineCsvPath,
+
+        [Parameter()]
+        [ValidateRange(0, 65536)]
+        [int]$RecordSizeBytes = 0,
+
+        [Parameter()]
+        [switch]$IncludeDeleted = $true,
+
+        [Parameter()]
         [string[]]$ScanPaths,
 
         [Parameter()]
@@ -62,12 +87,22 @@ function Get-FileSystemJournal {
     )
 
     begin {
+        $isOfflineMftMode = ($Mode -eq 'OfflineMftAnalysis')
+        if ($isOfflineMftMode -and [string]::IsNullOrWhiteSpace($MftPath)) {
+            throw [System.Management.Automation.ParameterBindingException]::new('MftPath is required when Mode is OfflineMftAnalysis.')
+        }
+
         Write-Host "========================================" -ForegroundColor Cyan
         Write-Host "  FILE SYSTEM JOURNAL FORENSICS" -ForegroundColor Cyan
         Write-Host "  USN Journal / MFT / Timestomp Analysis" -ForegroundColor Cyan
         Write-Host "========================================" -ForegroundColor Cyan
         Write-Host "Mode: $Mode" -ForegroundColor Yellow
-        Write-Host "Drive: $DriveLetter" -ForegroundColor Yellow
+        if ($isOfflineMftMode) {
+            Write-Host "MFT: $MftPath" -ForegroundColor Yellow
+        }
+        else {
+            Write-Host "Drive: $DriveLetter" -ForegroundColor Yellow
+        }
         Write-Host "Max Records: $MaxRecords" -ForegroundColor Yellow
         Write-Host "Start Time: $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')" -ForegroundColor Yellow
 
@@ -80,7 +115,7 @@ function Get-FileSystemJournal {
         $isWindowsPlatform = ($env:OS -eq 'Windows_NT')
 
         $isAdmin = $false
-        if ($isWindowsPlatform) {
+        if ($isWindowsPlatform -and -not $isOfflineMftMode) {
             $isAdmin = Test-JournalElevation
         }
 
@@ -88,7 +123,10 @@ function Get-FileSystemJournal {
             RecordsScanned             = [long]0
             NativeRecordsReturned      = [long]0
             ReturnedRecords            = 0
+            PreviousRecordsReturned    = 0
+            DeletedCount               = 0
             SuspectCount               = 0
+            UnresolvedPathCount        = 0
             MalformedRecords           = 0
             AttributeListRecords       = 0
             MissingStandardInformation = 0
@@ -97,12 +135,17 @@ function Get-FileSystemJournal {
             NotInUseRecordsSkipped     = 0
             SkippedOrdinalCount        = [long]0
             EstimatedMftRecords        = [long]0
+            SourceLength               = [long]0
+            PartialTrailingBytes       = 0
             BytesPerSector             = 0
             BytesPerFileRecord         = 0
             ElapsedMilliseconds        = [long]0
             MaxRecords                 = $MaxRecords
             MaxSeconds                 = $MaxSeconds
             IncludeAll                 = [bool]$IncludeAll
+            IncludeDeleted             = [bool]$IncludeDeleted
+            TimelineCsvPath            = $null
+            TimelineRowCount           = [long]0
             Success                    = $false
             Truncated                  = $false
             Incomplete                 = $false
@@ -111,25 +154,28 @@ function Get-FileSystemJournal {
         }
 
         $result = [PSCustomObject]@{
-            CollectionDate = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
-            ComputerName   = $env:COMPUTERNAME
-            DriveLetter    = $drive
-            Mode           = $Mode
-            IsElevated     = $isAdmin
-            Records        = @()
-            Summary        = if ($Mode -eq 'MftTimestompScan') { $mftSummaryTemplate.Clone() } else { @{ Source = 'Unavailable' } }
-            Notes          = @()
+            CollectionDate  = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
+            ComputerName    = $env:COMPUTERNAME
+            DriveLetter     = $drive
+            Mode            = $Mode
+            IsElevated      = $isAdmin
+            Records         = @()
+            PreviousRecords = @()
+            Summary         = if ($Mode -eq 'MftTimestompScan' -or $isOfflineMftMode) { $mftSummaryTemplate.Clone() } else { @{ Source = 'Unavailable' } }
+            Notes           = @()
             Recommendations = @()
         }
 
-        if (-not $driveIsValid) {
-            Write-Warning "Invalid DriveLetter '$drive': exactly one ASCII letter is required. Collection will be skipped."
-        }
-        if (-not $isWindowsPlatform) {
-            Write-Warning "Get-FileSystemJournal requires Windows (NTFS volume + fsutil.exe). Current platform is not Windows."
-        }
-        elseif (-not $isAdmin) {
-            Write-Warning "Administrator privileges are required to read the USN journal and volume metadata. Some sections will be skipped."
+        if (-not $isOfflineMftMode) {
+            if (-not $driveIsValid) {
+                Write-Warning "Invalid DriveLetter '$drive': exactly one ASCII letter is required. Collection will be skipped."
+            }
+            if (-not $isWindowsPlatform) {
+                Write-Warning "Get-FileSystemJournal requires Windows (NTFS volume + fsutil.exe). Current platform is not Windows."
+            }
+            elseif (-not $isAdmin) {
+                Write-Warning "Administrator privileges are required to read the USN journal and volume metadata. Some sections will be skipped."
+            }
         }
 
         if ($Mode -eq 'TimestompScan' -and (-not $ScanPaths -or @($ScanPaths).Count -eq 0)) {
@@ -147,7 +193,82 @@ function Get-FileSystemJournal {
 
     process {
         try {
-            if (-not $driveIsValid) {
+            if ($isOfflineMftMode) {
+                Write-Host "`n[*] Streaming the acquired MFT through the offline FILE-record parser..." -ForegroundColor Cyan
+                try {
+                    $offlineParameters = @{
+                        MftPath         = $MftPath
+                        RecordSizeBytes = $RecordSizeBytes
+                        MaxRecords      = $MaxRecords
+                        MaxSeconds      = $MaxSeconds
+                        IncludeDeleted  = [bool]$IncludeDeleted
+                        IncludeAll      = [bool]$IncludeAll
+                    }
+                    if (-not [string]::IsNullOrWhiteSpace($TimelineCsvPath)) {
+                        $offlineParameters.TimelineCsvPath = $TimelineCsvPath
+                    }
+                    $offlineResult = Get-MftOffline @offlineParameters
+                    foreach ($note in @($offlineResult.Notes)) {
+                        $result.Notes += $note
+                    }
+                    if ($offlineResult.Error) {
+                        $result.Notes += "Offline MFT collection status: $($offlineResult.Error)"
+                    }
+
+                    $activeRecords = @($offlineResult.Records)
+                    $previousRecords = @($offlineResult.PreviousRecords)
+                    $result.Records = $activeRecords
+                    $result.PreviousRecords = $previousRecords
+                    $result.Summary = $mftSummaryTemplate.Clone()
+                    $result.Summary.RecordsScanned = [long]$offlineResult.RecordsScanned
+                    $result.Summary.NativeRecordsReturned = [long]0
+                    $result.Summary.ReturnedRecords = $activeRecords.Count
+                    $result.Summary.PreviousRecordsReturned = $previousRecords.Count
+                    $result.Summary.DeletedCount = [int]$offlineResult.DeletedCount
+                    $result.Summary.SuspectCount = [int]$offlineResult.SuspectCount
+                    $result.Summary.UnresolvedPathCount = [int]$offlineResult.UnresolvedPathCount
+                    $result.Summary.MalformedRecords = [int]$offlineResult.MalformedRecords
+                    $result.Summary.AttributeListRecords = [int]$offlineResult.AttributeListRecords
+                    $result.Summary.MissingStandardInformation = [int]$offlineResult.MissingStandardInformation
+                    $result.Summary.MissingFileName = [int]$offlineResult.MissingFileName
+                    $result.Summary.ExtensionRecordsSkipped = [int]$offlineResult.ExtensionRecordsSkipped
+                    $result.Summary.NotInUseRecordsSkipped = if ($IncludeDeleted) { 0 } else { [int]$offlineResult.DeletedCount }
+                    $result.Summary.EstimatedMftRecords = [long]$offlineResult.EstimatedMftRecords
+                    $result.Summary.SourceLength = [long]$offlineResult.SourceLength
+                    $result.Summary.PartialTrailingBytes = [int]$offlineResult.PartialTrailingBytes
+                    $result.Summary.BytesPerSector = [int]$offlineResult.BytesPerSector
+                    $result.Summary.BytesPerFileRecord = [int]$offlineResult.BytesPerFileRecord
+                    $result.Summary.ElapsedMilliseconds = [long]$offlineResult.ElapsedMilliseconds
+                    $result.Summary.TimelineCsvPath = $offlineResult.TimelineCsvPath
+                    $result.Summary.TimelineRowCount = [long]$offlineResult.TimelineRowCount
+                    $result.Summary.Success = [bool]$offlineResult.Success
+                    $result.Summary.Truncated = [bool]$offlineResult.Truncated
+                    $result.Summary.Incomplete = [bool]$offlineResult.Incomplete
+                    $result.Summary.StopReason = [string]$offlineResult.StopReason
+                    $result.Summary.Source = 'OfflineMft'
+
+                    if (-not $offlineResult.Success) {
+                        Write-Warning "Offline MFT analysis did not complete successfully: $($offlineResult.Error)"
+                    }
+                    Write-Host "  Records scanned: $($offlineResult.RecordsScanned); suspects: $($offlineResult.SuspectCount); previous records: $($previousRecords.Count)" -ForegroundColor Green
+                    if ($offlineResult.TimelineCsvPath) {
+                        Write-Host "  Timeline rows: $($offlineResult.TimelineRowCount); CSV: $($offlineResult.TimelineCsvPath)" -ForegroundColor Green
+                    }
+                }
+                catch {
+                    Write-Warning "Offline MFT analysis failed: $($_.Exception.Message)"
+                    $result.Notes += "Offline MFT analysis failed without a live fallback: $($_.Exception.Message)"
+                    $result.Summary = $mftSummaryTemplate.Clone()
+                    $result.Summary.StopReason = 'InvocationFailed'
+                    $result.Summary.Source = 'OfflineMft'
+                }
+
+                $result.Notes += "OfflineMftAnalysis reads only the supplied acquired file through pure .NET IO; it performs no live FSCTL enumeration or raw-volume acquisition and is not Windows-only."
+                $result.Notes += "Records contains in-use timestomp suspects unless IncludeAll is set. PreviousRecords separately contains requested not-in-use records; their timestamps are not deletion times."
+                $result.Recommendations += "Preserve the acquired MFT read-only, validate the evidence hash independently, and correlate previous records with other artifacts before inferring deletion or deletion time."
+                $result.Recommendations += "Review UnresolvedPathCount, MalformedRecords, Truncated, Incomplete, and StopReason before drawing volume-wide conclusions; unresolved and cyclic paths are never silently completed."
+            }
+            elseif (-not $driveIsValid) {
                 $result.Notes += "Invalid DriveLetter '$drive': exactly one ASCII letter is required. Collection was skipped."
                 if ($Mode -eq 'MftTimestompScan') {
                     $result.Summary.StopReason = 'InvalidDriveLetter'
@@ -372,9 +493,9 @@ function Get-FileSystemJournal {
                                 }
 
                                 $result.Notes += "Summary-level view only: values come from 'fsutil fsinfo ntfsinfo' volume metadata."
-                                $result.Notes += "This mode does not parse individual FILE records; use MftTimestompScan for live in-use SI/FN candidates. Raw-volume acquisition and deleted-record recovery remain out of scope."
+                                $result.Notes += "This mode does not parse individual FILE records; use MftTimestompScan for live in-use SI/FN candidates or OfflineMftAnalysis for an already acquired MFT copy. Live raw-volume acquisition and deleted-content recovery remain out of scope."
 
-                                $result.Recommendations += "For per-record `$MFT analysis, pair this summary with a dedicated parser (e.g., MFTECmd) run against an acquired `$MFT copy."
+                                $result.Recommendations += "For per-record analysis of an acquired `$MFT copy, use OfflineMftAnalysis with an optional TimelineCsvPath; validate findings with an independent parser when the evidence warrants it."
                                 $result.Recommendations += "A large or rapidly growing MFT valid data length relative to expectations can indicate mass file creation (staging or encryption activity); baseline before alerting."
 
                                 if ($null -ne $mftValidBytes) {
@@ -632,6 +753,9 @@ function Get-FileSystemJournal {
 
         Write-Host "`nMode: $($result.Mode)" -ForegroundColor Cyan
         Write-Host "  Records collected: $(@($result.Records).Count)" -ForegroundColor White
+        if ($isOfflineMftMode) {
+            Write-Host "  Previous records collected: $(@($result.PreviousRecords).Count)" -ForegroundColor White
+        }
         Write-Host "  Elevated: $($result.IsElevated)" -ForegroundColor $(if ($result.IsElevated) { 'White' } else { 'Yellow' })
 
         if ($result.Notes.Count -gt 0) {
