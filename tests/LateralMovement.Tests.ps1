@@ -7,10 +7,10 @@ BeforeAll {
     $script:SysmonLogName = 'Microsoft-Windows-Sysmon/Operational'
     $script:CreatedWinEventStub = $false
 
-    if (-not (Get-Command Get-WinEvent -ErrorAction SilentlyContinue)) {
-        function global:Get-WinEvent { }
-        $script:CreatedWinEventStub = $true
-    }
+    # Use the same mockable function on every platform. On Windows, mocking the
+    # native cmdlet by module name lets calls through to the real event logs.
+    function global:Get-WinEvent { }
+    $script:CreatedWinEventStub = $true
 
     Import-Module -Name $script:ModulePath -Force
 
