@@ -59,6 +59,7 @@
         'Get-USBHistory',
         'Get-UserActivityArtifacts',
         'Get-VulnerabilityAssessment',
+        'Get-VulnerabilityPriority',
         'Invoke-DefenderScan',
         'Invoke-EnterpriseSecurityScan',
         'Invoke-WsaRemoteFunctionSet',
