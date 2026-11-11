@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.9.0] - 2026-11-11
+
+### Added
+
+- `Get-VulnerabilityPriority`: EPSS score/percentile and CISA KEV exploited-status enrichment for vulnerability assessments, with asset-criticality multipliers (DomainController 1.25 / Server 1.10 / Workstation 1.00 or custom 0.5-2.0), a deterministic triage-points heuristic (severity impact proxy + 60 x EPSS, capped at 100; KEV override = 100/Critical), and honest Unscored states whenever feed data is missing. EPSS API + daily CSV.gz, KEV JSON catalog, TTL/stale/offline cache with atomic replacement and Windows ACL protection. New `-IncludePriority` convenience wrapper on `Get-VulnerabilityAssessment`. 74 mocked tests.
+- Lateral movement expansion: service creation (7045) with suspicious-path/LOLBin detection, scheduled-task analysis (4698/4699/4700/4702) with encoded-command and user-writable-path heuristics, WMI attribution (4648/4624 with wmiprvse.exe) plus guarded Sysmon 19/20/21 collection; MITRE techniques on every finding; SourcesChecked and per-section Truncated flags. 12 tests.
+- Offline $MFT analysis: `Get-FileSystemJournal -Mode OfflineMftAnalysis` parses an acquired $MFT file with mandatory fixup repair, streaming record reads, deleted-record evidence (previous existence, never claimed deletion time), sequence-validated parent-path reconstruction with cycle/depth protection, and a disk-backed timestamp-sorted timeline CSV. Works cross-platform (no live-volume acquisition). 12 tests.
+
+### Fixed
+
+- `Get-EventLogAnalysis`: Security log collection now filters by event ID list instead of the Level filter that dropped audit records with Level 0.
+
 ## [1.8.2] - 2026-11-09
 
 ### Fixed
@@ -243,7 +255,8 @@ Post-release audit hardening. Every finding below was verified against the code 
 - Cloud Security: Azure AD risky sign-ins, M365 security posture, cloud compliance status.
 - Hardening: audit policies, PowerShell security (logging, transcription), security baseline enforcement — all with `-WhatIf` support.
 
-[Unreleased]: https://github.com/okanyildiz/WindowsSecurityAudit/compare/v1.8.2...HEAD
+[Unreleased]: https://github.com/okanyildiz/WindowsSecurityAudit/compare/v1.9.0...HEAD
+[1.9.0]: https://github.com/okanyildiz/WindowsSecurityAudit/releases/tag/v1.9.0
 [1.8.2]: https://github.com/okanyildiz/WindowsSecurityAudit/releases/tag/v1.8.2
 [1.8.1]: https://github.com/okanyildiz/WindowsSecurityAudit/releases/tag/v1.8.1
 [1.8.0]: https://github.com/okanyildiz/WindowsSecurityAudit/releases/tag/v1.8.0

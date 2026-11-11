@@ -5,7 +5,7 @@
 [![PowerShell](https://img.shields.io/badge/PowerShell-5.1%2B-blue.svg)](https://github.com/PowerShell/PowerShell)
 [![Windows](https://img.shields.io/badge/Windows-10%2F11%2FServer%202016%2B-blue.svg)](https://www.microsoft.com/windows)
 [![License](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
-[![Version](https://img.shields.io/badge/Version-1.8.2-orange.svg)](https://github.com/okanyildiz/WindowsSecurityAudit/releases)
+[![Version](https://img.shields.io/badge/Version-1.9.0-orange.svg)](https://github.com/okanyildiz/WindowsSecurityAudit/releases)
 [![PowerShell Gallery](https://img.shields.io/powershellgallery/v/WindowsSecurityAudit.svg?label=PSGallery)](https://www.powershellgallery.com/packages/WindowsSecurityAudit)
 [![Functions](https://img.shields.io/badge/Functions-76-brightgreen.svg)](https://github.com/okanyildiz/WindowsSecurityAudit)
 [![Modules](https://img.shields.io/badge/Modules-14-blue.svg)](https://github.com/okanyildiz/WindowsSecurityAudit)
@@ -764,6 +764,16 @@ The Reporting module transforms raw security data into actionable intelligence t
 ## 📰 Release Highlights
 
 The full feature set is documented in the module tables above — this section only covers what changed per release, newest first:
+
+### 🆕 v1.9.0 — EPSS/KEV Prioritization, Offline $MFT Analysis & Expanded Lateral Movement
+
+**A feature bundle for real-world prioritization and forensics:**
+
+| Feature | What It Does |
+|---------|--------------|
+| **`Get-VulnerabilityPriority`** | EPSS score/percentile + **CISA KEV exploited-status** + asset-criticality weighting for every CVE found by the assessment. Deterministic triage formula (severity proxy + 60 x EPSS; **KEV = 100/Critical override**) with honest `Unscored` states when feeds are unreachable — never zero-fills missing evidence. EPSS API + daily CSV, KEV JSON catalog, TTL/stale/offline caching. `-IncludePriority` wrapper on `Get-VulnerabilityAssessment`. |
+| **Offline $MFT analysis** | `Get-FileSystemJournal -Mode OfflineMftAnalysis` — parse an **acquired $MFT** with fixup repair, streaming reads, deleted-record evidence (previous existence, never claimed deletion time), sequence-validated parent-path reconstruction (cycle-protected), and a disk-backed **sorted timeline CSV**. Cross-platform. |
+| **Lateral movement expansion** | **Service creation (7045)** suspicious-path/LOLBin detection, **scheduled tasks (4698/4699/4700/4702)** encoded-command and user-writable-path heuristics, **WMI** attribution with Sysmon 19/20/21 — every finding carries MITRE technique IDs. Plus a real fix: the Security log Level filter that silently dropped audit events is gone (ID-based filtering now). |
 
 ### 🆕 v1.7.0 — Native Binary USN Journal Reading
 
