@@ -92,6 +92,13 @@ function Get-EventLogAnalysis {
             6008 = 'Unexpected shutdown'
             41 = 'System rebooted without clean shutdown'
         }
+
+        # Security audit records can have Level 0 or no useful level. Query the
+        # security-relevant IDs directly so event inclusion is level-independent.
+        $securityEventIDs = @(
+            1102, 4719, 4720, 4722, 4724, 4725, 4726, 4732, 4733, 4738,
+            4740, 4756, 4625, 4648, 4697, 4698, 4699, 4700, 4701
+        )
     }
     
     process {
@@ -99,27 +106,27 @@ function Get-EventLogAnalysis {
             foreach ($logName in $LogNames) {
                 Write-Verbose "Analyzing $logName log..."
                 
-                # Get events based on severity
                 $filterLevels = @(1, 2)  # Critical and Error
                 if ($IncludeWarnings) {
                     $filterLevels += 3  # Warning
                 }
 
-                # Security audit events (1102, 4625, 4697, ...) are logged at
-                # Information level, so the Security log must include Level 4
-                if ($logName -eq 'Security' -and $filterLevels -notcontains 4) {
-                    $filterLevels += 4  # Information (Security audit events)
+                $filter = @{
+                    LogName = $logName
+                    StartTime = $startTime
+                }
+                if ($logName -eq 'Security') {
+                    $filter['Id'] = $securityEventIDs
+                }
+                else {
+                    $filter['Level'] = $filterLevels
                 }
                 
                 try {
                     # Force to array: a single matching event comes back as a
                     # scalar EventLogRecord, and .Count on it throws under
                     # Set-StrictMode (dropping the whole log via the catch)
-                    $events = @(Get-WinEvent -FilterHashtable @{
-                        LogName = $logName
-                        Level = $filterLevels
-                        StartTime = $startTime
-                    } -ErrorAction SilentlyContinue)
+                    $events = @(Get-WinEvent -FilterHashtable $filter -ErrorAction SilentlyContinue)
                     
                     if ($events) {
                         $results.Statistics.TotalEventsAnalyzed += $events.Count
