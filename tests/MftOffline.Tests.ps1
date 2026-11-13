@@ -129,6 +129,74 @@ BeforeAll {
         return ,$record
     }
 
+    function Add-OfflineAlternateFileName {
+        param(
+            [byte[]]$Record,
+            [string]$FileName,
+            [uint64]$ParentRecordNumber,
+            [uint16]$ParentSequence = 1,
+            [datetime]$BaseTime,
+            [uint16]$AttributeId = 7,
+            [byte]$NameNamespace = 0
+        )
+
+        $fnOffset = [int]([BitConverter]::ToUInt32($Record, 24) - 8)
+        [byte[]]$nameBytes = [Text.Encoding]::Unicode.GetBytes($FileName)
+        $fnLength = (24 + 66 + $nameBytes.Length + 7) -band (-bnot 7)
+        Set-OfflineFixtureUInt32 -Buffer $Record -Offset $fnOffset -Value 0x30
+        Set-OfflineFixtureUInt32 -Buffer $Record -Offset ($fnOffset + 4) -Value $fnLength
+        Set-OfflineFixtureUInt16 -Buffer $Record -Offset ($fnOffset + 14) -Value $AttributeId
+        Set-OfflineFixtureUInt32 -Buffer $Record -Offset ($fnOffset + 16) -Value (66 + $nameBytes.Length)
+        Set-OfflineFixtureUInt16 -Buffer $Record -Offset ($fnOffset + 20) -Value 24
+        $fnValue = $fnOffset + 24
+        $parentReference = ([uint64]$ParentSequence -shl 48) -bor $ParentRecordNumber
+        Set-OfflineFixtureUInt64 -Buffer $Record -Offset $fnValue -Value $parentReference
+        $created = [datetime]::SpecifyKind($BaseTime, [DateTimeKind]::Utc)
+        Set-OfflineFixtureFileTime -Buffer $Record -Offset ($fnValue + 8) -Value $created
+        Set-OfflineFixtureFileTime -Buffer $Record -Offset ($fnValue + 16) -Value $created.AddHours(1)
+        Set-OfflineFixtureFileTime -Buffer $Record -Offset ($fnValue + 24) -Value $created.AddHours(2)
+        Set-OfflineFixtureFileTime -Buffer $Record -Offset ($fnValue + 32) -Value $created.AddHours(3)
+        Set-OfflineFixtureUInt64 -Buffer $Record -Offset ($fnValue + 40) -Value 0x1000
+        Set-OfflineFixtureUInt64 -Buffer $Record -Offset ($fnValue + 48) -Value 0x200
+        Set-OfflineFixtureUInt32 -Buffer $Record -Offset ($fnValue + 56) -Value 0x20
+        $Record[$fnValue + 64] = [byte]$FileName.Length
+        $Record[$fnValue + 65] = $NameNamespace
+        [Array]::Copy($nameBytes, 0, $Record, $fnValue + 66, $nameBytes.Length)
+
+        $offset = $fnOffset + $fnLength
+        Set-OfflineFixtureUInt32 -Buffer $Record -Offset $offset -Value ([uint32]::MaxValue)
+        Set-OfflineFixtureUInt32 -Buffer $Record -Offset ($offset + 4) -Value 0
+        Set-OfflineFixtureUInt32 -Buffer $Record -Offset 24 -Value ($offset + 8)
+        return ,$Record
+    }
+
+    function New-OfflineHardLinkFixtureBytes {
+        param(
+            [datetime]$PrimaryTime,
+            [datetime]$AlternateTime
+        )
+
+        $rootTime = [datetime]::SpecifyKind([datetime]'2024-06-01T00:00:00', [DateTimeKind]::Utc)
+        $primaryLink = New-OfflineFileRecord -RecordNumber 3 -FileName 'primary.txt' -ParentRecordNumber 1 -BaseTime $PrimaryTime
+        $primaryLink = Add-OfflineAlternateFileName -Record $primaryLink -FileName 'alternate.txt' -ParentRecordNumber 2 -BaseTime $AlternateTime
+        Set-OfflineFixtureUInt16 -Buffer $primaryLink -Offset 18 -Value 2
+        $unresolvedLink = New-OfflineFileRecord -RecordNumber 4 -FileName 'other-primary.txt' -ParentRecordNumber 1 -BaseTime $PrimaryTime.AddDays(1)
+        $unresolvedLink = Add-OfflineAlternateFileName -Record $unresolvedLink -FileName 'unresolved.txt' -ParentRecordNumber 99 -ParentSequence 7 -BaseTime $AlternateTime.AddDays(1)
+        Set-OfflineFixtureUInt16 -Buffer $unresolvedLink -Offset 18 -Value 2
+        $records = @(
+            (New-OfflineFileRecord -RecordNumber 0 -FileName '.' -ParentRecordNumber 0 -Directory -BaseTime $rootTime),
+            (New-OfflineFileRecord -RecordNumber 1 -FileName 'primary-dir' -ParentRecordNumber 0 -Directory -BaseTime $rootTime.AddMonths(-1)),
+            (New-OfflineFileRecord -RecordNumber 2 -FileName 'alternate-dir' -ParentRecordNumber 0 -Directory -BaseTime $rootTime.AddMonths(-2)),
+            $primaryLink,
+            $unresolvedLink
+        )
+        [byte[]]$bytes = @(0) * ($records.Count * 1024)
+        for ($index = 0; $index -lt $records.Count; $index++) {
+            [Array]::Copy($records[$index], 0, $bytes, $index * 1024, 1024)
+        }
+        return ,$bytes
+    }
+
     function New-OfflineFixtureBytes {
         $rootTime = [datetime]::SpecifyKind([datetime]'2024-06-01T00:00:00', [DateTimeKind]::Utc)
         $records = @(
@@ -161,6 +229,7 @@ BeforeAll {
             [int]$MaxSeconds = 300,
             [bool]$IncludeDeleted = $true,
             [bool]$IncludeAll = $true,
+            [switch]$SuppressRecordOutput,
             [string]$TimelineCsvPath
         )
 
@@ -171,6 +240,9 @@ BeforeAll {
             MaxSeconds      = $MaxSeconds
             IncludeDeleted  = $IncludeDeleted
             IncludeAll      = $IncludeAll
+        }
+        if ($PSBoundParameters.ContainsKey('SuppressRecordOutput')) {
+            $parameters.SuppressRecordOutput = $true
         }
         if ($PSBoundParameters.ContainsKey('TimelineCsvPath')) {
             $parameters.TimelineCsvPath = $TimelineCsvPath
@@ -204,9 +276,11 @@ BeforeAll {
             [scriptblock]$Reader,
             [long]$SourceLength,
             [scriptblock]$Clock = { [long]0 },
+            [int]$RecordSize = 1024,
             [int]$MaxRecords = 100,
             [int]$MaxSeconds = 300,
             [bool]$IncludeDeleted = $true,
+            [switch]$SuppressRecordOutput,
             [string]$TimelineCsvPath
         )
 
@@ -214,11 +288,14 @@ BeforeAll {
             RecordSource    = $Reader
             SourceLength    = $SourceLength
             ElapsedClock    = $Clock
-            RecordSizeBytes = 1024
+            RecordSizeBytes = $RecordSize
             MaxRecords      = $MaxRecords
             MaxSeconds      = $MaxSeconds
             IncludeDeleted  = $IncludeDeleted
             IncludeAll      = $true
+        }
+        if ($PSBoundParameters.ContainsKey('SuppressRecordOutput')) {
+            $parameters.SuppressRecordOutput = $true
         }
         if ($PSBoundParameters.ContainsKey('TimelineCsvPath')) {
             $parameters.TimelineCsvPath = $TimelineCsvPath
@@ -258,6 +335,30 @@ Describe 'Offline MFT streaming file analysis' {
         $onDisk = [IO.File]::ReadAllBytes($path)
         $onDisk[1024 + 0x1FE] | Should -Be 0xBB
         $onDisk[1024 + 0x3FF] | Should -Be 0xAA
+    }
+
+    It 'marks both record-size detection truncation branches as truncated' {
+        [byte[]]$headerBytes = @(0) * 20
+        $headerReader = New-OfflineDelegate -Bytes $headerBytes
+        $headerScan = Invoke-OfflineDelegate -Reader $headerReader -SourceLength $headerBytes.Length -RecordSize 0
+
+        $fixture = New-OfflineFixtureBytes
+        [byte[]]$candidateBytes = @(0) * 100
+        [Array]::Copy($fixture, 0, $candidateBytes, 0, $candidateBytes.Length)
+        $candidateReader = New-OfflineDelegate -Bytes $candidateBytes
+        $candidateScan = Invoke-OfflineDelegate -Reader $candidateReader -SourceLength $candidateBytes.Length -RecordSize 0
+
+        foreach ($scan in @($headerScan, $candidateScan)) {
+            $scan.Success | Should -BeFalse
+            $scan.Incomplete | Should -BeTrue
+            $scan.Truncated | Should -BeTrue
+            $scan.StopReason | Should -Be 'TruncatedRecord'
+            $scan.RecordsScanned | Should -Be 0
+        }
+        $headerScan.PartialTrailingBytes | Should -Be 20
+        $candidateScan.PartialTrailingBytes | Should -Be 100
+        $headerScan.Error | Should -Match 'inside a 48-byte FILE header'
+        $candidateScan.Error | Should -Match 'inside a FILE record'
     }
 
     It 'separates not-in-use previous records and states their evidentiary limit' {
@@ -348,6 +449,7 @@ Describe 'Offline MFT streaming file analysis' {
 
         $scan.Success | Should -BeTrue
         $scan.Incomplete | Should -BeTrue
+        $scan.Truncated | Should -BeTrue
         $scan.StopReason | Should -Be 'TruncatedRecord'
         $scan.RecordsScanned | Should -Be 6
         $scan.PartialTrailingBytes | Should -Be 100
@@ -368,7 +470,7 @@ Describe 'Offline MFT timeline and scan caps' {
         $scan.TimelineRowCount | Should -Be 48
         $rows = @(Import-Csv -Path $timeline)
         $rows.Count | Should -Be 48
-        @($rows[0].PSObject.Properties.Name) -join ',' | Should -Be 'TimestampUtc,Source,Type,BestEffortPath,FileReferenceNumber,InUse,RecordNumber'
+        @($rows[0].PSObject.Properties.Name) -join ',' | Should -Be 'TimestampUtc,Source,Type,BestEffortPath,FileName,ParentFileReferenceNumber,NameNamespace,FnAttributeId,FileReferenceNumber,InUse,RecordNumber'
         for ($index = 1; $index -lt $rows.Count; $index++) {
             $previous = [datetime]::Parse($rows[$index - 1].TimestampUtc, [Globalization.CultureInfo]::InvariantCulture, [Globalization.DateTimeStyles]::RoundtripKind)
             $current = [datetime]::Parse($rows[$index].TimestampUtc, [Globalization.CultureInfo]::InvariantCulture, [Globalization.DateTimeStyles]::RoundtripKind)
@@ -385,6 +487,65 @@ Describe 'Offline MFT timeline and scan caps' {
         @($rows | Where-Object { $_.RecordNumber -eq '1' })[0].FileReferenceNumber | Should -Be '0x000000000001'
         @($rows | Where-Object { $_.RecordNumber -eq '2' -and $_.InUse -eq 'false' }).Count | Should -Be 8
         @($rows | Where-Object { $_.RecordNumber -eq '3' -and $_.BestEffortPath }).Count | Should -Be 0
+    }
+
+    It 'attributes each hard-link FN timeline row to its own resolved parent' {
+        $primaryTime = [datetime]'2024-01-02T03:04:05Z'
+        $alternateTime = [datetime]'2025-02-03T04:05:06Z'
+        $bytes = New-OfflineHardLinkFixtureBytes -PrimaryTime $primaryTime -AlternateTime $alternateTime
+        $timeline = Join-Path $TestDrive 'hard-links.csv'
+        $reader = New-OfflineDelegate -Bytes $bytes
+        $scan = Invoke-OfflineDelegate -Reader $reader -SourceLength $bytes.Length -TimelineCsvPath $timeline
+
+        $scan.Success | Should -BeTrue
+        $scan.UnresolvedPathCount | Should -Be 0
+        $scan.TimelineRowCount | Should -Be 48
+        $rows = @(Import-Csv -Path $timeline)
+        $siRows = @($rows | Where-Object { $_.RecordNumber -eq '3' -and $_.Source -eq 'SI' })
+        $siRows.Count | Should -Be 4
+        @($siRows | Where-Object { $_.BestEffortPath -ne '\primary-dir\primary.txt' }).Count | Should -Be 0
+        @($siRows | Where-Object { $_.FileName }).Count | Should -Be 0
+
+        $primaryFn = @($rows | Where-Object { $_.RecordNumber -eq '3' -and $_.FileName -eq 'primary.txt' })
+        $primaryFn.Count | Should -Be 4
+        @($primaryFn | Where-Object { $_.BestEffortPath -ne '\primary-dir\primary.txt' }).Count | Should -Be 0
+        $primaryFn[0].ParentFileReferenceNumber | Should -Be '0x0001000000000001'
+        $primaryFn[0].NameNamespace | Should -Be '1'
+        $primaryFn[0].FnAttributeId | Should -Be '2'
+
+        $alternateFn = @($rows | Where-Object { $_.RecordNumber -eq '3' -and $_.FileName -eq 'alternate.txt' })
+        $alternateFn.Count | Should -Be 4
+        @($alternateFn | Where-Object { $_.BestEffortPath -ne '\alternate-dir\alternate.txt' }).Count | Should -Be 0
+        $alternateFn[0].ParentFileReferenceNumber | Should -Be '0x0001000000000002'
+        $alternateFn[0].NameNamespace | Should -Be '0'
+        $alternateFn[0].FnAttributeId | Should -Be '7'
+        $primaryCreated = @($primaryFn | Where-Object { $_.Type -eq 'Created' })[0]
+        $alternateCreated = @($alternateFn | Where-Object { $_.Type -eq 'Created' })[0]
+        $alternateCreated.TimestampUtc | Should -Not -Be $primaryCreated.TimestampUtc
+        $alternateCreated.TimestampUtc | Should -Be $alternateTime.ToString("yyyy-MM-dd'T'HH:mm:ss.fffffff'Z'", [Globalization.CultureInfo]::InvariantCulture)
+
+        $unresolvedFn = @($rows | Where-Object { $_.RecordNumber -eq '4' -and $_.FileName -eq 'unresolved.txt' })
+        $unresolvedFn.Count | Should -Be 4
+        @($unresolvedFn | Where-Object { $_.BestEffortPath }).Count | Should -Be 0
+        $otherPrimaryFn = @($rows | Where-Object { $_.RecordNumber -eq '4' -and $_.FileName -eq 'other-primary.txt' })
+        @($otherPrimaryFn | Where-Object { $_.BestEffortPath -ne '\primary-dir\other-primary.txt' }).Count | Should -Be 0
+    }
+
+    It 'can suppress retained record objects without suppressing timeline evidence' {
+        $path = Join-Path $TestDrive 'suppressed.mft'
+        $timeline = Join-Path $TestDrive 'suppressed.csv'
+        New-OfflineFixtureFile -Path $path | Out-Null
+        $scan = Invoke-OfflineFile -Path $path -TimelineCsvPath $timeline -SuppressRecordOutput
+
+        $scan.Success | Should -BeTrue
+        $scan.SuppressRecordOutput | Should -BeTrue
+        $scan.Records.Count | Should -Be 0
+        $scan.PreviousRecords.Count | Should -Be 0
+        $scan.RecordsScanned | Should -Be 6
+        $scan.DeletedCount | Should -Be 1
+        $scan.TimelineRowCount | Should -Be 48
+        @(Import-Csv -Path $timeline).Count | Should -Be 48
+        @($scan.Notes | Where-Object { $_ -match 'retention is suppressed.*counters and timeline' }).Count | Should -Be 1
     }
 
     It 'stops at MaxRecords with a truncated sorted partial timeline' {
@@ -423,6 +584,66 @@ Describe 'Offline MFT timeline and scan caps' {
         $scan.RecordsScanned | Should -Be 1
         @($scan.Notes | Where-Object { $_ -match '1-second time budget.*incomplete' }).Count | Should -Be 1
     }
+
+    It 'enforces MaxSeconds during record-size detection and finalizes an empty timeline' {
+        $bytes = New-OfflineFixtureBytes
+        $elapsed = [ref][long]0
+        $readCount = [ref][int]0
+        $afterRead = {
+            param($context, $count)
+            $readCount.Value++
+            if ($context.ByteCount -eq 48) {
+                $elapsed.Value = 1000
+            }
+        }.GetNewClosure()
+        $reader = New-OfflineDelegate -Bytes $bytes -AfterRead $afterRead
+        $clock = { [long]$elapsed.Value }.GetNewClosure()
+        $timeline = Join-Path $TestDrive 'detection-max-seconds.csv'
+        $scan = Invoke-OfflineDelegate -Reader $reader -SourceLength $bytes.Length -RecordSize 0 -Clock $clock -MaxSeconds 1 -TimelineCsvPath $timeline
+
+        $scan.Success | Should -BeFalse
+        $scan.Error | Should -BeNullOrEmpty
+        $scan.Truncated | Should -BeTrue
+        $scan.Incomplete | Should -BeTrue
+        $scan.StopReason | Should -Be 'MaxSeconds'
+        $scan.RecordsScanned | Should -Be 0
+        $scan.RecordSizeBytes | Should -Be 0
+        $scan.TimelineRowCount | Should -Be 0
+        $readCount.Value | Should -Be 1
+        @(Import-Csv -Path $timeline).Count | Should -Be 0
+        @($scan.Notes | Where-Object { $_ -match 'record-size detection stopped at the 1-second time budget' }).Count | Should -Be 1
+    }
+
+    It 'enforces MaxSeconds during a parent walk and preserves the partial timeline' {
+        $bytes = New-OfflineFixtureBytes
+        $elapsed = [ref][long]0
+        $readCount = [ref][int]0
+        $afterRead = {
+            param($context, $count)
+            $readCount.Value++
+            if ($readCount.Value -eq 3) {
+                $elapsed.Value = 1000
+            }
+        }.GetNewClosure()
+        $reader = New-OfflineDelegate -Bytes $bytes -AfterRead $afterRead
+        $clock = { [long]$elapsed.Value }.GetNewClosure()
+        $timeline = Join-Path $TestDrive 'parent-max-seconds.csv'
+        $scan = Invoke-OfflineDelegate -Reader $reader -SourceLength $bytes.Length -Clock $clock -MaxSeconds 1 -TimelineCsvPath $timeline
+
+        $scan.Success | Should -BeTrue
+        $scan.Error | Should -BeNullOrEmpty
+        $scan.Truncated | Should -BeTrue
+        $scan.Incomplete | Should -BeTrue
+        $scan.StopReason | Should -Be 'MaxSeconds'
+        $scan.RecordsScanned | Should -Be 2
+        $scan.Records.Count | Should -Be 1
+        $scan.Records[0].RecordNumber | Should -Be 0
+        $scan.UnresolvedPathCount | Should -Be 0
+        $scan.TimelineRowCount | Should -Be 8
+        $readCount.Value | Should -Be 3
+        @(Import-Csv -Path $timeline).Count | Should -Be 8
+        @($scan.Notes | Where-Object { $_ -match 'parent resolution stopped at the 1-second time budget' }).Count | Should -Be 1
+    }
 }
 
 Describe 'Get-FileSystemJournal OfflineMftAnalysis integration' {
@@ -460,6 +681,36 @@ Describe 'Get-FileSystemJournal OfflineMftAnalysis integration' {
         $result.IsElevated | Should -BeFalse
         @($result.Notes | Where-Object { $_ -match 'not Windows-only' }).Count | Should -Be 1
         Test-Path -Path $timeline | Should -BeTrue
+    }
+
+    It 'maps physical truncation to Truncated in the public summary' {
+        $path = Join-Path $TestDrive 'integration-truncated.mft'
+        $fixture = New-OfflineFixtureFile -Path $path
+        [byte[]]$bytes = @(0) * ($fixture.Length + 100)
+        [Array]::Copy($fixture, 0, $bytes, 0, $fixture.Length)
+        [Array]::Copy($fixture, 0, $bytes, $fixture.Length, 100)
+        [IO.File]::WriteAllBytes($path, $bytes)
+        $result = InModuleScope -ModuleName $script:ModuleName -ArgumentList $path -ScriptBlock {
+            param($mftPath)
+            $originalOs = $env:OS
+            try {
+                $env:OS = 'Unix'
+                Get-FileSystemJournal -Mode OfflineMftAnalysis -MftPath $mftPath -IncludeAll -WarningAction SilentlyContinue
+            }
+            finally {
+                $env:OS = $originalOs
+            }
+        }
+
+        $result.Records.Count | Should -Be 5
+        $result.PreviousRecords.Count | Should -Be 1
+        $result.Summary.Success | Should -BeTrue
+        $result.Summary.Truncated | Should -BeTrue
+        $result.Summary.Incomplete | Should -BeTrue
+        $result.Summary.StopReason | Should -Be 'TruncatedRecord'
+        $result.Summary.RecordsScanned | Should -Be 6
+        $result.Summary.PartialTrailingBytes | Should -Be 100
+        $result.Summary.MalformedRecords | Should -Be 1
     }
 
     It 'requires MftPath only for offline mode' {

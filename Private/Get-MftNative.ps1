@@ -1114,6 +1114,7 @@ public static class MftNative {
         public int MaxSeconds;
         public bool IncludeDeleted;
         public bool IncludeAll;
+        public bool SuppressRecordOutput;
         public long ElapsedMilliseconds;
     }
 
@@ -1127,11 +1128,26 @@ public static class MftNative {
         bool includeAll,
         string timelineCsvPath) {
 
+        return ReadOffline(mftPath, recordSizeBytes, bytesPerSector, maxRecords, maxSeconds, includeDeleted, includeAll, timelineCsvPath, false);
+    }
+
+    public static MftOfflineScanResult ReadOffline(
+        string mftPath,
+        int recordSizeBytes,
+        int bytesPerSector,
+        int maxRecords,
+        int maxSeconds,
+        bool includeDeleted,
+        bool includeAll,
+        string timelineCsvPath,
+        bool suppressRecordOutput) {
+
         MftOfflineScanResult result = new MftOfflineScanResult();
         result.MaxRecords = maxRecords;
         result.MaxSeconds = maxSeconds;
         result.IncludeDeleted = includeDeleted;
         result.IncludeAll = includeAll;
+        result.SuppressRecordOutput = suppressRecordOutput;
         result.TimelineCsvPath = timelineCsvPath;
 
         try {
@@ -1162,7 +1178,8 @@ public static class MftNative {
                     includeAll,
                     timelineCsvPath,
                     reader,
-                    delegate() { return stopwatch.ElapsedMilliseconds; });
+                    delegate() { return stopwatch.ElapsedMilliseconds; },
+                    suppressRecordOutput);
             }
         }
         catch (Exception exception) {
@@ -1187,6 +1204,22 @@ public static class MftNative {
         MftOfflineRecordReader recordReader,
         MftElapsedClock clock) {
 
+        return AnalyzeOffline(sourceLength, recordSizeBytes, bytesPerSector, maxRecords, maxSeconds, includeDeleted, includeAll, timelineCsvPath, recordReader, clock, false);
+    }
+
+    public static MftOfflineScanResult AnalyzeOffline(
+        long sourceLength,
+        int recordSizeBytes,
+        int bytesPerSector,
+        int maxRecords,
+        int maxSeconds,
+        bool includeDeleted,
+        bool includeAll,
+        string timelineCsvPath,
+        MftOfflineRecordReader recordReader,
+        MftElapsedClock clock,
+        bool suppressRecordOutput) {
+
         MftOfflineScanResult result = new MftOfflineScanResult();
         result.SourceLength = sourceLength;
         result.BytesPerSector = bytesPerSector;
@@ -1194,6 +1227,7 @@ public static class MftNative {
         result.MaxSeconds = maxSeconds;
         result.IncludeDeleted = includeDeleted;
         result.IncludeAll = includeAll;
+        result.SuppressRecordOutput = suppressRecordOutput;
         result.TimelineCsvPath = timelineCsvPath;
         MftOfflineTimelineWriter timeline = null;
 
@@ -1217,6 +1251,9 @@ public static class MftNative {
             AddOfflineNote(result, "Offline FILE records are parsed with applyFixups=true; every sector tail must match the update sequence before any tail is repaired.");
             AddOfflineNote(result, "Not-in-use records are previous-existence evidence only. Deleted MFT entries are reused, and these records do not establish a deletion time.");
             AddOfflineNote(result, "Best-effort paths require a complete parent chain with matching sequence numbers. Cycles, depth-cap exits, and unresolved parents return no partial path.");
+            if (suppressRecordOutput) {
+                AddOfflineNote(result, "Record and raw-byte retention is suppressed; Records and PreviousRecords are empty while counters and timeline output remain available.");
+            }
 
             if (!string.IsNullOrWhiteSpace(timelineCsvPath)) {
                 timeline = new MftOfflineTimelineWriter(timelineCsvPath);
@@ -1227,6 +1264,10 @@ public static class MftNative {
                 byte[] probe = new byte[48];
                 long probeOffset = 0;
                 while (detectedRecordSize == 0 && result.Error == null) {
+                    if (IsOfflineTimeBudgetExceeded(result, clock, maxSeconds)) {
+                        SetOfflineMaxSeconds(result, maxSeconds, "record-size detection");
+                        break;
+                    }
                     if (probeOffset >= sourceLength) {
                         result.Error = "No fully valid FILE record was available for record-size detection; use RecordSizeBytes when every candidate header is damaged.";
                         result.StopReason = "InvalidRecordSize";
@@ -1235,6 +1276,10 @@ public static class MftNative {
                     }
 
                     MftOfflineReadResult probeRead = InvokeOfflineReader(recordReader, probeOffset, probe, probe.Length);
+                    if (IsOfflineTimeBudgetExceeded(result, clock, maxSeconds)) {
+                        SetOfflineMaxSeconds(result, maxSeconds, "record-size detection");
+                        break;
+                    }
                     if (!probeRead.Success) {
                         result.Error = string.Format("Could not read a FILE header at offset {0} for record-size detection: {1}", probeOffset, probeRead.Error);
                         result.StopReason = "ReadError";
@@ -1246,6 +1291,7 @@ public static class MftNative {
                         result.Error = string.Format("The offline MFT ends inside a 48-byte FILE header at offset {0} before a valid record size could be detected.", probeOffset);
                         result.StopReason = "TruncatedRecord";
                         result.Incomplete = true;
+                        result.Truncated = true;
                         AddOfflineNote(result, result.Error + " No records were emitted by record-size detection.");
                         break;
                     }
@@ -1270,6 +1316,10 @@ public static class MftNative {
 
                     byte[] candidate = new byte[allocated];
                     MftOfflineReadResult candidateRead = InvokeOfflineReader(recordReader, probeOffset, candidate, candidate.Length);
+                    if (IsOfflineTimeBudgetExceeded(result, clock, maxSeconds)) {
+                        SetOfflineMaxSeconds(result, maxSeconds, "record-size detection");
+                        break;
+                    }
                     if (!candidateRead.Success) {
                         result.Error = string.Format("Could not read a {0}-byte FILE record at offset {1} for record-size detection: {2}", allocated, probeOffset, candidateRead.Error);
                         result.StopReason = "ReadError";
@@ -1281,11 +1331,16 @@ public static class MftNative {
                         result.Error = string.Format("The offline MFT ends inside a FILE record at offset {0} before a valid record size could be detected.", probeOffset);
                         result.StopReason = "TruncatedRecord";
                         result.Incomplete = true;
+                        result.Truncated = true;
                         AddOfflineNote(result, result.Error + " No records were emitted by record-size detection.");
                         break;
                     }
 
                     MftParseResult candidateParse = ParseFileRecord(candidate, true, bytesPerSector);
+                    if (IsOfflineTimeBudgetExceeded(result, clock, maxSeconds)) {
+                        SetOfflineMaxSeconds(result, maxSeconds, "record-size detection");
+                        break;
+                    }
                     if (candidateParse.Success) {
                         detectedRecordSize = (int)allocated;
                         AddOfflineNote(result, string.Format("Detected FILE record size {0} from the allocated size at offset 0x1C in the first fully valid FILE record at offset {1}.", detectedRecordSize, probeOffset));
@@ -1375,6 +1430,7 @@ public static class MftNative {
                     result.StopReason = "TruncatedRecord";
                     result.Success = result.RecordsScanned > 0;
                     result.Incomplete = true;
+                    result.Truncated = true;
                     AddOfflineNote(result, result.Error + " The partial bytes were not parsed; earlier complete records are preserved as partial evidence.");
                     break;
                 }
@@ -1397,7 +1453,7 @@ public static class MftNative {
 
                     MftOfflineRecord offlineRecord = new MftOfflineRecord();
                     offlineRecord.Record = record;
-                    offlineRecord.RecordBytes = parsed.RecordBytes;
+                    offlineRecord.RecordBytes = suppressRecordOutput ? null : parsed.RecordBytes;
                     offlineRecord.BestEffortPath = null;
                     offlineRecord.PathStatus = "ExtensionRecord";
                     offlineRecord.EvidenceNote = null;
@@ -1418,8 +1474,13 @@ public static class MftNative {
                         }
 
                         string pathStatus;
-                        offlineRecord.BestEffortPath = ResolveOfflinePath(record, detectedRecordSize, bytesPerSector, recordReader, parentBuffer, out pathStatus);
+                        MftFileNameInfo primaryName = SelectPrimaryFileName(record.FileNames);
+                        offlineRecord.BestEffortPath = ResolveOfflinePath(record, primaryName, detectedRecordSize, bytesPerSector, recordReader, parentBuffer, result, clock, maxSeconds, out pathStatus);
                         offlineRecord.PathStatus = pathStatus;
+                        if (pathStatus == "MaxSeconds") {
+                            SetOfflineMaxSeconds(result, maxSeconds, "parent resolution");
+                            break;
+                        }
                         if (offlineRecord.BestEffortPath == null) {
                             result.UnresolvedPathCount++;
                             AddOfflineNote(result, string.Format("Best-effort path for FILE record {0} is unresolved ({1}); no partial path was returned.", recordNumber, pathStatus));
@@ -1432,17 +1493,20 @@ public static class MftNative {
                             result.DeletedCount++;
                             offlineRecord.EvidenceNote = "Previous existence only: this not-in-use MFT record does not prove deletion time, and NTFS can reuse the entry for a different file.";
                             record.Notes.Add(offlineRecord.EvidenceNote);
-                            if (includeDeleted) {
+                            if (includeDeleted && !suppressRecordOutput) {
                                 result.PreviousRecords.Add(offlineRecord);
                             }
                         }
-                        else if (includeAll || record.TimestompSuspect) {
+                        else if ((includeAll || record.TimestompSuspect) && !suppressRecordOutput) {
                             result.Records.Add(offlineRecord);
                         }
                     }
 
                     if (timeline != null && (record.InUse || includeDeleted)) {
-                        AddOfflineTimelineRows(timeline, offlineRecord);
+                        AddOfflineTimelineRows(timeline, offlineRecord, detectedRecordSize, bytesPerSector, recordReader, parentBuffer, result, clock, maxSeconds);
+                        if (result.StopReason == "MaxSeconds") {
+                            break;
+                        }
                     }
                 }
 
@@ -1548,30 +1612,56 @@ public static class MftNative {
         return recordSize >= 256 && recordSize <= 65536 && (recordSize & (recordSize - 1)) == 0;
     }
 
+    private static bool IsOfflineTimeBudgetExceeded(
+        MftOfflineScanResult result,
+        MftElapsedClock clock,
+        int maxSeconds) {
+
+        result.ElapsedMilliseconds = Math.Max(0, clock());
+        return result.ElapsedMilliseconds >= maxSeconds * 1000L;
+    }
+
+    private static void SetOfflineMaxSeconds(MftOfflineScanResult result, int maxSeconds, string phase) {
+        result.Success = result.RecordsScanned > 0;
+        result.Incomplete = true;
+        result.Truncated = true;
+        result.StopReason = "MaxSeconds";
+        AddOfflineNote(result, string.Format("Offline MFT {0} stopped at the {1}-second time budget; results and timeline are incomplete.", phase, maxSeconds));
+    }
+
     private static string ResolveOfflinePath(
         MftFileRecord start,
+        MftFileNameInfo startName,
         int recordSize,
         int bytesPerSector,
         MftOfflineRecordReader reader,
         byte[] parentBuffer,
+        MftOfflineScanResult result,
+        MftElapsedClock clock,
+        int maxSeconds,
         out string status) {
 
-        if (!start.HasFileName || string.IsNullOrEmpty(start.FileName)) {
+        if (!start.HasFileName || startName == null || string.IsNullOrEmpty(startName.Name)) {
             status = "MissingFileName";
             return null;
         }
 
         List<string> names = new List<string>();
-        if (start.FileName != ".") {
-            names.Add(start.FileName);
+        if (startName.Name != ".") {
+            names.Add(startName.Name);
         }
         HashSet<long> visited = new HashSet<long>();
         long currentOrdinal = start.FileReferenceNumber;
         ushort currentSequence = start.SequenceNumber;
-        ulong parentReference = start.ParentFileReferenceNumber;
+        ulong parentReference = startName.ParentFileReferenceNumber;
         visited.Add(currentOrdinal);
 
         for (int depth = 0; depth < 64; depth++) {
+            if (IsOfflineTimeBudgetExceeded(result, clock, maxSeconds)) {
+                status = "MaxSeconds";
+                return null;
+            }
+
             long parentOrdinal = (long)(parentReference & 0x0000FFFFFFFFFFFFUL);
             ushort parentSequence = (ushort)(parentReference >> 48);
             if (parentOrdinal == currentOrdinal) {
@@ -1594,6 +1684,10 @@ public static class MftNative {
 
             long parentOffset = parentOrdinal * recordSize;
             MftOfflineReadResult parentRead = InvokeOfflineReader(reader, parentOffset, parentBuffer, recordSize);
+            if (IsOfflineTimeBudgetExceeded(result, clock, maxSeconds)) {
+                status = "MaxSeconds";
+                return null;
+            }
             if (!parentRead.Success) {
                 status = "ParentReadError";
                 return null;
@@ -1604,6 +1698,10 @@ public static class MftNative {
             }
 
             MftParseResult parsedParent = ParseFileRecord(parentBuffer, true, bytesPerSector);
+            if (IsOfflineTimeBudgetExceeded(result, clock, maxSeconds)) {
+                status = "MaxSeconds";
+                return null;
+            }
             if (!parsedParent.Success) {
                 status = "MalformedParent";
                 return null;
@@ -1641,22 +1739,46 @@ public static class MftNative {
         public string Source;
         public string Type;
         public string BestEffortPath;
+        public string FileName;
+        public string ParentFileReferenceNumber;
+        public string NameNamespace;
+        public string FnAttributeId;
         public string FileReferenceNumber;
         public bool InUse;
         public long RecordNumber;
     }
 
-    private static void AddOfflineTimelineRows(MftOfflineTimelineWriter writer, MftOfflineRecord offlineRecord) {
+    private static void AddOfflineTimelineRows(
+        MftOfflineTimelineWriter writer,
+        MftOfflineRecord offlineRecord,
+        int recordSize,
+        int bytesPerSector,
+        MftOfflineRecordReader reader,
+        byte[] parentBuffer,
+        MftOfflineScanResult result,
+        MftElapsedClock clock,
+        int maxSeconds) {
+
         MftFileRecord record = offlineRecord.Record;
-        AddOfflineTimelineRow(writer, offlineRecord, record.SiCreated, record.SiCreatedValid, "SI", "Created");
-        AddOfflineTimelineRow(writer, offlineRecord, record.SiModified, record.SiModifiedValid, "SI", "Modified");
-        AddOfflineTimelineRow(writer, offlineRecord, record.SiMftChanged, record.SiMftChangedValid, "SI", "MftChanged");
-        AddOfflineTimelineRow(writer, offlineRecord, record.SiAccessed, record.SiAccessedValid, "SI", "Accessed");
+        AddOfflineTimelineRow(writer, offlineRecord, record.SiCreated, record.SiCreatedValid, "SI", "Created", null, offlineRecord.BestEffortPath);
+        AddOfflineTimelineRow(writer, offlineRecord, record.SiModified, record.SiModifiedValid, "SI", "Modified", null, offlineRecord.BestEffortPath);
+        AddOfflineTimelineRow(writer, offlineRecord, record.SiMftChanged, record.SiMftChangedValid, "SI", "MftChanged", null, offlineRecord.BestEffortPath);
+        AddOfflineTimelineRow(writer, offlineRecord, record.SiAccessed, record.SiAccessedValid, "SI", "Accessed", null, offlineRecord.BestEffortPath);
+        MftFileNameInfo primaryName = SelectPrimaryFileName(record.FileNames);
         foreach (MftFileNameInfo name in record.FileNames) {
-            AddOfflineTimelineRow(writer, offlineRecord, name.Created, name.CreatedValid, "FN", "Created");
-            AddOfflineTimelineRow(writer, offlineRecord, name.Modified, name.ModifiedValid, "FN", "Modified");
-            AddOfflineTimelineRow(writer, offlineRecord, name.MftChanged, name.MftChangedValid, "FN", "MftChanged");
-            AddOfflineTimelineRow(writer, offlineRecord, name.Accessed, name.AccessedValid, "FN", "Accessed");
+            string namePath = offlineRecord.BestEffortPath;
+            if (name != primaryName) {
+                string pathStatus;
+                namePath = ResolveOfflinePath(record, name, recordSize, bytesPerSector, reader, parentBuffer, result, clock, maxSeconds, out pathStatus);
+                if (pathStatus == "MaxSeconds") {
+                    SetOfflineMaxSeconds(result, maxSeconds, "parent resolution");
+                    return;
+                }
+            }
+            AddOfflineTimelineRow(writer, offlineRecord, name.Created, name.CreatedValid, "FN", "Created", name, namePath);
+            AddOfflineTimelineRow(writer, offlineRecord, name.Modified, name.ModifiedValid, "FN", "Modified", name, namePath);
+            AddOfflineTimelineRow(writer, offlineRecord, name.MftChanged, name.MftChangedValid, "FN", "MftChanged", name, namePath);
+            AddOfflineTimelineRow(writer, offlineRecord, name.Accessed, name.AccessedValid, "FN", "Accessed", name, namePath);
         }
     }
 
@@ -1666,7 +1788,9 @@ public static class MftNative {
         DateTime? timestamp,
         bool valid,
         string source,
-        string type) {
+        string type,
+        MftFileNameInfo name,
+        string bestEffortPath) {
 
         MftOfflineTimelineRow row = new MftOfflineTimelineRow();
         row.HasTimestamp = valid && timestamp.HasValue;
@@ -1676,7 +1800,11 @@ public static class MftNative {
             : string.Empty;
         row.Source = source;
         row.Type = type;
-        row.BestEffortPath = offlineRecord.BestEffortPath == null ? string.Empty : offlineRecord.BestEffortPath;
+        row.BestEffortPath = bestEffortPath == null ? string.Empty : bestEffortPath;
+        row.FileName = name == null ? string.Empty : name.Name;
+        row.ParentFileReferenceNumber = name == null ? string.Empty : "0x" + name.ParentFileReferenceNumber.ToString("x16", CultureInfo.InvariantCulture);
+        row.NameNamespace = name == null ? string.Empty : name.NameNamespace.ToString(CultureInfo.InvariantCulture);
+        row.FnAttributeId = name == null ? string.Empty : name.AttributeId.ToString(CultureInfo.InvariantCulture);
         row.FileReferenceNumber = "0x" + offlineRecord.Record.FileReferenceNumber.ToString("x12", CultureInfo.InvariantCulture);
         row.InUse = offlineRecord.Record.InUse;
         row.RecordNumber = offlineRecord.Record.FileReferenceNumber;
@@ -1742,7 +1870,7 @@ public static class MftNative {
 
             try {
                 using (StreamWriter csv = new StreamWriter(outputPath, false, new UTF8Encoding(true))) {
-                    csv.Write("TimestampUtc,Source,Type,BestEffortPath,FileReferenceNumber,InUse,RecordNumber\n");
+                    csv.Write("TimestampUtc,Source,Type,BestEffortPath,FileName,ParentFileReferenceNumber,NameNamespace,FnAttributeId,FileReferenceNumber,InUse,RecordNumber\n");
                     if (chunkPaths.Count > 0) {
                         MergeChunks(chunkPaths, csv, null);
                     }
@@ -1875,6 +2003,10 @@ public static class MftNative {
             writer.Write(row.Source);
             writer.Write(row.Type);
             writer.Write(row.BestEffortPath);
+            writer.Write(row.FileName);
+            writer.Write(row.ParentFileReferenceNumber);
+            writer.Write(row.NameNamespace);
+            writer.Write(row.FnAttributeId);
             writer.Write(row.FileReferenceNumber);
             writer.Write(row.InUse);
             writer.Write(row.RecordNumber);
@@ -1888,6 +2020,10 @@ public static class MftNative {
             row.Source = reader.ReadString();
             row.Type = reader.ReadString();
             row.BestEffortPath = reader.ReadString();
+            row.FileName = reader.ReadString();
+            row.ParentFileReferenceNumber = reader.ReadString();
+            row.NameNamespace = reader.ReadString();
+            row.FnAttributeId = reader.ReadString();
             row.FileReferenceNumber = reader.ReadString();
             row.InUse = reader.ReadBoolean();
             row.RecordNumber = reader.ReadInt64();
@@ -1902,6 +2038,14 @@ public static class MftNative {
             writer.Write(CsvEscape(row.Type));
             writer.Write(',');
             writer.Write(CsvEscape(row.BestEffortPath));
+            writer.Write(',');
+            writer.Write(CsvEscape(row.FileName));
+            writer.Write(',');
+            writer.Write(CsvEscape(row.ParentFileReferenceNumber));
+            writer.Write(',');
+            writer.Write(CsvEscape(row.NameNamespace));
+            writer.Write(',');
+            writer.Write(CsvEscape(row.FnAttributeId));
             writer.Write(',');
             writer.Write(CsvEscape(row.FileReferenceNumber));
             writer.Write(',');

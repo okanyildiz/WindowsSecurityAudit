@@ -4,7 +4,11 @@
 .DESCRIPTION
     Streams FILE records through the MftNative parser with mandatory fixup validation,
     separates not-in-use previous-existence evidence, resolves sequence-checked paths,
-    and optionally writes a timestamp-sorted timeline CSV with bounded memory use.
+    and optionally writes a timestamp-sorted timeline CSV with bounded-memory sorting.
+    Only the timeline sort is bounded: Records, PreviousRecords, and their raw
+    RecordBytes are retained in memory and are rematerialized as PowerShell objects.
+    Use SuppressRecordOutput when only counters or timeline output are needed; this
+    skips record and raw-byte retention without changing scan or timeline evidence.
 .NOTES
     This helper performs pure .NET IO and is available on Windows, macOS, and Linux.
 #>
@@ -70,6 +74,9 @@ function Get-MftOffline {
         [switch]$IncludeAll,
 
         [Parameter()]
+        [switch]$SuppressRecordOutput,
+
+        [Parameter()]
         [string]$TimelineCsvPath
     )
 
@@ -96,7 +103,8 @@ function Get-MftOffline {
                 [bool]$IncludeAll,
                 $TimelineCsvPath,
                 $reader,
-                $clock)
+                $clock,
+                [bool]$SuppressRecordOutput)
         }
         else {
             $nativeResult = [MftNative]::ReadOffline(
@@ -107,7 +115,8 @@ function Get-MftOffline {
                 $MaxSeconds,
                 [bool]$IncludeDeleted,
                 [bool]$IncludeAll,
-                $TimelineCsvPath)
+                $TimelineCsvPath,
+                [bool]$SuppressRecordOutput)
         }
     }
     catch {
@@ -146,6 +155,7 @@ function Get-MftOffline {
             MaxSeconds                 = $MaxSeconds
             IncludeDeleted             = [bool]$IncludeDeleted
             IncludeAll                 = [bool]$IncludeAll
+            SuppressRecordOutput       = [bool]$SuppressRecordOutput
             ElapsedMilliseconds        = [long]0
         }
     }
@@ -183,6 +193,7 @@ function Get-MftOffline {
         MaxSeconds                 = [int]$nativeResult.MaxSeconds
         IncludeDeleted             = [bool]$nativeResult.IncludeDeleted
         IncludeAll                 = [bool]$nativeResult.IncludeAll
+        SuppressRecordOutput       = [bool]$nativeResult.SuppressRecordOutput
         ElapsedMilliseconds        = [long]$nativeResult.ElapsedMilliseconds
     }
 }
