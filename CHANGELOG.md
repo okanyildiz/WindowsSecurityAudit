@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.9.1] - 2026-11-13
+
+### Added
+
+- Windows integration verification pack (`integration/Invoke-WindowsIntegrationChecks.ps1` + README): scripted elevated-host proofs for the JEA endpoint lifecycle, DPAPI round-trip, native USN/MFT sources, dump validity, AMSI/Defender detection, and optional Sentinel OAuth ingestion (WSA_TEST_* variables). Isolated checks, temporary endpoint/dump cleanup, JSON + console report with exit codes.
+- Real cloud queries: `Get-CloudComplianceStatus` now reads Azure Secure Score (Graph) and Azure Policy compliance counts (ARM PolicyStates with pagination) with `Source='Graph'` and transport details; `Test-M365SecurityPosture` computes org-wide MFA registration percentage from `isMfaRegistered` (capable reported separately, registration is not enforcement). Honest `NotEvaluated` remains wherever no reliable API exists. 9 mocked tests.
+
 ## [1.9.0] - 2026-11-11
 
 ### Added
@@ -255,7 +262,8 @@ Post-release audit hardening. Every finding below was verified against the code 
 - Cloud Security: Azure AD risky sign-ins, M365 security posture, cloud compliance status.
 - Hardening: audit policies, PowerShell security (logging, transcription), security baseline enforcement — all with `-WhatIf` support.
 
-[Unreleased]: https://github.com/okanyildiz/WindowsSecurityAudit/compare/v1.9.0...HEAD
+[Unreleased]: https://github.com/okanyildiz/WindowsSecurityAudit/compare/v1.9.1...HEAD
+[1.9.1]: https://github.com/okanyildiz/WindowsSecurityAudit/releases/tag/v1.9.1
 [1.9.0]: https://github.com/okanyildiz/WindowsSecurityAudit/releases/tag/v1.9.0
 [1.8.2]: https://github.com/okanyildiz/WindowsSecurityAudit/releases/tag/v1.8.2
 [1.8.1]: https://github.com/okanyildiz/WindowsSecurityAudit/releases/tag/v1.8.1
