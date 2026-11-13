@@ -1,3 +1,35 @@
+function ConvertTo-CloudSecureScoreNumber {
+    [CmdletBinding()]
+    [OutputType([double])]
+    param(
+        [AllowNull()][object]$Value,
+        [Parameter(Mandatory = $true)][string]$FieldName
+    )
+
+    if ($null -eq $Value -or $Value -is [bool]) {
+        throw [System.FormatException]::new("$FieldName must be a finite, non-negative number.")
+    }
+
+    $allowedTypes = @(
+        'System.Byte', 'System.SByte', 'System.Int16', 'System.UInt16',
+        'System.Int32', 'System.UInt32', 'System.Int64', 'System.UInt64',
+        'System.Single', 'System.Double', 'System.Decimal', 'System.String'
+    )
+    if ($allowedTypes -notcontains $Value.GetType().FullName) {
+        throw [System.FormatException]::new("$FieldName must be a finite, non-negative number.")
+    }
+
+    $parsed = 0.0
+    $text = [string]$Value
+    if ([string]::IsNullOrWhiteSpace($text) -or
+        -not [double]::TryParse($text, [Globalization.NumberStyles]::Float, [Globalization.CultureInfo]::InvariantCulture, [ref]$parsed) -or
+        [double]::IsNaN($parsed) -or [double]::IsInfinity($parsed) -or $parsed -lt 0.0) {
+        throw [System.FormatException]::new("$FieldName must be a finite, non-negative number.")
+    }
+
+    return [double]$parsed
+}
+
 function Get-CloudComplianceStatus {
     <#
     .SYNOPSIS
@@ -82,7 +114,7 @@ function Get-CloudComplianceStatus {
         $graphConnectInstruction = "Connect-MgGraph -Scopes 'SecurityEvents.Read.All'"
         $policyAuthorizationInstruction = "Azure Policy requires Azure Resource Manager scope https://management.azure.com/user_impersonation and Reader or Microsoft.PolicyInsights/policyStates/read on the subscription. Install Az.Accounts, then run Connect-AzAccount."
         if (-not $graphConnected) {
-            Write-Warning "Not connected to Microsoft Graph. Secure Score and Azure Policy will be NotEvaluated. Run $graphConnectInstruction. $policyAuthorizationInstruction"
+            Write-Warning "Not connected to Microsoft Graph. Secure Score will be NotEvaluated. Run $graphConnectInstruction. Azure Policy discovery and queries will continue independently."
         }
 
         # Initialize results. Null numeric fields mean unknown, never zero.
@@ -218,13 +250,18 @@ function Get-CloudComplianceStatus {
                         throw 'The Secure Score record did not contain numeric currentScore and maxScore fields.'
                     }
 
-                    $currentScore = [double]$currentScoreProperty.Value
-                    $maxScore = [double]$maxScoreProperty.Value
+                    $currentScore = ConvertTo-CloudSecureScoreNumber -Value $currentScoreProperty.Value -FieldName 'currentScore'
+                    $maxScore = ConvertTo-CloudSecureScoreNumber -Value $maxScoreProperty.Value -FieldName 'maxScore'
+                    if ($maxScore -le 0.0) {
+                        throw 'The Secure Score maxScore must be greater than zero.'
+                    }
+                    if ($currentScore -gt $maxScore) {
+                        throw 'The Secure Score currentScore cannot exceed maxScore.'
+                    }
+                    $secureScorePercentage = [Math]::Round(($currentScore / $maxScore) * 100, 1)
                     $results.SecureScore = $currentScore
                     $results.SecureScoreMax = $maxScore
-                    if ($maxScore -gt 0) {
-                        $results.SecureScorePercentage = [Math]::Round(($currentScore / $maxScore) * 100, 1)
-                    }
+                    $results.SecureScorePercentage = $secureScorePercentage
                     $results.SecureScoreStatus = 'Evaluated'
                     $results.SecureScoreNote = 'Latest Microsoft Graph secureScore record requested with top 1 (REST equivalent: GET /beta/security/secureScores?$top=1). This is a Microsoft Secure Score, not a framework compliance percentage.'
                     $results.EvaluatedCount++
@@ -238,109 +275,110 @@ function Get-CloudComplianceStatus {
                     Write-Warning $results.SecureScoreNote
                 }
 
-                Write-Host "`nRetrieving Azure Policy compliance..." -ForegroundColor Cyan
-                $effectiveSubscriptionId = $SubscriptionId
-                $subscriptionDiscoveryError = $null
-                if ([string]::IsNullOrWhiteSpace($effectiveSubscriptionId)) {
-                    $azContextCommand = Get-Command -Name 'Get-AzContext' -ErrorAction SilentlyContinue
-                    if ($null -ne $azContextCommand) {
-                        try {
-                            $azContext = Get-AzContext -ErrorAction Stop
-                            $azSubscriptionProperty = Get-CloudDataProperty -InputObject $azContext -Name 'Subscription'
-                            if ($azSubscriptionProperty.Exists) {
-                                $azSubscriptionIdProperty = Get-CloudDataProperty -InputObject $azSubscriptionProperty.Value -Name 'Id'
-                                if ($azSubscriptionIdProperty.Exists -and $null -ne $azSubscriptionIdProperty.Value) {
-                                    $effectiveSubscriptionId = [string]$azSubscriptionIdProperty.Value
-                                }
-                            }
-                        }
-                        catch {
-                            $subscriptionDiscoveryError = $_.Exception.Message
-                        }
-                    }
-                }
-                $results.SubscriptionId = $effectiveSubscriptionId
+            }
 
-                if ([string]::IsNullOrWhiteSpace($effectiveSubscriptionId)) {
-                    $results.PolicyComplianceNote = "Not evaluated: no Azure subscription was supplied or selected. Pass -SubscriptionId or run Connect-AzAccount followed by Select-AzSubscription. $policyAuthorizationInstruction"
-                    if ($subscriptionDiscoveryError) {
-                        $results.PolicyComplianceNote += " Azure context discovery failed: $subscriptionDiscoveryError"
-                    }
-                    Write-Warning $results.PolicyComplianceNote
-                }
-                else {
+            Write-Host "`nRetrieving Azure Policy compliance..." -ForegroundColor Cyan
+            $effectiveSubscriptionId = $SubscriptionId
+            $subscriptionDiscoveryError = $null
+            if ([string]::IsNullOrWhiteSpace($effectiveSubscriptionId)) {
+                $azContextCommand = Get-Command -Name 'Get-AzContext' -ErrorAction SilentlyContinue
+                if ($null -ne $azContextCommand) {
                     try {
-                        $policyResult = Invoke-CloudPolicyInsightsQuery -SubscriptionId $effectiveSubscriptionId
-                        $results.PolicyTransport = $policyResult.Transport
-                        $results.PolicyCompliant = 0
-                        $results.PolicyNonCompliant = 0
-                        $results.PolicyOther = 0
-                        $assignmentSummaries = @{}
-
-                        foreach ($policyState in @($policyResult.States)) {
-                            if ($null -eq $policyState) {
-                                continue
-                            }
-
-                            $assignmentProperty = Get-CloudDataProperty -InputObject $policyState -Name 'policyAssignmentId'
-                            $assignmentId = [string]$assignmentProperty.Value
-                            if ([string]::IsNullOrWhiteSpace($assignmentId)) {
-                                $assignmentId = '(unknown policy assignment)'
-                            }
-
-                            if (-not $assignmentSummaries.ContainsKey($assignmentId)) {
-                                $assignmentSummaries[$assignmentId] = [ordered]@{
-                                    PolicyAssignmentId = $assignmentId
-                                    Compliant = 0
-                                    NonCompliant = 0
-                                    Other = 0
-                                }
-                            }
-
-                            $complianceProperty = Get-CloudDataProperty -InputObject $policyState -Name 'complianceState'
-                            $complianceState = [string]$complianceProperty.Value
-                            if ($complianceState.Equals('Compliant', [System.StringComparison]::OrdinalIgnoreCase)) {
-                                $results.PolicyCompliant++
-                                $assignmentSummaries[$assignmentId].Compliant++
-                            }
-                            elseif ($complianceState.Equals('NonCompliant', [System.StringComparison]::OrdinalIgnoreCase)) {
-                                $results.PolicyNonCompliant++
-                                $assignmentSummaries[$assignmentId].NonCompliant++
-                            }
-                            else {
-                                $results.PolicyOther++
-                                $assignmentSummaries[$assignmentId].Other++
+                        $azContext = Get-AzContext -ErrorAction Stop
+                        $azSubscriptionProperty = Get-CloudDataProperty -InputObject $azContext -Name 'Subscription'
+                        if ($azSubscriptionProperty.Exists) {
+                            $azSubscriptionIdProperty = Get-CloudDataProperty -InputObject $azSubscriptionProperty.Value -Name 'Id'
+                            if ($azSubscriptionIdProperty.Exists -and $null -ne $azSubscriptionIdProperty.Value) {
+                                $effectiveSubscriptionId = [string]$azSubscriptionIdProperty.Value
                             }
                         }
-
-                        $results.PolicyAssignments = @(
-                            $assignmentSummaries.Values |
-                                Sort-Object -Property PolicyAssignmentId |
-                                ForEach-Object { [PSCustomObject]$_ }
-                        )
-                        $policyStateCount = @($policyResult.States).Count
-                        $results.PolicyComplianceStatus = 'Evaluated'
-                        $results.PolicyComplianceNote = "Evaluated $policyStateCount latest policy-state record(s) in subscription $effectiveSubscriptionId using $($policyResult.Transport). Counts are grouped by policyAssignmentId and are not framework-control results."
-                        if ($results.PolicyOther -gt 0) {
-                            $results.PolicyComplianceNote += " $($results.PolicyOther) record(s) had Exempt, Unknown, missing, or other compliance states and were counted separately."
-                        }
-                        $results.EvaluatedCount++
                     }
                     catch {
-                        $results.PolicyCompliant = $null
-                        $results.PolicyNonCompliant = $null
-                        $results.PolicyOther = $null
-                        $results.PolicyAssignments = @()
-                        $results.PolicyComplianceStatus = 'NotEvaluated'
-                        $results.PolicyComplianceNote = "Not evaluated: Azure Policy Insights query failed: $($_.Exception.Message). $policyAuthorizationInstruction Invoke-MgGraphRequest is a Microsoft Graph transport and cannot be assumed to authorize management.azure.com."
-                        Write-Warning $results.PolicyComplianceNote
+                        $subscriptionDiscoveryError = $_.Exception.Message
                     }
                 }
             }
+            $results.SubscriptionId = $effectiveSubscriptionId
+
+            if ([string]::IsNullOrWhiteSpace($effectiveSubscriptionId)) {
+                $results.PolicyComplianceNote = "Not evaluated: no Azure subscription was supplied or selected. Pass -SubscriptionId or run Connect-AzAccount followed by Select-AzSubscription. $policyAuthorizationInstruction"
+                if ($subscriptionDiscoveryError) {
+                    $results.PolicyComplianceNote += " Azure context discovery failed: $subscriptionDiscoveryError"
+                }
+                Write-Warning $results.PolicyComplianceNote
+            }
             else {
+                try {
+                    $policyResult = Invoke-CloudPolicyInsightsQuery -SubscriptionId $effectiveSubscriptionId
+                    $results.PolicyTransport = $policyResult.Transport
+                    $results.PolicyCompliant = 0
+                    $results.PolicyNonCompliant = 0
+                    $results.PolicyOther = 0
+                    $assignmentSummaries = @{}
+
+                    foreach ($policyState in @($policyResult.States)) {
+                        if ($null -eq $policyState) {
+                            continue
+                        }
+
+                        $assignmentProperty = Get-CloudDataProperty -InputObject $policyState -Name 'policyAssignmentId'
+                        $assignmentId = [string]$assignmentProperty.Value
+                        if ([string]::IsNullOrWhiteSpace($assignmentId)) {
+                            $assignmentId = '(unknown policy assignment)'
+                        }
+
+                        if (-not $assignmentSummaries.ContainsKey($assignmentId)) {
+                            $assignmentSummaries[$assignmentId] = [ordered]@{
+                                PolicyAssignmentId = $assignmentId
+                                Compliant = 0
+                                NonCompliant = 0
+                                Other = 0
+                            }
+                        }
+
+                        $complianceProperty = Get-CloudDataProperty -InputObject $policyState -Name 'complianceState'
+                        $complianceState = [string]$complianceProperty.Value
+                        if ($complianceState.Equals('Compliant', [System.StringComparison]::OrdinalIgnoreCase)) {
+                            $results.PolicyCompliant++
+                            $assignmentSummaries[$assignmentId].Compliant++
+                        }
+                        elseif ($complianceState.Equals('NonCompliant', [System.StringComparison]::OrdinalIgnoreCase)) {
+                            $results.PolicyNonCompliant++
+                            $assignmentSummaries[$assignmentId].NonCompliant++
+                        }
+                        else {
+                            $results.PolicyOther++
+                            $assignmentSummaries[$assignmentId].Other++
+                        }
+                    }
+
+                    $results.PolicyAssignments = @(
+                        $assignmentSummaries.Values |
+                            Sort-Object -Property PolicyAssignmentId |
+                            ForEach-Object { [PSCustomObject]$_ }
+                    )
+                    $policyStateCount = @($policyResult.States).Count
+                    $results.PolicyComplianceStatus = 'Evaluated'
+                    $results.PolicyComplianceNote = "Evaluated $policyStateCount latest policy-state record(s) in subscription $effectiveSubscriptionId using $($policyResult.Transport). Counts are grouped by policyAssignmentId and are not framework-control results."
+                    if ($results.PolicyOther -gt 0) {
+                        $results.PolicyComplianceNote += " $($results.PolicyOther) record(s) had Exempt, Unknown, missing, or other compliance states and were counted separately."
+                    }
+                    $results.EvaluatedCount++
+                }
+                catch {
+                    $results.PolicyCompliant = $null
+                    $results.PolicyNonCompliant = $null
+                    $results.PolicyOther = $null
+                    $results.PolicyAssignments = @()
+                    $results.PolicyComplianceStatus = 'NotEvaluated'
+                    $results.PolicyComplianceNote = "Not evaluated: Azure Policy Insights query failed: $($_.Exception.Message). $policyAuthorizationInstruction Invoke-MgGraphRequest is a Microsoft Graph transport and cannot be assumed to authorize management.azure.com."
+                    Write-Warning $results.PolicyComplianceNote
+                }
+            }
+
+            if (-not $graphConnected) {
                 $notConnectedReason = "Not evaluated: no Microsoft Graph context. Run $graphConnectInstruction."
                 $results.SecureScoreNote = $notConnectedReason
-                $results.PolicyComplianceNote = "Not evaluated: live queries were skipped because there is no Microsoft Graph context. Run $graphConnectInstruction. $policyAuthorizationInstruction"
             }
 
             if (@($catalog).Count -gt 0) {
