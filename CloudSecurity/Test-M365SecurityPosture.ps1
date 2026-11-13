@@ -60,12 +60,17 @@ function Test-M365SecurityPosture {
     .DESCRIPTION
         Performs a security assessment of Microsoft 365 against live tenant data
         retrieved via Microsoft Graph (Conditional Access policies, security
-        defaults). Checks whose configuration is not exposed through Microsoft
-        Graph (Exchange Online, SharePoint, Teams workload settings) are reported
-        as NotEvaluated with the API required to assess them — results are never
-        fabricated. The compliance score is computed over evaluated checks only;
-        if no check could be evaluated, OverallScore is $null and OverallStatus
-        is 'NotEvaluated'.
+        defaults, and org-wide MFA registration). MFA percentages use
+        isMfaRegistered only; isMfaCapable is reported separately and neither
+        field proves that MFA is enforced on every sign-in.
+
+        Checks whose configuration is not exposed through a reliable Microsoft
+        Graph query (Exchange Online, SharePoint, Teams workload settings, and
+        effective guest/external access) are reported as NotEvaluated with the
+        API required to assess them - results are never fabricated. The
+        compliance score is computed over evaluated checks only; if no check
+        could be evaluated, OverallScore is $null and OverallStatus is
+        'NotEvaluated'.
     
     .PARAMETER CheckExchangeOnline
         Assess Exchange Online security
@@ -77,7 +82,8 @@ function Test-M365SecurityPosture {
         Assess Microsoft Teams security
     
     .PARAMETER CheckConditionalAccess
-        Review Conditional Access policies
+        Review Conditional Access, Security Defaults, MFA registration, and
+        guest/external access posture
     
     .PARAMETER ExportPath
         Path to export report
@@ -109,22 +115,29 @@ function Test-M365SecurityPosture {
         # function must not invent results: every check degrades to NotEvaluated.
         $graphConnected = $false
         $tenantId = 'NotConnected'
-        try {
-            $context = Get-MgContext -ErrorAction Stop
-            if ($context) {
-                $graphConnected = $true
-                if ($context.TenantId) { $tenantId = $context.TenantId }
-                Write-Host "Connected to tenant: $tenantId" -ForegroundColor Green
+        $graphConnectInstruction = "Connect-MgGraph -Scopes 'Directory.Read.All','Policy.Read.All','AuditLog.Read.All'"
+        $graphContextCommand = Get-Command -Name 'Get-MgContext' -ErrorAction SilentlyContinue
+        if ($null -ne $graphContextCommand) {
+            try {
+                $context = Get-MgContext -ErrorAction Stop
+                if ($null -ne $context) {
+                    $graphConnected = $true
+                    $tenantIdProperty = Get-CloudDataProperty -InputObject $context -Name 'TenantId'
+                    if ($tenantIdProperty.Exists -and $tenantIdProperty.Value) {
+                        $tenantId = [string]$tenantIdProperty.Value
+                    }
+                    Write-Host "Connected to tenant: $tenantId" -ForegroundColor Green
+                }
+            }
+            catch {
+                Write-Verbose "Get-MgContext failed: $($_.Exception.Message)"
             }
         }
-        catch {
-            Write-Verbose "Get-MgContext failed: $_"
-        }
-        
+
         if (-not $graphConnected) {
-            Write-Warning "Not connected to Microsoft Graph. No tenant data will be queried and every check will be reported as NotEvaluated. Connect first: Connect-MgGraph -Scopes 'Directory.Read.All','Policy.Read.All'"
+            Write-Warning "Not connected to Microsoft Graph. No tenant data will be queried and every check will be reported as NotEvaluated. Connect first: $graphConnectInstruction"
         }
-        
+
         # If no specific checks selected, run all
         if (-not ($CheckExchangeOnline -or $CheckSharePoint -or $CheckTeams -or $CheckConditionalAccess)) {
             $CheckExchangeOnline = $true
@@ -132,8 +145,8 @@ function Test-M365SecurityPosture {
             $CheckTeams = $true
             $CheckConditionalAccess = $true
         }
-        
-        # Initialize results
+
+        # Initialize results. Null MFA fields mean unknown, never zero percent.
         $results = [PSCustomObject]@{
             AssessmentDate = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
             TenantInfo = @{
@@ -146,6 +159,12 @@ function Test-M365SecurityPosture {
             OverallStatus = 'NotEvaluated'
             EvaluatedCount = 0
             NotEvaluatedCount = 0
+            MfaRegistrationPercentage = $null
+            MfaRegisteredUsers = $null
+            MfaCapableUsers = $null
+            MfaUsersReported = $null
+            MfaStatus = 'NotEvaluated'
+            MfaNote = 'Not evaluated.'
             Summary = @{
                 TotalChecks = 0
                 Passed = 0
@@ -159,7 +178,7 @@ function Test-M365SecurityPosture {
     
     process {
         try {
-            $notConnectedReason = "Not evaluated — not connected to Microsoft Graph (run Connect-MgGraph -Scopes 'Directory.Read.All','Policy.Read.All')"
+            $notConnectedReason = "Not evaluated - not connected to Microsoft Graph (run $graphConnectInstruction)"
             
             # Get organization info (live query, non-fatal)
             if ($graphConnected) {
@@ -217,16 +236,16 @@ function Test-M365SecurityPosture {
                 }
             }
             
-            # Conditional Access checks (live Microsoft Graph queries)
+            # Conditional Access and identity checks (live Microsoft Graph queries)
             if ($CheckConditionalAccess) {
-                Write-Host "`nAssessing Conditional Access..." -ForegroundColor Cyan
-                
+                Write-Host "`nAssessing Conditional Access and identity security..." -ForegroundColor Cyan
+
                 if ($graphConnected) {
                     try {
                         $caPolicies = @(Get-MgIdentityConditionalAccessPolicy -All -ErrorAction Stop)
-                        
+
                         $enabledPolicies = @($caPolicies | Where-Object { $_.State -eq 'enabled' }).Count
-                        
+
                         if ($enabledPolicies -gt 0) {
                             Add-M365Finding -Results $results -Name "Conditional Access Policies" -Category "Conditional Access" -Severity "High" -Status "Pass" -Actual "$enabledPolicies of $(@($caPolicies).Count) Conditional Access policies enabled" -Expected "At least one enabled Conditional Access policy"
                         }
@@ -238,10 +257,10 @@ function Test-M365SecurityPosture {
                         Write-Warning "Could not retrieve Conditional Access policies: $($_.Exception.Message)"
                         Add-M365Finding -Results $results -Name "Conditional Access Policies" -Category "Conditional Access" -Severity "Critical" -Status "NotEvaluated" -Actual "Not evaluated — Conditional Access query failed: $($_.Exception.Message)"
                     }
-                    
+
                     try {
                         $secDefaults = Get-MgPolicyIdentitySecurityDefaultEnforcementPolicy -ErrorAction Stop
-                        
+
                         if ($secDefaults -and $secDefaults.IsEnabled) {
                             Add-M365Finding -Results $results -Name "Security Defaults" -Category "Conditional Access" -Severity "High" -Status "Pass" -Actual "Security Defaults are enabled" -Expected "Enabled, unless Conditional Access policies are in use"
                         }
@@ -253,10 +272,126 @@ function Test-M365SecurityPosture {
                         Write-Warning "Could not retrieve Security Defaults policy: $($_.Exception.Message)"
                         Add-M365Finding -Results $results -Name "Security Defaults" -Category "Conditional Access" -Severity "High" -Status "NotEvaluated" -Actual "Not evaluated — Security Defaults query failed: $($_.Exception.Message)"
                     }
+
+                    Write-Host "`nAssessing org-wide MFA registration..." -ForegroundColor Cyan
+                    try {
+                        $graphRequestCommand = Get-Command -Name 'Invoke-MgGraphRequest' -ErrorAction SilentlyContinue
+                        if ($null -eq $graphRequestCommand) {
+                            throw 'Invoke-MgGraphRequest is unavailable. Install Microsoft.Graph.Authentication.'
+                        }
+
+                        $registrationDetails = @()
+                        $registrationUri = '/beta/reports/authenticationMethods/userRegistrationDetails'
+                        $seenRegistrationPages = @{}
+                        while ($true) {
+                            if ($seenRegistrationPages.ContainsKey($registrationUri)) {
+                                throw 'The MFA registration report returned a repeated pagination link.'
+                            }
+                            $seenRegistrationPages[$registrationUri] = $true
+
+                            $registrationPage = Invoke-MgGraphRequest -Method GET -Uri $registrationUri -ErrorAction Stop
+                            if ($registrationPage -is [string]) {
+                                if ([string]::IsNullOrWhiteSpace($registrationPage)) {
+                                    throw 'The MFA registration report returned an empty response body.'
+                                }
+                                $registrationPage = $registrationPage | ConvertFrom-Json -ErrorAction Stop
+                            }
+
+                            $registrationValueProperty = Get-CloudDataProperty -InputObject $registrationPage -Name 'value'
+                            if (-not $registrationValueProperty.Exists -or $null -eq $registrationValueProperty.Value) {
+                                throw "The MFA registration report did not contain a 'value' array."
+                            }
+                            $registrationDetails += @($registrationValueProperty.Value)
+
+                            $nextRegistrationProperty = Get-CloudDataProperty -InputObject $registrationPage -Name '@odata.nextLink'
+                            $nextRegistrationUri = [string]$nextRegistrationProperty.Value
+                            if ([string]::IsNullOrWhiteSpace($nextRegistrationUri)) {
+                                break
+                            }
+                            $registrationUri = $nextRegistrationUri
+                        }
+
+                        $registrationDetails = @($registrationDetails | Where-Object { $null -ne $_ })
+                        if ($registrationDetails.Count -eq 0) {
+                            throw 'The MFA registration report returned no user records, so a percentage cannot be calculated.'
+                        }
+
+                        # UNCERTAIN field handling: isMfaRegistered measures registration,
+                        # not enforcement. isMfaCapable additionally requires a method
+                        # allowed by policy and is never a substitute for registration.
+                        # Missing/non-Boolean fields are unknown, never implicit failures.
+                        $mfaRegisteredUsers = 0
+                        $mfaCapableUsers = 0
+                        $missingRegistrationFields = 0
+                        $missingCapableFields = 0
+                        foreach ($registration in $registrationDetails) {
+                            $registeredProperty = Get-CloudDataProperty -InputObject $registration -Name 'isMfaRegistered'
+                            if (-not $registeredProperty.Exists -or $registeredProperty.Value -isnot [bool]) {
+                                $missingRegistrationFields++
+                            }
+                            elseif ($registeredProperty.Value) {
+                                $mfaRegisteredUsers++
+                            }
+
+                            $capableProperty = Get-CloudDataProperty -InputObject $registration -Name 'isMfaCapable'
+                            if (-not $capableProperty.Exists -or $capableProperty.Value -isnot [bool]) {
+                                $missingCapableFields++
+                            }
+                            elseif ($capableProperty.Value) {
+                                $mfaCapableUsers++
+                            }
+                        }
+
+                        if ($missingRegistrationFields -gt 0) {
+                            throw "$missingRegistrationFields user record(s) lacked a Boolean isMfaRegistered field. The org-wide percentage was not calculated; isMfaCapable cannot be used as a substitute."
+                        }
+
+                        $reportedUsers = $registrationDetails.Count
+                        $mfaPercentage = [Math]::Round(($mfaRegisteredUsers / $reportedUsers) * 100, 1)
+                        $results.MfaRegistrationPercentage = $mfaPercentage
+                        $results.MfaRegisteredUsers = $mfaRegisteredUsers
+                        $results.MfaUsersReported = $reportedUsers
+                        if ($missingCapableFields -eq 0) {
+                            $results.MfaCapableUsers = $mfaCapableUsers
+                            $capableDisplay = "$mfaCapableUsers user(s) are MFA-capable"
+                        }
+                        else {
+                            $results.MfaCapableUsers = $null
+                            $capableDisplay = "MFA-capable count is unknown because $missingCapableFields record(s) lacked a Boolean isMfaCapable field"
+                        }
+                        $results.MfaStatus = 'Evaluated'
+
+                        $mfaActual = "$mfaRegisteredUsers of $reportedUsers returned user record(s) ($mfaPercentage%) are registered for MFA; $capableDisplay. Registration does not prove MFA is enforced on every sign-in; the report does not work for disabled users."
+                        $results.MfaNote = $mfaActual
+                        if ($mfaPercentage -eq 100) {
+                            Add-M365Finding -Results $results -Name "Org-wide MFA Registration" -Category "Identity" -Severity "Critical" -Status "Pass" -Actual $mfaActual -Expected "100% of returned users registered for MFA; verify enforcement separately with Conditional Access or Security Defaults"
+                        }
+                        elseif ($mfaPercentage -ge 80) {
+                            Add-M365Finding -Results $results -Name "Org-wide MFA Registration" -Category "Identity" -Severity "High" -Status "Warning" -Actual $mfaActual -Expected "100% of returned users registered for MFA; verify enforcement separately with Conditional Access or Security Defaults"
+                        }
+                        else {
+                            Add-M365Finding -Results $results -Name "Org-wide MFA Registration" -Category "Identity" -Severity "Critical" -Status "Fail" -Actual $mfaActual -Expected "100% of returned users registered for MFA; verify enforcement separately with Conditional Access or Security Defaults"
+                        }
+                    }
+                    catch {
+                        $results.MfaRegistrationPercentage = $null
+                        $results.MfaRegisteredUsers = $null
+                        $results.MfaCapableUsers = $null
+                        $results.MfaUsersReported = $null
+                        $results.MfaStatus = 'NotEvaluated'
+                        $results.MfaNote = "Not evaluated - GET /beta/reports/authenticationMethods/userRegistrationDetails failed: $($_.Exception.Message). Requires Microsoft Graph scope AuditLog.Read.All; run $graphConnectInstruction."
+                        Write-Warning $results.MfaNote
+                        Add-M365Finding -Results $results -Name "Org-wide MFA Registration" -Category "Identity" -Severity "Critical" -Status "NotEvaluated" -Actual $results.MfaNote -Expected "100% of returned users registered for MFA; verify enforcement separately"
+                    }
+
+                    Add-M365Finding -Results $results -Name "Guest/External Access" -Category "Identity" -Severity "High" -Status "NotEvaluated" -Actual "Not evaluated - /beta/invitations reports invitation redemption only, not effective guest access. Reliable evaluation requires correlation of /beta/users (userType), /beta/policies/externalIdentitiesPolicy, /beta/policies/crossTenantAccessPolicy/default, and workload-specific settings." -Expected "Guest and external access explicitly restricted by policy"
                 }
                 else {
                     Add-M365Finding -Results $results -Name "Conditional Access Policies" -Category "Conditional Access" -Severity "Critical" -Status "NotEvaluated" -Actual $notConnectedReason
                     Add-M365Finding -Results $results -Name "Security Defaults" -Category "Conditional Access" -Severity "High" -Status "NotEvaluated" -Actual $notConnectedReason
+                    Add-M365Finding -Results $results -Name "Org-wide MFA Registration" -Category "Identity" -Severity "Critical" -Status "NotEvaluated" -Actual $notConnectedReason -Expected "100% of returned users registered for MFA; verify enforcement separately"
+                    Add-M365Finding -Results $results -Name "Guest/External Access" -Category "Identity" -Severity "High" -Status "NotEvaluated" -Actual $notConnectedReason -Expected "Guest and external access explicitly restricted by policy"
+                    $results.MfaNote = $notConnectedReason
                 }
             }
             
@@ -425,13 +560,19 @@ function Generate-M365SecurityHTML {
             default { 'noteval' }
         }
         
+        $categoryEncoded = ConvertTo-HtmlEncoded $finding.Category
+        $nameEncoded = ConvertTo-HtmlEncoded $finding.Name
+        $severityEncoded = ConvertTo-HtmlEncoded $finding.Severity
+        $statusEncoded = ConvertTo-HtmlEncoded $finding.Status
+        $actualEncoded = ConvertTo-HtmlEncoded $finding.Actual
+
         $html += @"
                 <tr>
-                    <td>$($finding.Category)</td>
-                    <td>$($finding.Name)</td>
-                    <td>$($finding.Severity)</td>
-                    <td class="$statusClass">$($finding.Status)</td>
-                    <td>$($finding.Actual)</td>
+                    <td>$categoryEncoded</td>
+                    <td>$nameEncoded</td>
+                    <td>$severityEncoded</td>
+                    <td class="$statusClass">$statusEncoded</td>
+                    <td>$actualEncoded</td>
                 </tr>
 "@
     }
