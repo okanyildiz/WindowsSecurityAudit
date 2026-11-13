@@ -645,9 +645,9 @@ function Find-LateralMovement {
                             Write-Warning "Service creation check (Event ID 7045) hit the $MaxEvents-event cap - results are likely TRUNCATED. Narrow -Days or raise -MaxEvents for complete coverage."
                         }
 
-                        $allowedServicePrefix = '^(?i:WinDefend|WdNis|WdBoot|WdFilter|Sense|SecurityHealth|MpSvc|MDCoreSvc|MsMpEng|MsSecCore|wuauserv|UsoSvc|WaaSMedicSvc|WindowsUpdate|BITS|TrustedInstaller|GoogleUpdate|gupdate|gupdatem|MicrosoftEdgeUpdate|edgeupdate|edgeupdatem|AdobeARMservice|AdobeUpdateService)'
+                        $allowedServiceNames = @('WinDefend', 'WdNis', 'WdBoot', 'WdFilter', 'Sense', 'SecurityHealth', 'MpSvc', 'MDCoreSvc', 'MsMpEng', 'MsSecCore', 'wuauserv', 'UsoSvc', 'WaaSMedicSvc', 'WindowsUpdate', 'BITS', 'TrustedInstaller', 'GoogleUpdate', 'gupdate', 'gupdatem', 'MicrosoftEdgeUpdate', 'edgeupdate', 'edgeupdatem', 'AdobeARMservice', 'AdobeUpdateService')
                         $knownServiceNames = @('PSEXESVC', 'RemCom', 'RemComSvc', 'cscript', 'wscript')
-                        $serviceBinaryNames = @('powershell.exe', 'cmd.exe', 'rundll32.exe', 'mshta.exe', 'regsvr32.exe', 'cscript.exe', 'wscript.exe')
+                        $serviceBinaryNames = @('powershell.exe', 'pwsh.exe', 'cmd.exe', 'rundll32.exe', 'mshta.exe', 'regsvr32.exe', 'cscript.exe', 'wscript.exe', 'psexec.exe', 'psexesvc.exe', 'remcom.exe')
                         $servicePathPattern = '(?i)(\\Windows\\Temp\\|\\Temp\\|\\AppData\\|\\Users\\Public(?:\\|$)|\\ProgramData(?:\\|$)|^[A-Za-z]:\\Temp(?:\\|$)|%TEMP%|%LOCALAPPDATA%|%APPDATA%|%PUBLIC%|%PROGRAMDATA%)'
                         $foundServices = 0
 
@@ -655,14 +655,11 @@ function Find-LateralMovement {
                             if ($null -eq $event) { continue }
                             $serviceName = Get-LateralEventProperty -WinEvent $event -Name 'ServiceName' -Index 0
                             $imagePath = Get-LateralEventProperty -WinEvent $event -Name 'ImagePath' -Index 1
-                            $accountName = Get-LateralEventProperty -WinEvent $event -Name 'AccountName' -Index 2
-
-                            if (-not [string]::IsNullOrWhiteSpace($serviceName) -and $serviceName -match $allowedServicePrefix) {
-                                continue
-                            }
+                            $accountName = Get-LateralEventProperty -WinEvent $event -Name 'AccountName' -Index 4
 
                             $reasons = @()
                             $severity = 'Medium'
+                            $highConfidenceEvidence = $false
                             if (-not [string]::IsNullOrWhiteSpace($imagePath)) {
                                 if ($imagePath -match $servicePathPattern) {
                                     $reasons += 'Service binary is under a temporary, user-writable, public, or ProgramData path'
@@ -673,6 +670,7 @@ function Find-LateralMovement {
                                 if ($unquotedImage.StartsWith('\\')) {
                                     $reasons += 'Service binary uses a UNC path'
                                     $severity = 'High'
+                                    $highConfidenceEvidence = $true
                                 }
 
                                 $serviceBinary = $trimmedImage
@@ -689,16 +687,20 @@ function Find-LateralMovement {
                                     $binaryName = $Matches[1].ToLowerInvariant()
                                 }
                                 if ($serviceBinaryNames -contains $binaryName) {
-                                    $reasons += "Service uses a script or proxy-execution binary ($binaryName)"
+                                    $reasons += "Service uses a remote-execution, script, or proxy-execution binary ($binaryName)"
                                     $severity = 'High'
+                                    $highConfidenceEvidence = $true
                                 }
                             }
 
                             if ($knownServiceNames -contains $serviceName) {
                                 $reasons += "Service name matches a known remote-execution or LOLBin launcher ($serviceName)"
                                 $severity = 'High'
+                                $highConfidenceEvidence = $true
                             }
 
+                            $allowedServiceName = (-not [string]::IsNullOrWhiteSpace($serviceName) -and $allowedServiceNames -contains $serviceName)
+                            if ($allowedServiceName -and -not $highConfidenceEvidence) { continue }
                             if ($reasons.Count -eq 0) { continue }
                             $reasons = @($reasons | Select-Object -Unique)
                             $details = "Service '$serviceName' created with image '$imagePath' as '$accountName'. Reasons: $($reasons -join '; ')"
@@ -748,9 +750,11 @@ function Find-LateralMovement {
                         }
 
                         $taskPathPattern = '(?i)(\\Windows\\Temp\\|\\Temp\\|\\AppData\\|\\Users\\Public(?:\\|$)|^[A-Za-z]:\\Temp(?:\\|$)|%TEMP%|%LOCALAPPDATA%|%APPDATA%|%PUBLIC%)'
-                        $userContextPattern = '(?i)(\\Users\\|\\AppData\\|\\Temp\\|%TEMP%|%LOCALAPPDATA%|%APPDATA%)'
+                        $userContextPattern = '(?i)(\\Users\\|\\AppData\\|\\Temp\\|%TEMP%|%LOCALAPPDATA%|%APPDATA%|%USERPROFILE%)'
                         $scriptLauncherPattern = '(?i)(powershell|pwsh|cmd|cscript|wscript|mshta|rundll32|regsvr32)(\.exe)?\b'
-                        $encodedCommandPattern = '(?i)(?:^|\s)-(?:enc|encodedcommand)(?:\s+|=|:)'
+                        $powerShellLauncherPattern = '(?i)\b(?:powershell|pwsh)(?:\.exe)?\b'
+                        $encodedCommandPattern = '(?i)(?:^|\s)-(?:e|ec|enc|encodedcommand)(?:\s+|=|:)'
+                        $userExecutablePattern = '(?i)(?:[A-Za-z]:\\Users\\[^\\]+\\|%USERPROFILE%\\)[^"\r\n]*?\.exe(?=\s|"|$)'
                         $foundTasks = 0
 
                         foreach ($event in $taskEvents) {
@@ -765,7 +769,7 @@ function Find-LateralMovement {
                             if ($taskInfo.Action -match $taskPathPattern) {
                                 $reasons += 'Task action executes from a temporary, AppData, or public user-writable path'
                             }
-                            if ($taskInfo.Action -match $encodedCommandPattern) {
+                            if ($taskInfo.Action -match $powerShellLauncherPattern -and $taskInfo.Action -match $encodedCommandPattern) {
                                 $reasons += 'Task action contains an encoded PowerShell command'
                                 $severity = 'High'
                             }
@@ -774,8 +778,13 @@ function Find-LateralMovement {
                             if (-not [string]::IsNullOrWhiteSpace($taskInfo.RunAs) -and $taskInfo.RunAs.Trim() -match '^(?i:SYSTEM|NT AUTHORITY\\SYSTEM|S-1-5-18)$') {
                                 $runsAsSystem = $true
                             }
-                            if ($runsAsSystem -and $taskInfo.Action -match $scriptLauncherPattern -and $taskInfo.Action -match $userContextPattern) {
+                            $runsUserContextPayload = ($runsAsSystem -and $taskInfo.Action -match $userContextPattern)
+                            if ($runsUserContextPayload -and $taskInfo.Action -match $scriptLauncherPattern) {
                                 $reasons += 'Task runs a user-context script as SYSTEM'
+                                $severity = 'High'
+                            }
+                            if ($runsUserContextPayload -and $taskInfo.Action -match $userExecutablePattern) {
+                                $reasons += 'Task runs a user-profile executable as SYSTEM'
                                 $severity = 'High'
                             }
                             if ($taskInfo.LogonTrigger) { $reasons += 'Task uses a logon trigger' }
@@ -850,7 +859,7 @@ function Find-LateralMovement {
                                 $logonType = Get-LateralEventProperty -WinEvent $event -Name 'LogonType' -Index 8
                                 if ([string]$logonType -ne '3' -or -not $processAttributed) { continue }
                             }
-                            elseif ($eventId -ne 4648) {
+                            elseif ($eventId -ne 4648 -or -not $processAttributed) {
                                 continue
                             }
 
@@ -861,12 +870,8 @@ function Find-LateralMovement {
                                 $targetServer = Get-LateralEventProperty -WinEvent $event -Name 'TargetServerName' -Index 8
                             }
                             $sourceIP = Get-LateralEventProperty -WinEvent $event -Name 'IpAddress' -Index 18
-                            $attribution = 'Explicit credential use; correlate with wmiprvse.exe activity for WMI attribution'
-                            $severity = 'Low'
-                            if ($processAttributed) {
-                                $attribution = "Source process '$processName' attributes this activity to WMI"
-                                $severity = 'High'
-                            }
+                            $attribution = "Source process '$processName' attributes this activity to WMI"
+                            $severity = 'High'
                             if ($eventId -eq 4624) {
                                 $attribution = "WMI-attributed network logon (Type 3) from '$sourceIP' by process '$processName'"
                                 $severity = 'Medium'
@@ -878,7 +883,7 @@ function Find-LateralMovement {
                                 Source = if (-not [string]::IsNullOrWhiteSpace($processName)) { $processName } elseif (-not [string]::IsNullOrWhiteSpace($sourceIP)) { $sourceIP } else { "Security event $eventId" }
                                 Details = $details
                                 Severity = $severity
-                                Technique = 'T1021.004'
+                                Technique = 'T1047'
                                 Type = 'WMI'
                                 EventId = $eventId
                                 ProcessName = $processName
@@ -932,7 +937,7 @@ function Find-LateralMovement {
                                 Source = "Sysmon event $eventId"
                                 Details = $details
                                 Severity = if ($eventId -eq 20) { 'High' } else { 'Medium' }
-                                Technique = 'T1021.004'
+                                Technique = 'T1546.003'
                                 RelatedTechnique = 'T1546.003'
                                 Type = 'WMISubscription'
                                 EventId = $eventId

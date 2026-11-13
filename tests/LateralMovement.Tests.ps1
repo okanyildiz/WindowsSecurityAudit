@@ -125,6 +125,8 @@ Describe 'Lateral movement event-log expansion' {
             New-TestEvent -Id 7045 -LogName System -TimeCreated $when -Data ([ordered]@{
                 ServiceName = 'EvilSvc'
                 ImagePath = 'C:\Users\bob\AppData\Local\Temp\evil.exe'
+                ServiceType = 'user mode service'
+                StartType = 'auto start'
                 AccountName = 'LocalSystem'
             }) -UnnamedData
         )
@@ -139,6 +141,7 @@ Describe 'Lateral movement event-log expansion' {
         $finding.Technique | Should -Be 'T1543.003'
         $finding.Details | Should -Match 'Temp'
         $finding.ServiceName | Should -Be 'EvilSvc'
+        $finding.AccountName | Should -Be 'LocalSystem'
         $result.Summary.TotalIndicators | Should -Be 1
         $result.SourcesChecked -join "`n" | Should -Match 'System log present'
         $serviceQueries = @(
@@ -165,6 +168,44 @@ Describe 'Lateral movement event-log expansion' {
         $result.Summary.TotalIndicators | Should -Be 0
     }
 
+    It 'does not treat an allowlisted service prefix as an exact name' {
+        $script:TestEvents = @(
+            New-TestEvent -Id 7045 -LogName System -Data ([ordered]@{
+                ServiceName = 'wuauserv.evil'
+                ImagePath = 'C:\Users\bob\AppData\Local\Temp\evil.exe'
+                AccountName = 'LocalSystem'
+            })
+        )
+
+        $result = Find-LateralMovement -CheckServiceCreation -Days 1 6>$null 3>$null
+        @($result.Indicators.ServiceCreation).Count | Should -Be 1
+        $result.Indicators.ServiceCreation[0].ServiceName | Should -Be 'wuauserv.evil'
+        $result.Indicators.ServiceCreation[0].Reasons -join '; ' | Should -Match 'user-writable'
+    }
+
+    It 'does not allowlist high-confidence service evidence for <ServiceName>: <ImagePath>' -ForEach @(
+        @{ ServiceName = 'wuauserv'; ImagePath = 'C:\Windows\System32\cmd.exe'; ExpectedReason = 'cmd.exe' },
+        @{ ServiceName = 'wuauserv'; ImagePath = '"C:\Program Files\PowerShell\7\pwsh.exe" -NoProfile'; ExpectedReason = 'pwsh.exe' },
+        @{ ServiceName = 'wuauserv'; ImagePath = 'C:\Windows\System32\psexec.exe'; ExpectedReason = 'psexec.exe' },
+        @{ ServiceName = 'BITS'; ImagePath = '\\server\share\update.exe'; ExpectedReason = 'UNC path' }
+    ) {
+        $case = $_
+        $script:TestEvents = @(
+            New-TestEvent -Id 7045 -LogName System -Data ([ordered]@{
+                ServiceName = $case.ServiceName
+                ImagePath = $case.ImagePath
+                AccountName = 'LocalSystem'
+            })
+        )
+
+        $result = Find-LateralMovement -CheckServiceCreation -Days 1 6>$null 3>$null
+        @($result.Indicators.ServiceCreation).Count | Should -Be 1
+        $finding = $result.Indicators.ServiceCreation[0]
+        $finding.Severity | Should -Be 'High'
+        $finding.Technique | Should -Be 'T1543.003'
+        $finding.Reasons -join '; ' | Should -Match ([regex]::Escape($case.ExpectedReason))
+    }
+
     It 'flags an encoded PowerShell task and extracts XML fields by name' {
         $content = New-TestTaskContent -Author 'CONTOSO\bob' -RunAs 'S-1-5-18' `
             -TriggerXml '<LogonTrigger><Enabled>true</Enabled></LogonTrigger>' `
@@ -186,6 +227,30 @@ Describe 'Lateral movement event-log expansion' {
         $finding.Action | Should -Match '-enc'
         $finding.Reasons -join '; ' | Should -Match 'encoded PowerShell'
         $finding.Reasons -join '; ' | Should -Match 'logon trigger'
+    }
+
+    It 'recognizes <Option> as an encoded command for <Launcher>' -ForEach @(
+        @{ Option = '-e'; Launcher = 'powershell.exe' },
+        @{ Option = '-ec'; Launcher = 'pwsh.exe' },
+        @{ Option = '-enc'; Launcher = 'powershell.exe' },
+        @{ Option = '-encodedcommand'; Launcher = 'pwsh.exe' }
+    ) {
+        $case = $_
+        $content = New-TestTaskContent -Author 'CONTOSO\bob' -RunAs 'CONTOSO\service' `
+            -TriggerXml '<CalendarTrigger><StartBoundary>2026-01-01T01:00:00</StartBoundary></CalendarTrigger>' `
+            -Command $case.Launcher -Arguments "$($case.Option) SQBFAFgA"
+        $script:TestEvents = @(
+            New-TestEvent -Id 4698 -Data ([ordered]@{
+                TaskName = '\Contoso\ShortEncodedTask'
+                TaskContent = $content
+            })
+        )
+
+        $result = Find-LateralMovement -CheckScheduledTasks -Days 1 6>$null 3>$null
+        @($result.Indicators.ScheduledTasks).Count | Should -Be 1
+        $result.Indicators.ScheduledTasks[0].Severity | Should -Be 'High'
+        $result.Indicators.ScheduledTasks[0].Technique | Should -Be 'T1053.005'
+        $result.Indicators.ScheduledTasks[0].Reasons -join '; ' | Should -Match 'encoded PowerShell'
     }
 
     It 'does not flag a normal scheduled task' {
@@ -223,6 +288,29 @@ Describe 'Lateral movement event-log expansion' {
         $result.Indicators.ScheduledTasks[0].Reasons -join '; ' | Should -Match 'boot trigger'
     }
 
+    It 'flags a direct SYSTEM executable under a user <Folder> folder' -ForEach @(
+        @{ Folder = 'Downloads' },
+        @{ Folder = 'Desktop' },
+        @{ Folder = 'Documents' }
+    ) {
+        $folder = $_.Folder
+        $content = New-TestTaskContent -Author 'CONTOSO\bob' -RunAs 'S-1-5-18' `
+            -TriggerXml '<CalendarTrigger><StartBoundary>2026-01-01T01:00:00</StartBoundary></CalendarTrigger>' `
+            -Command "C:\Users\bob\$folder\payload.exe"
+        $script:TestEvents = @(
+            New-TestEvent -Id 4698 -Data ([ordered]@{
+                TaskName = '\Contoso\DirectUserExecutable'
+                TaskContent = $content
+            })
+        )
+
+        $result = Find-LateralMovement -CheckScheduledTasks -Days 1 6>$null 3>$null
+        @($result.Indicators.ScheduledTasks).Count | Should -Be 1
+        $result.Indicators.ScheduledTasks[0].Severity | Should -Be 'High'
+        $result.Indicators.ScheduledTasks[0].Technique | Should -Be 'T1053.005'
+        $result.Indicators.ScheduledTasks[0].Reasons -join '; ' | Should -Match 'user-profile executable as SYSTEM'
+    }
+
     It 'flags WMI explicit-credential use' {
         $script:TestEvents = @(
             New-TestEvent -Id 4648 -Data ([ordered]@{
@@ -236,11 +324,26 @@ Describe 'Lateral movement event-log expansion' {
         $result = Find-LateralMovement -CheckWMI -Days 1 6>$null 3>$null
         @($result.Indicators.WMI).Count | Should -Be 1
         $finding = $result.Indicators.WMI[0]
-        $finding.Technique | Should -Be 'T1021.004'
+        $finding.Technique | Should -Be 'T1047'
         $finding.EventId | Should -Be 4648
         $finding.TargetServer | Should -Be 'SERVER02'
         $finding.Severity | Should -Be 'High'
         $finding.Details | Should -Match 'Explicit|WMI'
+    }
+
+    It 'does not attribute non-WMI explicit credentials to WMI' {
+        $script:TestEvents = @(
+            New-TestEvent -Id 4648 -Data ([ordered]@{
+                SubjectUserName = 'bob'
+                TargetUserName = 'admin'
+                TargetServerName = 'SERVER02'
+                ProcessName = 'C:\Windows\System32\cmd.exe'
+            })
+        )
+
+        $result = Find-LateralMovement -CheckWMI -Days 1 6>$null 3>$null
+        @($result.Indicators.WMI).Count | Should -Be 0
+        $result.Summary.TotalIndicators | Should -Be 0
     }
 
     It 'attributes only wmiprvse.exe Type 3 logons to WMI' {
@@ -289,7 +392,7 @@ Describe 'Lateral movement event-log expansion' {
         $result = Find-LateralMovement -CheckWMI -Days 1 6>$null 3>$null
         @($result.Indicators.WMI).Count | Should -Be 1
         $result.Indicators.WMI[0].EventId | Should -Be 20
-        $result.Indicators.WMI[0].Technique | Should -Be 'T1021.004'
+        $result.Indicators.WMI[0].Technique | Should -Be 'T1546.003'
         $result.Indicators.WMI[0].RelatedTechnique | Should -Be 'T1546.003'
         $result.SourcesChecked -join "`n" | Should -Match 'Sysmon/Operational log present'
     }
@@ -368,5 +471,229 @@ Describe 'Security event analysis level independence' {
         $query.ContainsKey('Id') | Should -BeTrue
         @($query['Id']) | Should -Contain 4625
         $query.ContainsKey('Level') | Should -BeFalse
+    }
+}
+
+Describe 'JEA integration fail-closed regressions' {
+    BeforeAll {
+        $script:IntegrationScriptPath = Join-Path $script:ModuleRoot 'integration/Invoke-WindowsIntegrationChecks.ps1'
+        $tokens = $null
+        $parseErrors = $null
+        $integrationAst = [System.Management.Automation.Language.Parser]::ParseFile(
+            $script:IntegrationScriptPath, [ref]$tokens, [ref]$parseErrors
+        )
+        if (@($parseErrors).Count -gt 0) {
+            throw "Integration script parse errors: $($parseErrors -join '; ')"
+        }
+
+        $checkNames = @('JEA temporary endpoint', 'Module import and AMSI/Defender history')
+        foreach ($checkName in $checkNames) {
+            $definition = @(
+                $integrationAst.FindAll({
+                    param($node)
+                    $node -is [System.Management.Automation.Language.HashtableAst]
+                }, $true) | Where-Object { $_.Extent.Text -like "*Name = '$checkName'*" } |
+                    Select-Object -First 1
+            )[0]
+            $actionPair = @($definition.KeyValuePairs | Where-Object { $_.Item1.Value -eq 'Action' })[0]
+            $actionAst = $actionPair.Item2.Find({
+                param($node)
+                $node -is [System.Management.Automation.Language.ScriptBlockExpressionAst]
+            }, $true)
+            $action = $actionAst.ScriptBlock.GetScriptBlock()
+            if ($checkName -eq 'JEA temporary endpoint') {
+                $script:JeaIntegrationAction = $action
+            }
+            else {
+                $script:ModuleIntegrationAction = $action
+            }
+        }
+
+        $helperNames = @(
+            'ConvertTo-WsaIntegrationSafeText', 'New-WsaIntegrationOutcome',
+            'Get-WsaIntegrationObjectKeys', 'Invoke-WsaIntegrationCheck'
+        )
+        foreach ($helperName in $helperNames) {
+            $functionAst = $integrationAst.Find({
+                param($node)
+                $node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and
+                    $node.Name -eq $helperName
+            }, $true)
+            . ([scriptblock]::Create($functionAst.Extent.Text))
+        }
+    }
+
+    BeforeEach {
+        $script:WsaModule = Get-Module -Name $script:ModuleName | Select-Object -First 1
+        $script:AvailableModule = $script:WsaModule
+        $script:WsaRepositoryRoot = $script:ModuleRoot
+        $script:WsaModuleImportError = $null
+        $script:WsaCurrentIdentity = [PSCustomObject]@{ Name = 'CONTOSO\tester' }
+        $script:EndpointQueryCalls = 0
+        $script:RegistrationCalls = 0
+        $script:UnregistrationCalls = 0
+        $script:FailInitialEndpointQuery = $false
+        $script:FailCleanupEndpointQuery = $false
+        $script:JeaTestRoot = Join-Path $TestDrive 'JeaIntegration'
+        [void][IO.Directory]::CreateDirectory($script:JeaTestRoot)
+
+        function Test-WsaIntegrationWindows { $true }
+        function Test-WsaIntegrationElevated { $true }
+        function Get-Command {
+            param($Name, $ErrorAction)
+            return [PSCustomObject]@{ Parameters = @{} }
+        }
+        function Get-PSSessionConfiguration {
+            param($Name, $ErrorAction)
+            $script:EndpointQueryCalls++
+            $queryFails = (
+                ($script:EndpointQueryCalls -eq 1 -and $script:FailInitialEndpointQuery) -or
+                ($script:EndpointQueryCalls -gt 1 -and $script:FailCleanupEndpointQuery)
+            )
+            if ($queryFails) {
+                if ([string]$ErrorAction -eq 'Stop') {
+                    $stage = if ($script:EndpointQueryCalls -eq 1) { 'initial' } else { 'cleanup' }
+                    throw "$stage endpoint query failed"
+                }
+                return @()
+            }
+            return @()
+        }
+        function Get-Module {
+            param($Name, [switch]$ListAvailable, $ErrorAction)
+            return $script:AvailableModule
+        }
+        function Test-PSSessionConfigurationFile {
+            param($Path, $ErrorAction)
+            return $true
+        }
+        function New-WsaIntegrationTempDirectory {
+            param($Purpose)
+            $path = Join-Path $script:JeaTestRoot ([Guid]::NewGuid().ToString('N'))
+            [void][IO.Directory]::CreateDirectory($path)
+            return $path
+        }
+        function Register-PSSessionConfiguration {
+            param($Name, $Path, $Force, $ErrorAction)
+            $script:RegistrationCalls++
+        }
+        function New-PSSession {
+            param($ComputerName, $ConfigurationName, $ErrorAction)
+            return [PSCustomObject]@{ ComputerName = $ComputerName }
+        }
+        function Invoke-Command {
+            param($Session, $ScriptBlock, $ErrorAction)
+            if ($ScriptBlock.ToString() -match 'Get-Process') { throw 'Access denied by fixture' }
+            return [PSCustomObject]@{
+                FunctionSet = 'Quick'
+                Results = [ordered]@{
+                    'Get-SecurityBaseline' = [PSCustomObject]@{ Findings = @() }
+                    'Get-DefenderStatus' = [PSCustomObject]@{ Findings = @() }
+                }
+                Errors = @()
+                EffectiveLanguageMode = 'FullLanguage'
+                DynamicCompilationExpected = $true
+            }
+        }
+        function Remove-PSSession { param($Session, $ErrorAction) }
+        function Unregister-PSSessionConfiguration {
+            param($Name, $Force, $ErrorAction)
+            $script:UnregistrationCalls++
+        }
+        function Get-MpThreatDetection { param($ErrorAction) return @() }
+    }
+
+    It 'returns FAIL without registration when initial endpoint enumeration fails' {
+        $script:FailInitialEndpointQuery = $true
+        $result = Invoke-WsaIntegrationCheck -Name 'JEA test' -Required $true -Action $script:JeaIntegrationAction
+
+        $result.Status | Should -Be 'FAIL'
+        $result.Evidence | Should -Match 'initial endpoint query failed'
+        $script:EndpointQueryCalls | Should -Be 1
+        $script:RegistrationCalls | Should -Be 0
+        $script:UnregistrationCalls | Should -Be 0
+    }
+
+    It 'returns FAIL when post-removal endpoint verification fails' {
+        $script:FailCleanupEndpointQuery = $true
+        $result = Invoke-WsaIntegrationCheck -Name 'JEA test' -Required $true -Action $script:JeaIntegrationAction
+
+        $result.Status | Should -Be 'FAIL'
+        $result.Evidence | Should -Match 'JEA cleanup failed.*verification.*cleanup endpoint query failed'
+        $script:EndpointQueryCalls | Should -Be 2
+        $script:RegistrationCalls | Should -Be 1
+        $script:UnregistrationCalls | Should -Be 1
+    }
+
+    It 'passes the JEA fixture only after successful removal verification' {
+        $result = Invoke-WsaIntegrationCheck -Name 'JEA test' -Required $true -Action $script:JeaIntegrationAction
+
+        $result.Status | Should -Be 'PASS'
+        $result.Details.ArbitraryScriptBlockDenied | Should -BeTrue
+        $script:EndpointQueryCalls | Should -Be 2
+        $script:RegistrationCalls | Should -Be 1
+        $script:UnregistrationCalls | Should -Be 1
+    }
+
+    It 'does not substitute a different installed module for the imported JEA target' {
+        $script:AvailableModule = @(
+            $script:WsaModule,
+            [PSCustomObject]@{
+                Version = [version]'99.0.0'
+                ModuleBase = 'C:\DifferentModule'
+            }
+        )
+        $result = Invoke-WsaIntegrationCheck -Name 'JEA test' -Required $true -Action $script:JeaIntegrationAction
+
+        $result.Status | Should -Be 'UNVERIFIED'
+        $result.Evidence | Should -Match 'JEA resolves version 99.0.0.*imported target'
+        $script:RegistrationCalls | Should -Be 0
+    }
+
+    It 'rejects <Count> exported functions instead of accepting the old threshold' -ForEach @(
+        @{ Count = 76 },
+        @{ Count = 78 }
+    ) {
+        $count = $_.Count
+        $functions = @{}
+        for ($index = 0; $index -lt $count; $index++) { $functions["Function$index"] = $null }
+        $script:WsaModule = [PSCustomObject]@{
+            ExportedFunctions = $functions
+            ModuleBase = 'C:\Module'
+            Path = 'C:\Module\WindowsSecurityAudit.psd1'
+            Version = [version]'1.9.1'
+        }
+
+        $result = Invoke-WsaIntegrationCheck -Name 'Module test' -Required $true -Action $script:ModuleIntegrationAction
+        $result.Status | Should -Be 'FAIL'
+        $result.Evidence | Should -Match 'exactly 77'
+        $result.Details.ExportedFunctionCount | Should -Be $count
+    }
+
+    It 'accepts exactly 77 exports with clean Defender history' {
+        $functions = @{}
+        for ($index = 0; $index -lt 77; $index++) { $functions["Function$index"] = $null }
+        $script:WsaModule = [PSCustomObject]@{
+            ExportedFunctions = $functions
+            ModuleBase = 'C:\Module'
+            Path = 'C:\Module\WindowsSecurityAudit.psd1'
+            Version = [version]'1.9.1'
+        }
+
+        $result = Invoke-WsaIntegrationCheck -Name 'Module test' -Required $true -Action $script:ModuleIntegrationAction
+        $result.Status | Should -Be 'PASS'
+        $result.Details.ExportedFunctionCount | Should -Be 77
+        $result.Details.ModuleFileDetectionCount | Should -Be 0
+    }
+}
+
+Describe 'Release package verification regression' {
+    It 'diffs every staged file and names all PowerShell data extensions' {
+        $releasePath = Join-Path $script:ModuleRoot '.kimi-code/skills/release/SKILL.md'
+        $releaseSkill = Get-Content -LiteralPath $releasePath -Raw
+        $releaseSkill | Should -Match 'diff every staged file'
+        foreach ($extension in @('.ps1', '.psm1', '.psd1', '.pssc', '.psrc')) {
+            $releaseSkill | Should -Match ([regex]::Escape($extension))
+        }
     }
 }

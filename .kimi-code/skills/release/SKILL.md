@@ -18,6 +18,6 @@ Release version: $version (e.g. 1.10.0). Do not reuse an existing tag (Gallery r
 7. The release event runs publish.yml (test gate + tag/manifest guard + staged clean package + Gallery publish). Watch it to success.
 8. Verify on the Gallery:
    - `Find-Module WindowsSecurityAudit -RequiredVersion $version`
-   - Download the nupkg from `https://www.powershellgallery.com/api/v2/package/WindowsSecurityAudit/$version`, unzip, and diff every `.ps*1` against the tag (no diffs allowed).
+   - Download the nupkg from `https://www.powershellgallery.com/api/v2/package/WindowsSecurityAudit/$version`, unzip, and diff every staged file against its tag counterpart (no diffs allowed), explicitly including `.ps1`, `.psm1`, `.psd1`, `.pssc`, and `.psrc`.
    - Confirm `tests/` and `.github/` are NOT in the package.
 Report the release URL, publish run result, and the Gallery verification output.

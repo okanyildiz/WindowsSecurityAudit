@@ -27,7 +27,8 @@ Run on a disposable Windows endpoint or an approved test host.
 - The default run makes no persistent configuration change. JEA temporarily
   registers `WSA-IntegrationTest`, scoped by role to the current administrator,
   and removes it in `finally`. The script refuses to overwrite a preexisting
-  endpoint with that name.
+  endpoint with that name. Initial endpoint enumeration and post-removal
+  verification fail closed; an enumeration or verification error produces FAIL.
 - JEA uses a temporary copy of the sample PSSC and a temporary transcript
   directory. Both are deleted. The unchanged repository sample is validated
   first. Registration and removal use `-NoServiceRestart` when the installed
@@ -61,8 +62,12 @@ endpoints or dump directories.
 4. JEA has an additional requirement: the complete `WindowsSecurityAudit`
    module, including `RoleCapabilities/WindowsSecurityAudit.Scan.psrc`, must be
    discoverable by module name in an admin-controlled `PSModulePath` location.
-   A repository imported only by an explicit path is not sufficient for JEA.
-   The production ACL guidance in `JEA/README.md` still applies.
+   The module selected for name-based JEA loading must exactly match the base
+   and version imported with `-ModulePath`. A newer or otherwise different
+   highest-installed copy produces UNVERIFIED instead of being substituted. A
+   repository imported only by an explicit path is not sufficient for JEA. The
+   production ACL guidance in `JEA/README.md` still
+   applies.
 5. WinRM and loopback PowerShell remoting must work. The temporary role is
    assigned to the current administrator, not to the sample CONTOSO group.
 6. FullLanguage and working runtime C# compilation are required to prove the
@@ -163,13 +168,13 @@ means UNVERIFIED; a partial set means FAIL.
 
 | Check | Required for exit 0 | Proof and important limits |
 | --- | --- | --- |
-| JEA temporary endpoint | Yes | Validates the unchanged sample PSSC, validates and registers a current-admin-scoped temporary PSSC, invokes the literal Quick wrapper through `New-PSSession -ConfigurationName`, requires both Quick results, and confirms an arbitrary `Get-Process` script block is denied. It does not validate a production role group or WDAC policy. |
+| JEA temporary endpoint | Yes | Requires the discoverable module base and version to match the imported target. Validates the unchanged sample PSSC, validates and registers a current-admin-scoped temporary PSSC, invokes the literal Quick wrapper through `New-PSSession -ConfigurationName`, requires both Quick results, and confirms an arbitrary `Get-Process` script block is denied. Endpoint enumeration and verified removal fail closed. It does not validate a production role group or WDAC policy. |
 | DPAPI protection and identity boundary | Yes | Calls the module-internal `Protect-WsaDpapiData` and `Unprotect-WsaDpapiData` in module scope and verifies the LocalMachine round-trip and marker. With the alternate credential, a CurrentUser canary must fail decryption under a different SID. Also prints actual language mode and real compilation capability. Without the credential, the check is UNVERIFIED. |
 | Native FSCTL USN journal | Yes | Calls `Get-FileSystemJournal -Mode USNJournal -MaxRecords 100` and requires `Summary.Source='Native'` when the journal is readable. Record count is evidence only; zero activity is allowed. An unreadable or absent journal is UNVERIFIED. A readable `fsutil` fallback is not accepted as native proof. |
 | Native live MFT and sector-tail parsing | Yes | Calls `MftTimestompScan` with `-IncludeAll` and a small cap. Requires `NativeMft`, success, scanned records, valid record identities, coherent SI/FN data, valid FILE_NAME timestamp flags, zero malformed records, and consistent sector/file-record geometry. `StopReason='MaxRecords'` is an expected completed cap, not a volume-wide scan. No timestomp finding is asserted. |
 | Optional self-process memory dump | No | Runs only with `-IncludeDump`. Requires both module-reported success and an actual nonempty file with an MDMP signature in the temporary directory. The file is then deleted. |
 | Optional Sentinel OAuth and ingestion | No | Runs only with all four `WSA_TEST_*` variables. Uses the module's `Get-SiemAccessToken` path and `Send-SiemEvent` SentinelLogsIngestion destination. Requires one event in one successful batch with zero failures. |
-| Module import and AMSI/Defender history | Yes | Imports the manifest and requires at least 76 exported functions (v1.9.0 has 77). If available, `Get-MpThreatDetection` history is searched for resources under the imported module root. Any matching module-file detection is FAIL. This is import plus Defender-history evidence, not a claim about every third-party AV product. |
+| Module import and AMSI/Defender history | Yes | Imports the manifest and requires exactly 77 exported functions for v1.9.x. If available, `Get-MpThreatDetection` history is searched for resources under the imported module root. Any matching module-file detection is FAIL. This is import plus Defender-history evidence, not a claim about every third-party AV product. |
 
 Optional checks do not gate the process exit code, even when an explicitly
 requested optional check fails. Their status remains visible in the table and

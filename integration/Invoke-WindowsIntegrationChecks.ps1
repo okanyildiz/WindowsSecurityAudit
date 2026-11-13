@@ -20,7 +20,8 @@
 .PARAMETER ModulePath
     WindowsSecurityAudit module manifest to import. Defaults to the manifest
     beside the integration directory. JEA additionally requires the complete
-    module to be discoverable by name in an admin-controlled PSModulePath.
+    module with the same base and version to be discoverable by name in an
+    admin-controlled PSModulePath.
 .PARAMETER DriveLetter
     NTFS drive used by the USN and live MFT checks. Defaults to C.
 .PARAMETER MftMaxRecords
@@ -401,17 +402,24 @@ $checks += [PSCustomObject]@{
                 return New-WsaIntegrationOutcome -Status UNVERIFIED -Evidence "This PowerShell host lacks required remoting/JEA commands: $($missing -join ', ')."
             }
 
-            $existing = @(Get-PSSessionConfiguration -Name $endpointName -ErrorAction SilentlyContinue)
+            $existing = @(Get-PSSessionConfiguration -Name $endpointName -ErrorAction Stop)
             if ($existing.Count -gt 0) {
                 $preexistingEndpoint = $true
                 return New-WsaIntegrationOutcome -Status UNVERIFIED -Evidence "Endpoint $endpointName already exists. It was not changed. Remove a stale test endpoint only after confirming its owner, then rerun."
             }
 
-            $availableModules = @(Get-Module -Name WindowsSecurityAudit -ListAvailable -ErrorAction SilentlyContinue | Sort-Object Version -Descending)
+            $availableModules = @(Get-Module -Name WindowsSecurityAudit -ListAvailable -ErrorAction Stop | Sort-Object Version -Descending)
             if ($availableModules.Count -eq 0) {
-                return New-WsaIntegrationOutcome -Status UNVERIFIED -Evidence 'JEA cannot resolve WindowsSecurityAudit by name. Install the complete module, including RoleCapabilities, in an admin-controlled PSModulePath location.'
+                return New-WsaIntegrationOutcome -Status UNVERIFIED -Evidence 'JEA cannot resolve WindowsSecurityAudit by name. Install the complete imported target, including RoleCapabilities, in an admin-controlled PSModulePath location.'
             }
             $endpointModule = $availableModules[0]
+            $moduleMatchesTarget = (
+                $endpointModule.Version -eq $script:WsaModule.Version -and
+                [string]::Equals($endpointModule.ModuleBase, $script:WsaModule.ModuleBase, [StringComparison]::OrdinalIgnoreCase)
+            )
+            if (-not $moduleMatchesTarget) {
+                return New-WsaIntegrationOutcome -Status UNVERIFIED -Evidence "JEA resolves version $($endpointModule.Version) at $($endpointModule.ModuleBase), but the imported target is version $($script:WsaModule.Version) at $($script:WsaModule.ModuleBase). Make the exact imported target the module resolved by name."
+            }
             $rolePath = Join-Path -Path $endpointModule.ModuleBase -ChildPath 'RoleCapabilities\WindowsSecurityAudit.Scan.psrc'
             if (-not (Test-Path -LiteralPath $rolePath -PathType Leaf)) {
                 return New-WsaIntegrationOutcome -Status UNVERIFIED -Evidence "The module selected for JEA ($($endpointModule.ModuleBase)) lacks RoleCapabilities\WindowsSecurityAudit.Scan.psrc."
@@ -505,19 +513,21 @@ $checks += [PSCustomObject]@{
             }
             if ($registrationAttempted -and -not $preexistingEndpoint) {
                 try {
-                    $remaining = @(Get-PSSessionConfiguration -Name $endpointName -ErrorAction SilentlyContinue)
-                    if ($remaining.Count -gt 0) {
-                        $unregisterParameters = @{ Name = $endpointName; Force = $true; ErrorAction = 'Stop' }
-                        if ($commands['Unregister-PSSessionConfiguration'].Parameters.ContainsKey('NoServiceRestart')) {
-                            $unregisterParameters['NoServiceRestart'] = $true
-                        }
-                        Unregister-PSSessionConfiguration @unregisterParameters
+                    $unregisterParameters = @{ Name = $endpointName; Force = $true; ErrorAction = 'Stop' }
+                    if ($commands['Unregister-PSSessionConfiguration'].Parameters.ContainsKey('NoServiceRestart')) {
+                        $unregisterParameters['NoServiceRestart'] = $true
                     }
-                    $remaining = @(Get-PSSessionConfiguration -Name $endpointName -ErrorAction SilentlyContinue)
-                    if ($remaining.Count -gt 0) { throw 'endpoint still exists after unregister' }
+                    Unregister-PSSessionConfiguration @unregisterParameters
                 }
                 catch {
                     $cleanupErrors += "endpoint removal: $($_.Exception.Message)"
+                }
+                try {
+                    $remaining = @(Get-PSSessionConfiguration -Name $endpointName -ErrorAction Stop)
+                    if ($remaining.Count -gt 0) { throw 'endpoint still exists after unregister' }
+                }
+                catch {
+                    $cleanupErrors += "endpoint removal verification: $($_.Exception.Message)"
                 }
             }
             if ($null -ne $tempDirectory -and (Test-Path -LiteralPath $tempDirectory)) {
@@ -950,8 +960,8 @@ $checks += [PSCustomObject]@{
             ExportedFunctionCount = $functionCount
             ModuleRoot = $moduleRoot
         }
-        if ($functionCount -lt 76) {
-            return New-WsaIntegrationOutcome -Status FAIL -Evidence "Only $functionCount functions were exported; at least 76 are required." -Details $importDetails
+        if ($functionCount -ne 77) {
+            return New-WsaIntegrationOutcome -Status FAIL -Evidence "Expected exactly 77 exported functions for this release, but the imported module exports $functionCount." -Details $importDetails
         }
 
         $threatCommand = Get-Command -Name Get-MpThreatDetection -ErrorAction SilentlyContinue
