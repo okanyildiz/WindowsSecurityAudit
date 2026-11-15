@@ -7,7 +7,7 @@
 [![License](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
 [![Version](https://img.shields.io/badge/Version-1.9.1-orange.svg)](https://github.com/okanyildiz/WindowsSecurityAudit/releases)
 [![PowerShell Gallery](https://img.shields.io/powershellgallery/v/WindowsSecurityAudit.svg?label=PSGallery)](https://www.powershellgallery.com/packages/WindowsSecurityAudit)
-[![Functions](https://img.shields.io/badge/Functions-76-brightgreen.svg)](https://github.com/okanyildiz/WindowsSecurityAudit)
+[![Functions](https://img.shields.io/badge/Functions-77-brightgreen.svg)](https://github.com/okanyildiz/WindowsSecurityAudit)
 [![Modules](https://img.shields.io/badge/Modules-14-blue.svg)](https://github.com/okanyildiz/WindowsSecurityAudit)
 [![CI](https://github.com/okanyildiz/WindowsSecurityAudit/actions/workflows/ci.yml/badge.svg)](https://github.com/okanyildiz/WindowsSecurityAudit/actions/workflows/ci.yml)
 [![Tests](https://img.shields.io/badge/Tests-CI_Gated-brightgreen.svg)](https://github.com/okanyildiz/WindowsSecurityAudit/tree/main/tests)
@@ -28,7 +28,7 @@
 
 ## 🧰 Full Feature Overview
 
-**76 functions across 14 modules** — the complete toolkit at a glance:
+**77 functions across 14 modules** — the complete toolkit at a glance:
 
 | Module | Functions | Scope |
 |--------|:---------:|-------|
@@ -70,7 +70,7 @@ If you find this tool valuable for your security operations, consider supporting
 
 In today's rapidly evolving threat landscape, organizations face unprecedented challenges in maintaining robust security postures across their Windows infrastructure. Traditional security tools often fall short, requiring multiple expensive licenses, complex integrations, and specialized expertise. The **Windows Security Audit Module** addresses this by offering enterprise-grade security capabilities through a unified, open-source PowerShell framework.
 
-The toolkit bundles **76 functions across 14 specialized modules** covering the audit lifecycle end-to-end: baseline scoring, threat detection, forensic collection, hardening, compliance validation, vulnerability assessment and reporting. Capabilities that usually require stitching together several single-purpose tools ship here as one cohesive, MIT-licensed module — with a CI-gated Pester test suite on both PowerShell 7 and Windows PowerShell 5.1, and locale-invariant core checks that return correct results on non-English Windows systems (see [Known Limitations](#-known-limitations)).
+The toolkit bundles **77 functions across 14 specialized modules** covering the audit lifecycle end-to-end: baseline scoring, threat detection, forensic collection, hardening, compliance validation, vulnerability assessment and reporting. Capabilities that usually require stitching together several single-purpose tools ship here as one cohesive, MIT-licensed module — with a CI-gated Pester test suite on both PowerShell 7 and Windows PowerShell 5.1, and locale-invariant core checks that return correct results on non-English Windows systems (see [Known Limitations](#-known-limitations)).
 
 ### 🎯 The Vision
 
@@ -262,7 +262,7 @@ WindowsSecurityAudit/
 │   ├── Invoke-IncidentResponse.ps1
 │   └── Send-SiemEvent.ps1
 │
-├── 📁 tests/                           # Pester tests (523)
+├── 📁 tests/                           # Pester tests (980 discovered)
 │   ├── WindowsSecurityAudit.Tests.ps1  # Public API surface (428 tests)
 │   ├── Smoke.Windows.Tests.ps1         # Real-Windows execution smoke tests (49)
 │   ├── Locale.Regression.Tests.ps1     # EN/DE fixture equivalence + no-text-readers guard (46)
@@ -277,7 +277,7 @@ WindowsSecurityAudit/
 │   ├── Get-MITREAttackMapping.ps1
 │   └── Get-ThreatIntelligence.ps1
 │
-├── 📁 Vulnerability/                   # Vulnerability Management (8 functions)
+├── 📁 Vulnerability/                   # Vulnerability Management (9 functions)
 │   ├── Find-EOLSoftware.ps1
 │   ├── Get-ExposedServices.ps1
 │   ├── Get-NVDCveData.ps1
@@ -990,7 +990,7 @@ Actual scan times depend on the target's hardware, event-log sizes and the modul
 
 ### Community Edition - Forever FREE
 - ✅ **Price**: 100% FREE - No hidden costs
-- ✅ **Functions**: All 76 functions included
+- ✅ **Functions**: All 77 functions included
 - ✅ **Source Code**: Full access on GitHub
 - ✅ **Updates**: Regular security updates
 - ✅ **License**: MIT (commercial use allowed)

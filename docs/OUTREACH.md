@@ -1,69 +1,77 @@
 # Outreach Kit — WindowsSecurityAudit
 
-Ready-to-use texts for awesome-list PRs and community announcements. Honest, no hype — every claim is verifiable in the repo.
+Ready-to-use texts for awesome-list PRs and community announcements. Neutral, verifiable wording. Verify time-sensitive counts and issue links before publishing.
 
-## awesome-powershell PR
+## awesome-forensics (cugu/awesome-forensics) PR
 
-**Title:** Add WindowsSecurityAudit — Windows security audit & DFIR toolkit (77 functions)
+**Title:** Add WindowsSecurityAudit — PowerShell Windows security-audit and DFIR toolkit
+
+**Suggested section:** Frameworks (alternatively Windows Artifacts → NTFS/MFT Processing for the MFT-focused entry).
 
 **Body:**
 
 > **Project:** https://github.com/okanyildiz/WindowsSecurityAudit
 >
-> A comprehensive, MIT-licensed Windows security audit and DFIR PowerShell module: 77 functions across 14 categories — threat hunting (MITRE ATT&CK), compliance (CIS/NIST/PCI-DSS), vulnerability prioritization (NVD + EPSS + CISA KEV), forensics (native USN journal, offline $MFT, memory dumps), SIEM integration (Splunk HEC, Microsoft Sentinel OAuth), JEA support, Active Directory security, and hardening.
+> An open-source (MIT) PowerShell module for Windows security auditing and DFIR: 77 functions across 14 categories — MITRE ATT&CK-mapped threat hunting, selected CIS-inspired/NIST 800-53/PCI-DSS 4.0 control checks, EPSS + CISA KEV vulnerability prioritization, native binary USN journal reading (FSCTL), offline $MFT analysis with fixup repair, timeline CSV, per-process memory-dump capture, artifact collection, Sysmon analytics, credential-access and defense-evasion detection, RDP/SMB analysis plus MITRE-tagged WMI/service-creation/scheduled-task heuristics, and threat-intel correlation (abuse.ch, MISP, TAXII/STIX). Also includes a sample JEA endpoint for curated Quick/Standard/Deep scans and Sentinel Logs Ingestion with Entra client-credentials OAuth.
 >
-> Notable engineering: locale-invariant checks (correct results on non-English Windows via APIs/GUIDs/SIDs instead of localized console parsing), honest NotEvaluated states instead of silent wrong PASSes, 800+ Pester tests with real-Windows CI on both PowerShell 5.1 and 7.
+> Engineering notes: core audit/compliance checks avoid localized console parsing through APIs, GUIDs and SIDs (English/German auditpol fixture equivalence tested); compliance checks report honest NotEvaluated states rather than counting unevaluated controls as compliant. USN and MFT binary parsers have synthetic-fixture tests designed for Windows, macOS and Linux; repository CI runs them on Windows. State-changing functions support ShouldProcess/-WhatIf, with confirmation impact varying by operation.
 >
 > Install: `Install-Module -Name WindowsSecurityAudit` (PowerShell Gallery).
->
-> Category suggestion: **Security / Forensics / Compliance** (or the list's closest section).
 
-## awesome-dfir PR
+## awesome-incident-response (meirwah/awesome-incident-response) PR
 
 **Title:** Add WindowsSecurityAudit — PowerShell DFIR toolkit for Windows hosts
 
+**Suggested section:** All-In-One Tools (alternatively Windows Evidence Collection).
+
 **Body:**
 
 > **Project:** https://github.com/okanyildiz/WindowsSecurityAudit
 >
-> An open-source (MIT) DFIR PowerShell module for Windows: native binary USN journal reading (FSCTL), offline $MFT analysis with fixup repair + deleted-record evidence, timeline CSV, memory-dump capture with ACL-locked output, artifact collection, Sysmon analytics, credential-access and defense-evasion detection, lateral-movement detection (RDP/SMB/WMI/service-creation/scheduled-tasks with MITRE technique IDs), and threat-intel correlation (abuse.ch, MISP, TAXII/STIX).
+> An open-source (MIT) PowerShell module for Windows security auditing and DFIR: 77 functions across 14 categories — threat hunting (MITRE ATT&CK), selected CIS-inspired/NIST/PCI-DSS control checks, EPSS + CISA KEV vulnerability prioritization, native binary USN journal reading, offline $MFT analysis with fixup repair and timeline CSV, per-process memory dumps, artifact collection, Sysmon analytics, credential-access and defense-evasion detection, RDP/SMB analysis plus MITRE-tagged WMI/service-creation/scheduled-task heuristics, and threat-intel correlation (abuse.ch, MISP, TAXII/STIX).
 >
-> All forensic parsers are locale-invariant and covered by synthetic-fixture tests that run on every OS; destructive operations support -WhatIf and ConfirmImpact=High.
+> Notable engineering: core audit/compliance checks avoid localized console parsing through APIs, GUIDs and SIDs; compliance checks report honest NotEvaluated states rather than counting unevaluated controls as compliant; USN and MFT parsers have synthetic-fixture tests; CI runs on Windows with module import and smoke tests on both PowerShell 5.1 and 7.
 >
 > Install: `Install-Module -Name WindowsSecurityAudit` (PowerShell Gallery).
->
-> Category suggestion: **Forensics Tools / Windows**.
+
+## Note on awesome-powershell (janikvonrotz/awesome-powershell)
+
+The GitHub repository is archived and its README points contributors to Codeberg. Submit this project there instead (same text as awesome-forensics, section: Security).
 
 ## Short community announcement (r/PowerShell, r/netsec, r/blueteamsec, LinkedIn)
 
 > **WindowsSecurityAudit v1.9.1 — open-source Windows security audit & DFIR PowerShell module (MIT)**
 >
-> 77 functions: MITRE-mapped threat hunting, CIS/NIST/PCI compliance, EPSS + CISA KEV vulnerability prioritization, native USN journal + offline $MFT forensics, SIEM (Splunk/Sentinel OAuth), JEA.
+> 77 functions: MITRE-mapped threat hunting, selected CIS-inspired/NIST/PCI-DSS control checks, EPSS + CISA KEV vulnerability prioritization, native USN journal + offline $MFT forensics, SIEM (Splunk/Sentinel OAuth), sample JEA endpoint.
 >
-> What makes it different: every check is locale-invariant (works correctly on Turkish/German/French Windows) and it reports honest "unable to evaluate" states instead of silent wrong PASSes. 800+ tests, real-Windows CI on PS 5.1 and 7.
+> What makes it different: core audit/compliance checks avoid localized console parsing through APIs, GUIDs and SIDs (English/German auditpol fixture equivalence tested), and compliance checks report honest "unable to evaluate" states instead of counting unevaluated controls as compliant. 900+ Pester tests; full suite on PowerShell 7, with module import and Windows smoke tests on both PowerShell 7 and 5.1.
 >
 > `Install-Module -Name WindowsSecurityAudit`
 > https://github.com/okanyildiz/WindowsSecurityAudit
 >
 > Feedback and first contributions welcome — there are three `good first issue` tickets open (Firefox artifact collection, a Turkish locale fixture, and new CPE mappings).
 
-## 30-second demo script (asciinema)
+## Demo outline (record with asciinema; timing depends on host and network)
 
 ```powershell
 # 1) Install and import
 Install-Module -Name WindowsSecurityAudit
 Import-Module WindowsSecurityAudit
 
-# 2) Baseline score in seconds
+# 2) Baseline score
 Get-SecurityBaseline | Select-Object SecurityScore
 
-# 3) One consolidated interactive HTML report (severity doughnut + category bars)
-New-ConsolidatedReport -OutputPath .\report.html
+# 3) One consolidated interactive HTML report (writes a timestamped HTML file
+#    into the given directory; charts require internet for the Chart.js CDN)
+New-ConsolidatedReport -OutputPath .\report
 
-# 4) Prioritize a CVE with EPSS + CISA KEV
-Get-VulnerabilityAssessment -IncludePriority | Select-Object -ExpandProperty PrioritizedVulnerabilities -First 5
+# 4) Prioritize CVEs with EPSS + CISA KEV (requires internet; NVD lookups
+#    can take several minutes and may be rate-limited)
+Get-VulnerabilityAssessment -ExactCVEMatch -IncludePriority |
+    Select-Object -ExpandProperty PrioritizedVulnerabilities -First 5
 
-# 5) Forensics: native USN journal + offline MFT timeline
+# 5) Forensics (elevated Windows): native USN journal + offline MFT timeline
 Get-FileSystemJournal -Mode USNJournal -MaxRecords 50
+# MFT-sample.bin = a previously acquired $MFT you supply yourself
 Get-FileSystemJournal -Mode OfflineMftAnalysis -MftPath .\MFT-sample.bin -TimelineCsvPath .\timeline.csv
 ```
