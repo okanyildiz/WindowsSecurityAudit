@@ -765,6 +765,12 @@ The Reporting module transforms raw security data into actionable intelligence t
 
 The full feature set is documented in the module tables above — this section only covers what changed per release, newest first:
 
+### 🆕 v1.9.1 — Real Cloud Queries, Integration Pack & Deep-Review Hardening
+
+- **Real cloud data**: `Get-CloudComplianceStatus` reads actual Azure Secure Score (Graph) and Azure Policy compliance counts (ARM PolicyStates, works without Graph too); `Test-M365SecurityPosture` computes org-wide MFA registration percentage — honest `NotEvaluated` remains wherever no reliable API exists.
+- **Windows integration verification pack** (`integration/`): elevated-host scripted proofs for the JEA endpoint lifecycle, DPAPI round-trip, native USN/MFT sources, dump validity, and AMSI/Defender detection.
+- **Deep-review hardening**: per-FN parent-chain resolution in offline MFT timelines, EPSS source-match-type preservation, prioritized CSV/HTML reports, exact-name service allowlists, correct MITRE technique mappings (T1047/T1546.003), and fail-closed JEA cleanup.
+
 ### 🆕 v1.9.0 — EPSS/KEV Prioritization, Offline $MFT Analysis & Expanded Lateral Movement
 
 **A feature bundle for real-world prioritization and forensics:**
