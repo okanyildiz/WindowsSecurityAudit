@@ -739,3 +739,19 @@ Describe 'ConvertTo-CsvSafeObject (CSV formula-injection escaping)' {
         }
     }
 }
+
+Describe 'Resolve-CpeName curated table (enterprise products)' {
+    It '<ProductName> resolves via the curated table to <ExpectedCpe>' -ForEach @(
+        @{ ProductName = 'VMware ESXi'; Version = '8.0.2'; ExpectedVersion = '8.0.2'; ExpectedCpe = 'cpe:2.3:a:vmware:esxi:8.0.2:*:*:*:*:*:*:*' }
+        @{ ProductName = 'Cisco IOS'; Version = '15.2'; ExpectedVersion = '15.2'; ExpectedCpe = 'cpe:2.3:a:cisco:ios:15.2:*:*:*:*:*:*:*' }
+        @{ ProductName = 'Cisco IOS XE'; Version = '17.9.4a'; ExpectedVersion = '17.9.4a'; ExpectedCpe = 'cpe:2.3:a:cisco:ios_xe:17.9.4a:*:*:*:*:*:*:*' }
+        @{ ProductName = 'FortiGate'; Version = '7.4.3'; ExpectedVersion = '7.4.3'; ExpectedCpe = 'cpe:2.3:a:fortinet:fortios:7.4.3:*:*:*:*:*:*:*' }
+        @{ ProductName = 'pfSense'; Version = '2.7.2'; ExpectedVersion = '2.7.2'; ExpectedCpe = 'cpe:2.3:a:netgate:pfsense:2.7.2:*:*:*:*:*:*:*' }
+        @{ ProductName = 'Microsoft Exchange Server 2019'; Version = '15.2.1544.11'; ExpectedVersion = '15.2.1544.11'; ExpectedCpe = 'cpe:2.3:a:microsoft:exchange_server:15.2.1544.11:*:*:*:*:*:*:*' }
+    ) {
+        $result = Resolve-CpeName -ProductName $ProductName -Version $Version
+        $result.MatchedBy | Should -Be 'CuratedTable'
+        $result.CpeName | Should -Be $ExpectedCpe
+        $result.Version | Should -Be $ExpectedVersion
+    }
+}
