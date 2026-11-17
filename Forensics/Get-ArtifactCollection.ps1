@@ -330,6 +330,25 @@ function Get-ArtifactCollection {
                         Write-Host "  Edge artifacts collected" -ForegroundColor Green
                     }
                     
+                    # Firefox (all default profiles)
+                    $firefoxRoot = "$env:APPDATA\Mozilla\Firefox\Profiles"
+                    $firefoxProfiles = @(Get-ChildItem -Path $firefoxRoot -Directory -ErrorAction SilentlyContinue | Where-Object { $_.Name -like '*.default*' })
+                    foreach ($ffProfile in $firefoxProfiles) {
+                        $ffDest = Join-Path $paths.Browser ("Firefox-" + $ffProfile.Name)
+                        New-Item -Path $ffDest -ItemType Directory -Force | Out-Null
+                        $ffFiles = @('places.sqlite', 'cookies.sqlite')
+                        foreach ($file in $ffFiles) {
+                            $srcFile = Join-Path $ffProfile.FullName $file
+                            if (Test-Path $srcFile) {
+                                Copy-Item $srcFile -Destination $ffDest -Force -ErrorAction SilentlyContinue
+                            }
+                        }
+                        Write-Host "  Firefox artifacts collected ($($ffProfile.Name))" -ForegroundColor Green
+                    }
+                    if ($firefoxProfiles.Count -eq 0) {
+                        Write-Verbose "No Firefox default profiles found (Firefox not installed or no default profile)."
+                    }
+                    
                     $results.ArtifactsCollected += "Browser Artifacts"
                 }
                 catch {

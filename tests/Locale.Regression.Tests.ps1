@@ -93,6 +93,7 @@ BeforeAll {
     $script:FixturePath = Join-Path -Path $PSScriptRoot -ChildPath 'fixtures'
     $script:EnFixture = Join-Path -Path $script:FixturePath -ChildPath 'auditpol-backup-en.csv'
     $script:DeFixture = Join-Path -Path $script:FixturePath -ChildPath 'auditpol-backup-de.csv'
+    $script:TrFixture = Join-Path -Path $script:FixturePath -ChildPath 'auditpol-backup-tr.csv'
 
     Import-Module -Name $script:ModulePath -Force
 
@@ -168,6 +169,21 @@ Describe 'ConvertFrom-AuditPolicyBackupCsv fixture equivalence (WinLogKit PR #58
             foreach ($key in @($expected.Keys)) {
                 $map.ContainsKey($key) | Should -BeTrue -Because "GUID $key must be parsed"
                 $map[$key] | Should -Be $expected[$key] -Because "numeric Setting Value is locale-invariant ($key)"
+            }
+        }
+    }
+
+    It 'produces IDENTICAL GUID -> Value maps from the English and the localized Turkish (cp1254) fixture' {
+        InModuleScope -ModuleName $script:ModuleName -ArgumentList $script:EnFixture, $script:TrFixture -ScriptBlock {
+            param($enFixture, $trFixture)
+            $enMap = ConvertFrom-AuditPolicyBackupCsv -Path $enFixture
+            $trMap = ConvertFrom-AuditPolicyBackupCsv -Path $trFixture
+            $trMap.Count | Should -Be $enMap.Count
+            $enKeys = @($enMap.Keys | Sort-Object)
+            $trKeys = @($trMap.Keys | Sort-Object)
+            ($trKeys -join ',') | Should -Be ($enKeys -join ',') -Because 'subcategory GUIDs are locale-invariant'
+            foreach ($key in $enKeys) {
+                $trMap[$key] | Should -Be $enMap[$key] -Because "localized names/inclusion text must not change the numeric value ($key)"
             }
         }
     }

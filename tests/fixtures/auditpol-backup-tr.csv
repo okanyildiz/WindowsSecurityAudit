@@ -1,0 +1,14 @@
+Bilgisayar Adý,Ýlke Hedefi,Alt Kategori,Alt Kategori GUID,Dahil Etme Ayarý,Hariç Tutma Ayarý,Ayar Deðeri
+WSA-TEST01,System,Güvenlik Durumu Deðiþikliði,{0CCE9210-69AE-11D9-BED3-505054503030},Baþarý ve Hata,,3
+WSA-TEST01,System,Sistem Bütünlüðü,{0CCE9212-69AE-11D9-BED3-505054503030},Baþarý ve Hata,,3
+WSA-TEST01,System,Oturum Açma,{0CCE9215-69AE-11D9-BED3-505054503030},Baþarý ve Hata,,3
+WSA-TEST01,System,Oturum Kapatma,{0CCE9216-69AE-11D9-BED3-505054503030},Baþarý,,1
+,,,,,,
+WSA-TEST01,System,Özel Oturum Açma,{0CCE921B-69AE-11D9-BED3-505054503030},Baþarý,,1
+WSA-TEST01,System,Dosya Sistemi,{0CCE921D-69AE-11D9-BED3-505054503030},Denetim Yok,,0
+WSA-TEST01,System,Hassas Ayrýcalýk Kullanýmý,{0CCE9228-69AE-11D9-BED3-505054503030},Hata,,2
+WSA-TEST01,System,Ýþlem Oluþturma,{0CCE922B-69AE-11D9-BED3-505054503030},Baþarý,,1
+WSA-TEST01,System,Dizin Hizmeti Eriþimi,{0CCE923B-69AE-11D9-BED3-505054503030},Hata,,2
+WSA-TEST01,System,Kimlik Bilgisi Doðrulama,{0CCE923F-69AE-11D9-BED3-505054503030},Baþarý ve Hata,,3
+WSA-TEST01,System,Option:CrashOnAuditFail,,Baþarý,,0
+WSA-TEST01,S-1-5-21-3623811015-3361044348-30300820-1001,Oturum Açma,{0CCE9215-69AE-11D9-BED3-505054503030},Baþarý,,1
