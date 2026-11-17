@@ -71,8 +71,16 @@ function Get-ArtifactCollection {
         Write-Host "Output Path: $OutputPath" -ForegroundColor Yellow
         Write-Host "Start Time: $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')" -ForegroundColor Yellow
         
-        # Check admin privileges
-        $isAdmin = ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
+        # Check admin privileges (Windows-only API; degrade on other platforms)
+        $isAdmin = $false
+        if ([Environment]::OSVersion.Platform -eq [PlatformID]::Win32NT) {
+            try {
+                $isAdmin = ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
+            }
+            catch {
+                $isAdmin = $false
+            }
+        }
         
         if (-not $isAdmin) {
             Write-Warning "Administrator privileges recommended for complete collection!"
@@ -337,13 +345,24 @@ function Get-ArtifactCollection {
                         $ffDest = Join-Path $paths.Browser ("Firefox-" + $ffProfile.Name)
                         New-Item -Path $ffDest -ItemType Directory -Force | Out-Null
                         $ffFiles = @('places.sqlite', 'cookies.sqlite')
+                        $copiedCount = 0
                         foreach ($file in $ffFiles) {
                             $srcFile = Join-Path $ffProfile.FullName $file
                             if (Test-Path $srcFile) {
-                                Copy-Item $srcFile -Destination $ffDest -Force -ErrorAction SilentlyContinue
+                                try {
+                                    Copy-Item $srcFile -Destination $ffDest -Force -ErrorAction Stop
+                                    $destFile = Join-Path $ffDest $file
+                                    if (Test-Path $destFile) { $copiedCount++ }
+                                }
+                                catch {
+                                    Write-Warning "Failed to copy $file from $($ffProfile.Name) (file may be locked by a running browser): $($_.Exception.Message)"
+                                    $results.Summary.Errors++
+                                }
                             }
                         }
-                        Write-Host "  Firefox artifacts collected ($($ffProfile.Name))" -ForegroundColor Green
+                        if ($copiedCount -gt 0) {
+                            Write-Host "  Firefox artifacts collected ($($ffProfile.Name)): $copiedCount file(s)" -ForegroundColor Green
+                        }
                     }
                     if ($firefoxProfiles.Count -eq 0) {
                         Write-Verbose "No Firefox default profiles found (Firefox not installed or no default profile)."

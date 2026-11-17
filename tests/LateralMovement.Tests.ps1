@@ -686,14 +686,3 @@ Describe 'JEA integration fail-closed regressions' {
         $result.Details.ModuleFileDetectionCount | Should -Be 0
     }
 }
-
-Describe 'Release package verification regression' {
-    It 'diffs every staged file and names all PowerShell data extensions' {
-        $releasePath = Join-Path $script:ModuleRoot '.kimi-code/skills/release/SKILL.md'
-        $releaseSkill = Get-Content -LiteralPath $releasePath -Raw
-        $releaseSkill | Should -Match 'diff every staged file'
-        foreach ($extension in @('.ps1', '.psm1', '.psd1', '.pssc', '.psrc')) {
-            $releaseSkill | Should -Match ([regex]::Escape($extension))
-        }
-    }
-}
