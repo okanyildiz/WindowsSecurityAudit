@@ -5,7 +5,7 @@
 [![PowerShell](https://img.shields.io/badge/PowerShell-5.1%2B-blue.svg)](https://github.com/PowerShell/PowerShell)
 [![Windows](https://img.shields.io/badge/Windows-10%2F11%2FServer%202016%2B-blue.svg)](https://www.microsoft.com/windows)
 [![License](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
-[![Version](https://img.shields.io/badge/Version-1.9.1-orange.svg)](https://github.com/okanyildiz/WindowsSecurityAudit/releases)
+[![Version](https://img.shields.io/badge/Version-1.9.2-orange.svg)](https://github.com/okanyildiz/WindowsSecurityAudit/releases)
 [![PowerShell Gallery](https://img.shields.io/powershellgallery/v/WindowsSecurityAudit.svg?label=PSGallery)](https://www.powershellgallery.com/packages/WindowsSecurityAudit)
 [![Functions](https://img.shields.io/badge/Functions-77-brightgreen.svg)](https://github.com/okanyildiz/WindowsSecurityAudit)
 [![Modules](https://img.shields.io/badge/Modules-14-blue.svg)](https://github.com/okanyildiz/WindowsSecurityAudit)
@@ -765,6 +765,13 @@ The Reporting module transforms raw security data into actionable intelligence t
 ## 📰 Release Highlights
 
 The full feature set is documented in the module tables above — this section only covers what changed per release, newest first:
+
+### 🆕 v1.9.2 — Evidence-Based Persistence Trust
+
+- **Signature + location instead of names**: Run keys, startup shortcuts, scheduled Exec actions, services, AppInit DLLs, LSA packages and print monitors use cached Authenticode checks; valid catalog signatures are accepted without trusting publisher/path names.
+- **False-positive and bypass fixes**: Defender, Realtek, Intel, Java and stock print monitors are no longer flagged solely for unfamiliar paths; ArkSigner in AppData, unsigned name-allowlist bypasses, non-default WMI, LOLBins and non-Exec task actions remain suspicious.
+- **Hardened path parsing**: canonical NT/extended/UNC paths, multiple AppInit entries, per-folder task identity and ambiguous unquoted service-path candidates. Every finding explains itself with `ResolvedPath`, `Signer`, `SignatureStatus` and semicolon-delimited `Reasons`.
+- **Regression coverage**: 38 new Pester tests cover the reported 14-entry scenario and adversarial edge cases; 979 discovered tests total in the current suite.
 
 ### 🆕 v1.9.1 — Real Cloud Queries, Integration Pack & Deep-Review Hardening
 

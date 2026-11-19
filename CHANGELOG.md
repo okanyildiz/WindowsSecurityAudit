@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.9.2] - 2026-11-19
+
 ### Fixed
 
 - `Find-PersistenceMechanisms`: trust is now based on Authenticode signature and location instead of name patterns; fixes false positives on Defender, Windows print monitors and the default SCM WMI subscription, and closes a name-allowlist bypass.
@@ -266,7 +268,8 @@ Post-release audit hardening. Every finding below was verified against the code 
 - Cloud Security: Azure AD risky sign-ins, M365 security posture, cloud compliance status.
 - Hardening: audit policies, PowerShell security (logging, transcription), security baseline enforcement — all with `-WhatIf` support.
 
-[Unreleased]: https://github.com/okanyildiz/WindowsSecurityAudit/compare/v1.9.1...HEAD
+[Unreleased]: https://github.com/okanyildiz/WindowsSecurityAudit/compare/v1.9.2...HEAD
+[1.9.2]: https://github.com/okanyildiz/WindowsSecurityAudit/releases/tag/v1.9.2
 [1.9.1]: https://github.com/okanyildiz/WindowsSecurityAudit/releases/tag/v1.9.1
 [1.9.0]: https://github.com/okanyildiz/WindowsSecurityAudit/releases/tag/v1.9.0
 [1.8.2]: https://github.com/okanyildiz/WindowsSecurityAudit/releases/tag/v1.8.2
