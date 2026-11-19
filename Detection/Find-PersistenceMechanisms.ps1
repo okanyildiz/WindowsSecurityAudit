@@ -300,7 +300,7 @@ function Find-PersistenceMechanisms {
                             break
                         }
                     }
-                    if ($isSystem -and $taskPath -notmatch '\\Microsoft\\') {
+                    if ($isSystem -and $taskPath -notmatch '^\\Microsoft\\') {
                         $isSuspicious = $true
                         $taskReasons += 'Non-Microsoft task running as SYSTEM'
                     }
@@ -411,7 +411,7 @@ function Find-PersistenceMechanisms {
                 $isSuspicious = $false
                 $serviceReasons = @()
                 if (-not $expandedServicePath.StartsWith('"', [StringComparison]::Ordinal) -and
-                    $expandedServicePath -match '^[A-Za-z]:\\[^\\]+\s') {
+                    $expandedServicePath -match '^[A-Za-z]:\\.*\s') {
                     $isSuspicious = $true
                     $serviceReasons += 'Unquoted service path contains spaces; ambiguous executable resolution'
                     $prefixCandidate = $expandedServicePath.Substring(0, 3) + (@($expandedServicePath.Substring(3) -split '\s+')[0]) + '.exe'

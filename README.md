@@ -262,9 +262,9 @@ WindowsSecurityAudit/
 │   ├── Invoke-IncidentResponse.ps1
 │   └── Send-SiemEvent.ps1
 │
-├── 📁 tests/                           # Pester tests (977 discovered)
+├── 📁 tests/                           # Pester tests (979 discovered)
 │   ├── WindowsSecurityAudit.Tests.ps1  # Public API surface (508 tests)
-│   ├── PersistenceMechanisms.Tests.ps1 # Signature/location trust regressions (36 tests)
+│   ├── PersistenceMechanisms.Tests.ps1 # Signature/location trust regressions (38 tests)
 │   ├── Smoke.Windows.Tests.ps1         # Real-Windows execution smoke tests (49)
 │   ├── Locale.Regression.Tests.ps1     # EN/DE fixture equivalence + no-text-readers guard (47)
 │   └── fixtures/                       # auditpol EN/DE (cp1252) CSV fixtures

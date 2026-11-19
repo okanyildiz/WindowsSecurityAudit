@@ -1359,4 +1359,73 @@ Describe 'Persistence mechanism signature trust and parsing' {
             $LiteralPath -eq $agentPath
         }
     }
+
+    It 'flags a nested-directory unquoted service path and evaluates both candidates' {
+        $prefixPath = 'C:\Contoso\My.exe'
+        $agentPath = 'C:\Contoso\My Agent\agent.exe'
+        $script:TestServices = @(
+            New-TestService -Name 'NestedAmbiguousSvc' -DisplayName 'Nested Ambiguous Service' -PathName $agentPath -StartMode Auto
+        )
+        Add-TestBinary -Path $prefixPath -Status NotSigned -SignerName $null
+        Add-TestBinary -Path $agentPath -SignerName 'Contoso Software'
+
+        $result = Find-PersistenceMechanisms 6>$null 3>$null
+
+        $result.Services.Count | Should -Be 1
+        $result.TotalFindings | Should -Be 1
+        $result.SuspiciousCount | Should -Be 1
+        $finding = $result.Services[0]
+        $finding.PathName | Should -Be $agentPath
+        $finding.Suspicious | Should -BeTrue
+        $finding.Reasons | Should -Match 'Unquoted service path contains spaces; ambiguous executable resolution'
+        $finding.BinaryChecks.Count | Should -Be 2
+        $finding.BinaryChecks[0].ResolvedPath | Should -Be $prefixPath
+        $finding.BinaryChecks[0].SignatureStatus | Should -Be 'NotSigned'
+        $finding.BinaryChecks[0].Trusted | Should -BeFalse
+        $finding.BinaryChecks[1].ResolvedPath | Should -Be $agentPath
+        $finding.BinaryChecks[1].SignatureStatus | Should -Be 'Valid'
+        $finding.BinaryChecks[1].Trusted | Should -BeTrue
+        $finding.ResolvedPath | Should -Be "$prefixPath; $agentPath"
+        $finding.SignatureStatus | Should -Be 'NotSigned; Valid'
+        $script:SignatureCalls.Count | Should -Be 2
+        Should -Invoke Get-AuthenticodeSignature -ModuleName $script:ModuleName -Times 1 -Exactly -ParameterFilter {
+            $LiteralPath -eq $prefixPath
+        }
+        Should -Invoke Get-AuthenticodeSignature -ModuleName $script:ModuleName -Times 1 -Exactly -ParameterFilter {
+            $LiteralPath -eq $agentPath
+        }
+    }
+
+    It 'does not let a nested Microsoft folder bypass the SYSTEM task heuristic' {
+        $agentPath = 'C:\Program Files\Contoso\agent.exe'
+        Add-TestBinary -Path $agentPath -SignerName 'Contoso Software'
+        $nestedTask = New-TestTask -TaskName 'NestedMicrosoftSystem' -TaskPath '\Contoso\Microsoft\' `
+            -Execute $agentPath -Arguments '--nested' -UserId 'SYSTEM'
+        $ordinaryTask = New-TestTask -TaskName 'OrdinarySystem' -TaskPath '\Contoso\' `
+            -Execute $agentPath -Arguments '--ordinary' -UserId 'SYSTEM'
+        $script:TestTasks = @($nestedTask, $ordinaryTask)
+        foreach ($task in $script:TestTasks) {
+            $key = Get-TestTaskKey -TaskName $task.TaskName -TaskPath $task.TaskPath
+            $script:TaskInfo[$key] = New-TestTaskInfo -LastRunTime '2099-06-01T00:00:00Z' -NextRunTime '2099-06-02T00:00:00Z'
+        }
+
+        $result = Find-PersistenceMechanisms -IncludeKnownGood 6>$null 3>$null
+
+        $result.ScheduledTasks.Count | Should -Be 2
+        $result.TotalFindings | Should -Be 2
+        $result.SuspiciousCount | Should -Be 2
+        foreach ($finding in $result.ScheduledTasks) {
+            $finding.Suspicious | Should -BeTrue
+            $finding.Reasons | Should -Match 'Non-Microsoft task running as SYSTEM'
+            $finding.ActionChecks.Count | Should -Be 1
+            $finding.ActionChecks[0].ResolvedPath | Should -Be $agentPath
+            $finding.ActionChecks[0].SignatureStatus | Should -Be 'Valid'
+            $finding.ActionChecks[0].Trusted | Should -BeTrue
+            $finding.SignatureStatus | Should -Be 'Valid'
+        }
+        $nestedFinding = @($result.ScheduledTasks | Where-Object { $_.Name -eq 'NestedMicrosoftSystem' })[0]
+        $nestedFinding.Path | Should -Be '\Contoso\Microsoft\'
+        $nestedFinding.RunAsUser | Should -Be 'SYSTEM'
+        $script:SignatureCalls.Count | Should -Be 1
+    }
 }
