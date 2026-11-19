@@ -262,10 +262,11 @@ WindowsSecurityAudit/
 │   ├── Invoke-IncidentResponse.ps1
 │   └── Send-SiemEvent.ps1
 │
-├── 📁 tests/                           # Pester tests (980 discovered)
-│   ├── WindowsSecurityAudit.Tests.ps1  # Public API surface (428 tests)
+├── 📁 tests/                           # Pester tests (972 discovered)
+│   ├── WindowsSecurityAudit.Tests.ps1  # Public API surface (508 tests)
+│   ├── PersistenceMechanisms.Tests.ps1 # Signature/location trust regressions (31 tests)
 │   ├── Smoke.Windows.Tests.ps1         # Real-Windows execution smoke tests (49)
-│   ├── Locale.Regression.Tests.ps1     # EN/DE fixture equivalence + no-text-readers guard (46)
+│   ├── Locale.Regression.Tests.ps1     # EN/DE fixture equivalence + no-text-readers guard (47)
 │   └── fixtures/                       # auditpol EN/DE (cp1252) CSV fixtures
 │
 ├── 📁 ThreatHunting/                   # Threat Hunting (7 functions)
@@ -576,7 +577,7 @@ The Detection module provides real-time threat identification capabilities using
 
 | Function | Purpose | Detection Capabilities | Risk Indicators |
 |----------|---------|------------------------|-----------------|
-| **`Find-PersistenceMechanisms`** | Identifies malware persistence techniques across the system | • 8 registry Run-key locations (Run, RunOnce, RunServices, WOW6432Node)<br>• Startup folders (per-user and all-users)<br>• Scheduled Tasks (hidden, system, unusual)<br>• Windows Services (unsigned, suspicious paths)<br>• WMI Event Subscriptions<br>• Other registry autostarts (AppInit DLLs, LSA providers, print monitors) | High: Unknown entries<br>Medium: Unsigned binaries<br>Low: Unusual locations |
+| **`Find-PersistenceMechanisms`** | Identifies malware persistence techniques across the system | • Registry Run keys, startup shortcuts, scheduled Exec actions and non-disabled services<br>• Authenticode and catalog-signature checks cached per resolved binary path<br>• User-profile, AppData and Windows Temp location analysis; script-host/LOLBin argument review<br>• Default SCM WMI subscription allowlisting plus AppInit, LSA and print-monitor checks | `ResolvedPath`, `Signer`, `SignatureStatus` and semicolon-delimited `Reasons`<br>Trusted only with a valid signature outside user-writable paths and no LOLBin reason<br>Trusted entries require `-IncludeKnownGood` |
 | **`Find-SuspiciousProcesses`** | Detects malicious process behaviors and anomalies | • Unsigned or invalid signatures<br>• Execution from temporary/suspicious directories<br>• Known suspicious tool names<br>• Unusual parent-child relationships (Office/browser spawning shells)<br>• Optional network-connection check (uncommon remote ports, `-CheckNetwork`) | Suspicion score per process<br>Unsigned or oddly-located binaries<br>Suspicious parent/child pairs |
 | **`Find-NetworkAnomalies`** | Identifies abnormal network communications | • Known high-risk/malicious port usage<br>• Non-standard and unusual high listening ports<br>• Optional DNS cache anomaly heuristics (DGA/entropy-style checks, `-CheckDNS`)<br>• Established-connection review | High: Known malicious ports<br>Medium: Unusual ports<br>Medium: DNS anomalies |
 | **`Find-SuspiciousAuthentication`** | Detects authentication attacks and anomalies | • Brute force attempts (multiple failures)<br>• Account lockout patterns<br>• After-hours authentication<br>• Explicit-credential logons (runas / net use, 4624 Type 9 NewCredentials)<br>• Per-account NTLM network logon indicators<br>• Service account anomalies | High: Brute force<br>Medium: After hours<br>Low: Explicit credentials |

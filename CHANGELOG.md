@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- `Find-PersistenceMechanisms`: trust is now based on Authenticode signature and location instead of name patterns; fixes false positives on Defender, Windows print monitors and the default SCM WMI subscription, and closes a name-allowlist bypass.
+
 ## [1.9.1] - 2026-11-13
 
 ### Added
