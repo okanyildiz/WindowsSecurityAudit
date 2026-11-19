@@ -195,6 +195,10 @@ function Test-WsaTrustedBinary {
             $isUserProfilePath = $true
         }
     }
+    if ($resolvedPath.StartsWith('\\', [StringComparison]::Ordinal) -and
+        $resolvedPath.IndexOf('\Users\', [StringComparison]::OrdinalIgnoreCase) -ge 0) {
+        $isUserProfilePath = $true
+    }
     if ($isUserProfilePath -or
         $resolvedPath.IndexOf('\AppData\', [StringComparison]::OrdinalIgnoreCase) -ge 0 -or
         $resolvedPath.IndexOf('\Windows\Temp\', [StringComparison]::OrdinalIgnoreCase) -ge 0) {

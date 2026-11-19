@@ -52,6 +52,10 @@ function Find-PersistenceMechanisms {
         }
 
         $signatureCache = @{}
+        $registryMetadataNames = @(
+            'PSPath', 'PSParentPath', 'PSChildName', 'PSProvider', 'PSDrive',
+            'PSIsContainer', 'PSComputerName', 'PSUser', 'PSRemoteRegistry'
+        )
         $shellCom = $null
         $shellComInitialized = $false
         $shellComAvailable = $false
@@ -140,7 +144,7 @@ function Find-PersistenceMechanisms {
                     $items = Get-ItemProperty -Path $keyPath -ErrorAction SilentlyContinue
                     if ($items) {
                         foreach ($property in $items.PSObject.Properties) {
-                            if ($property.Name -match '^PS') { continue }
+                            if ($registryMetadataNames -contains $property.Name) { continue }
                             $trust = Test-WsaTrustedBinary -CommandLine ([string]$property.Value) -SignatureCache $signatureCache
                             $isSuspicious = -not $trust.Trusted
 
@@ -302,7 +306,25 @@ function Find-PersistenceMechanisms {
                     }
 
                     foreach ($action in $taskActions) {
-                        if ($null -eq $action -or -not $action.PSObject.Properties['Execute']) { continue }
+                        if ($null -eq $action -or -not $action.PSObject.Properties['Execute']) {
+                            $isSuspicious = $true
+                            $unevaluatedReason = 'Non-Exec task action could not be evaluated'
+                            if ($taskReasons -notcontains $unevaluatedReason) { $taskReasons += $unevaluatedReason }
+                            $actionDescriptions += 'Non-Exec action (not evaluated)'
+                            $actionChecks += [PSCustomObject]@{
+                                Action = 'Non-Exec action (not evaluated)'
+                                Execute = $null
+                                Arguments = $null
+                                ResolvedPath = $null
+                                Exists = $false
+                                Signer = 'N/A'
+                                SignatureStatus = 'NotEvaluated'
+                                UserWritable = $false
+                                Trusted = $false
+                                Reasons = $unevaluatedReason
+                            }
+                            continue
+                        }
                         $execute = [string]$action.Execute
                         $arguments = ''
                         if ($action.PSObject.Properties['Arguments'] -and $null -ne $action.Arguments) {
@@ -384,14 +406,35 @@ function Find-PersistenceMechanisms {
 
                 $servicePath = $null
                 if ($service.PSObject.Properties['PathName']) { $servicePath = $service.PathName }
-                $trust = Test-WsaTrustedBinary -CommandLine ([string]$servicePath) -SignatureCache $signatureCache
-                $isSuspicious = -not $trust.Trusted
-                $serviceReasons = @($trust.Reasons)
+                $expandedServicePath = if ([string]::IsNullOrWhiteSpace([string]$servicePath)) { '' } else { [Environment]::ExpandEnvironmentVariables([string]$servicePath) }
+                $serviceCandidates = @($servicePath)
+                $isSuspicious = $false
+                $serviceReasons = @()
+                if (-not $expandedServicePath.StartsWith('"', [StringComparison]::Ordinal) -and
+                    $expandedServicePath -match '^[A-Za-z]:\\[^\\]+\s') {
+                    $isSuspicious = $true
+                    $serviceReasons += 'Unquoted service path contains spaces; ambiguous executable resolution'
+                    $prefixCandidate = $expandedServicePath.Substring(0, 3) + (@($expandedServicePath.Substring(3) -split '\s+')[0]) + '.exe'
+                    $serviceCandidates = @($prefixCandidate, $servicePath)
+                }
+
+                $serviceChecks = @()
+                foreach ($candidate in $serviceCandidates) {
+                    $trust = Test-WsaTrustedBinary -CommandLine ([string]$candidate) -SignatureCache $signatureCache
+                    $serviceChecks += $trust
+                    if (-not $trust.Trusted) { $isSuspicious = $true }
+                    foreach ($reason in @($trust.Reasons)) {
+                        if ($serviceReasons -notcontains $reason) { $serviceReasons += $reason }
+                    }
+                }
                 if ([string]::IsNullOrWhiteSpace([string]$servicePath)) {
                     $serviceReasons = @('Service PathName is null or empty; service path was not provided') + $serviceReasons
                 }
 
                 if ($isSuspicious -or $IncludeKnownGood) {
+                    $resolvedPaths = @($serviceChecks.ResolvedPath | Where-Object { $_ } | Select-Object -Unique)
+                    $signers = @($serviceChecks.Signer | Where-Object { $_ -and $_ -ne 'N/A' } | Select-Object -Unique)
+                    $signatureStatuses = @($serviceChecks.SignatureStatus | Select-Object -Unique)
                     $results.Services += [PSCustomObject]@{
                         Name = $service.Name
                         DisplayName = $service.DisplayName
@@ -399,10 +442,11 @@ function Find-PersistenceMechanisms {
                         StartMode = $service.StartMode
                         State = $service.State
                         StartName = $service.StartName
-                        ResolvedPath = $trust.ResolvedPath
-                        Signer = $trust.Signer
-                        SignatureStatus = $trust.SignatureStatus
+                        ResolvedPath = if ($resolvedPaths.Count -gt 0) { ($resolvedPaths -join '; ') } else { 'N/A' }
+                        Signer = if ($signers.Count -gt 0) { ($signers -join '; ') } else { 'N/A' }
+                        SignatureStatus = if ($signatureStatuses.Count -gt 0) { ($signatureStatuses -join '; ') } else { 'Unknown' }
                         Reasons = ($serviceReasons -join '; ')
+                        BinaryChecks = @($serviceChecks)
                         Suspicious = $isSuspicious
                     }
                 }
@@ -467,7 +511,7 @@ function Find-PersistenceMechanisms {
                         $appInitText = [Text.RegularExpressions.Regex]::Replace($appInitText, '"[^"]*"', ' ')
                     }
                     elseif ($appInitText.Contains(',')) {
-                        $appInitEntries += @($appInitText -split ',' | ForEach-Object { $_.Trim() } | Where-Object { -not [string]::IsNullOrWhiteSpace($_) })
+                        $appInitEntries += @($appInitText -split '[\s,]+' | ForEach-Object { $_.Trim() } | Where-Object { -not [string]::IsNullOrWhiteSpace($_) })
                         $appInitText = ''
                     }
                     else {

@@ -1158,15 +1158,205 @@ Describe 'Persistence mechanism signature trust and parsing' {
         $result.ScheduledTasks.Count | Should -Be 2
         $result.TotalFindings | Should -Be 2
         $result.SuspiciousCount | Should -Be 2
-        foreach ($finding in $result.ScheduledTasks) {
-            Assert-TestPersistenceFindingShape -Finding $finding
-            $finding.PSObject.Properties.Name | Should -Contain 'ActionChecks'
-            $finding.ActionChecks.Count | Should -Be 0
-            $finding.Actions | Should -Be 'N/A'
-            $finding.Suspicious | Should -BeTrue
-            $finding.SignatureStatus | Should -Be 'NotEvaluated'
-            $finding.Reasons | Should -Match 'No executable action could be evaluated'
-        }
+        $actionlessFinding = @($result.ScheduledTasks | Where-Object { $_.Name -eq 'Actionless' })[0]
+        Assert-TestPersistenceFindingShape -Finding $actionlessFinding
+        $actionlessFinding.PSObject.Properties.Name | Should -Contain 'ActionChecks'
+        $actionlessFinding.ActionChecks.Count | Should -Be 0
+        $actionlessFinding.Actions | Should -Be 'N/A'
+        $actionlessFinding.Suspicious | Should -BeTrue
+        $actionlessFinding.SignatureStatus | Should -Be 'NotEvaluated'
+        $actionlessFinding.Reasons | Should -Match 'No executable action could be evaluated'
+
+        $nonExecFinding = @($result.ScheduledTasks | Where-Object { $_.Name -eq 'NonExec' })[0]
+        Assert-TestPersistenceFindingShape -Finding $nonExecFinding
+        $nonExecFinding.PSObject.Properties.Name | Should -Contain 'ActionChecks'
+        $nonExecFinding.ActionChecks.Count | Should -Be 1
+        $nonExecFinding.ActionChecks[0].Action | Should -Be 'Non-Exec action (not evaluated)'
+        $nonExecFinding.ActionChecks[0].SignatureStatus | Should -Be 'NotEvaluated'
+        $nonExecFinding.ActionChecks[0].Trusted | Should -BeFalse
+        $nonExecFinding.ActionChecks[0].Reasons | Should -Match 'Non-Exec task action could not be evaluated'
+        $nonExecFinding.Actions | Should -Be 'Non-Exec action (not evaluated)'
+        $nonExecFinding.Suspicious | Should -BeTrue
+        $nonExecFinding.SignatureStatus | Should -Be 'NotEvaluated'
+        $nonExecFinding.Reasons | Should -Match 'Non-Exec task action could not be evaluated'
         $script:SignatureCalls.Count | Should -Be 0
+    }
+
+    It 'evaluates every AppInit entry across mixed whitespace and comma delimiters' {
+        $appInitPath = 'HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Windows'
+        $goodPath = 'C:\Windows\System32\good.dll'
+        $evilPath = 'C:\Windows\System32\evil.dll'
+        $otherPath = 'C:\Windows\System32\other.dll'
+        $script:RegistryValues[$appInitPath] = [PSCustomObject]@{
+            AppInit_DLLs = 'good.dll evil.dll,other.dll'
+            LoadAppInit_DLLs = 1
+        }
+        $script:PathExistence[$appInitPath] = $true
+        Add-TestBinary -Path $goodPath -SignerName 'Microsoft Windows'
+        Add-TestBinary -Path $evilPath -Status NotSigned -SignerName $null
+        Add-TestBinary -Path $otherPath -SignerName 'Microsoft Windows'
+
+        $result = Find-PersistenceMechanisms 6>$null 3>$null
+
+        $result.AppInitDLLs.Count | Should -Be 1
+        $result.TotalFindings | Should -Be 1
+        $result.SuspiciousCount | Should -Be 1
+        $finding = $result.AppInitDLLs[0]
+        $finding.Value | Should -Be 'good.dll evil.dll,other.dll'
+        $finding.Suspicious | Should -BeTrue
+        $finding.BinaryChecks.Count | Should -Be 3
+        @($finding.BinaryChecks.ResolvedPath) | Should -Be @($goodPath, $evilPath, $otherPath)
+        $finding.BinaryChecks[0].Trusted | Should -BeTrue
+        $finding.BinaryChecks[1].SignatureStatus | Should -Be 'NotSigned'
+        $finding.BinaryChecks[1].Trusted | Should -BeFalse
+        $finding.BinaryChecks[2].Trusted | Should -BeTrue
+        $finding.Reasons | Should -Match 'NotSigned|not[ -]?signed|unsigned'
+        $script:SignatureCalls.Count | Should -Be 3
+        Should -Invoke Get-AuthenticodeSignature -ModuleName $script:ModuleName -Times 3 -Exactly
+        Should -Invoke Get-AuthenticodeSignature -ModuleName $script:ModuleName -Times 1 -Exactly -ParameterFilter {
+            $LiteralPath -eq $evilPath
+        }
+    }
+
+    It 'evaluates PSUpdater while skipping only exact registry provider metadata names' {
+        $updaterPath = 'C:\Users\x\AppData\Roaming\Microsoft\PSUpdater.exe'
+        $metadataPath = 'C:\Users\x\AppData\Local\metadata.exe'
+        Set-TestRunValues -Values ([ordered]@{
+            PSUpdater = $updaterPath
+            PSPath = $metadataPath
+            PSParentPath = $metadataPath
+            PSChildName = $metadataPath
+            PSProvider = 'Registry'
+            PSDrive = 'HKLM'
+            PSIsContainer = $false
+            PSComputerName = 'fixture-host'
+            PSUser = 'CONTOSO\fixture'
+            PSRemoteRegistry = $metadataPath
+        })
+        Add-TestBinary -Path $updaterPath -Status NotSigned -SignerName $null
+        Add-TestBinary -Path $metadataPath -Status NotSigned -SignerName $null
+
+        $result = Find-PersistenceMechanisms 6>$null 3>$null
+
+        $result.RegistryRunKeys.Count | Should -Be 1
+        $result.TotalFindings | Should -Be 1
+        $result.SuspiciousCount | Should -Be 1
+        $finding = $result.RegistryRunKeys[0]
+        $finding.Name | Should -Be 'PSUpdater'
+        $finding.ResolvedPath | Should -Be $updaterPath
+        $finding.SignatureStatus | Should -Be 'NotSigned'
+        $finding.Suspicious | Should -BeTrue
+        @($result.RegistryRunKeys.Name) | Should -Not -Contain 'PSPath'
+        @($result.RegistryRunKeys.Name) | Should -Not -Contain 'PSChildName'
+        $script:SignatureCalls.Count | Should -Be 1
+        $script:SignatureCalls[0] | Should -Be $updaterPath
+        @($script:SignatureCalls) | Should -Not -Contain $metadataPath
+        Should -Invoke Get-AuthenticodeSignature -ModuleName $script:ModuleName -Times 1 -Exactly -ParameterFilter {
+            $LiteralPath -eq $updaterPath
+        }
+    }
+
+    It 'flags an unquoted service path and evaluates both ambiguous executable candidates' {
+        $prefixPath = 'C:\Program.exe'
+        $agentPath = 'C:\Program Files\Contoso\agent.exe'
+        $script:TestServices = @(
+            New-TestService -Name 'AmbiguousSvc' -DisplayName 'Ambiguous Service' -PathName $agentPath -StartMode Auto
+        )
+        Add-TestBinary -Path $prefixPath -Status NotSigned -SignerName $null
+        Add-TestBinary -Path $agentPath -SignerName 'Contoso Software'
+
+        $result = Find-PersistenceMechanisms 6>$null 3>$null
+
+        $result.Services.Count | Should -Be 1
+        $result.TotalFindings | Should -Be 1
+        $result.SuspiciousCount | Should -Be 1
+        $finding = $result.Services[0]
+        $finding.PathName | Should -Be $agentPath
+        $finding.Suspicious | Should -BeTrue
+        $finding.Reasons | Should -Match 'Unquoted service path contains spaces; ambiguous executable resolution'
+        $finding.PSObject.Properties.Name | Should -Contain 'BinaryChecks'
+        $finding.BinaryChecks.Count | Should -Be 2
+        $finding.BinaryChecks[0].ResolvedPath | Should -Be $prefixPath
+        $finding.BinaryChecks[0].SignatureStatus | Should -Be 'NotSigned'
+        $finding.BinaryChecks[0].Trusted | Should -BeFalse
+        $finding.BinaryChecks[1].ResolvedPath | Should -Be $agentPath
+        $finding.BinaryChecks[1].SignatureStatus | Should -Be 'Valid'
+        $finding.BinaryChecks[1].Trusted | Should -BeTrue
+        $finding.ResolvedPath | Should -Be "$prefixPath; $agentPath"
+        $finding.SignatureStatus | Should -Be 'NotSigned; Valid'
+        $script:SignatureCalls.Count | Should -Be 2
+        Should -Invoke Get-AuthenticodeSignature -ModuleName $script:ModuleName -Times 1 -Exactly -ParameterFilter {
+            $LiteralPath -eq $prefixPath
+        }
+        Should -Invoke Get-AuthenticodeSignature -ModuleName $script:ModuleName -Times 1 -Exactly -ParameterFilter {
+            $LiteralPath -eq $agentPath
+        }
+    }
+
+    It 'keeps a validly signed UNC user-profile path suspicious and user-writable' {
+        $uncPath = '\\localhost\C$\Users\bob\Desktop\agent.exe'
+        Add-TestBinary -Path $uncPath -SignerName 'Contoso Software'
+        Set-TestRunValues -Values ([ordered]@{ UncAgent = $uncPath })
+
+        $check = InModuleScope -ModuleName $script:ModuleName -ArgumentList $uncPath -ScriptBlock {
+            param($CommandLine)
+            Test-WsaTrustedBinary -CommandLine $CommandLine -SignatureCache @{}
+        }
+        $result = Find-PersistenceMechanisms 6>$null 3>$null
+
+        $check.ResolvedPath | Should -Be $uncPath
+        $check.SignatureStatus | Should -Be 'Valid'
+        $check.UserWritable | Should -BeTrue
+        $check.Trusted | Should -BeFalse
+        @($check.Reasons) -join '; ' | Should -Match 'user-writable location'
+        $result.RegistryRunKeys.Count | Should -Be 1
+        $result.TotalFindings | Should -Be 1
+        $result.SuspiciousCount | Should -Be 1
+        $finding = $result.RegistryRunKeys[0]
+        $finding.ResolvedPath | Should -Be $uncPath
+        $finding.SignatureStatus | Should -Be 'Valid'
+        $finding.Suspicious | Should -BeTrue
+        $finding.Reasons | Should -Match 'user-writable location'
+    }
+
+    It 'retains a valid Exec action while flagging its mixed non-Exec task action' {
+        $agentPath = 'C:\Program Files\Contoso\agent.exe'
+        Add-TestBinary -Path $agentPath -SignerName 'Contoso Software'
+        $task = New-TestTask -TaskName 'MixedActions' -TaskPath '\Contoso\' -Execute $agentPath -Arguments '--service'
+        $task.Actions = @($task.Actions) + @([PSCustomObject]@{
+            ActionType = 'ComHandler'
+            ClassId = '{00000000-0000-0000-0000-000000000002}'
+            Arguments = ''
+            Data = 'Deterministic mixed non-Exec action'
+        })
+        $script:TestTasks = @($task)
+        $key = Get-TestTaskKey -TaskName $task.TaskName -TaskPath $task.TaskPath
+        $script:TaskInfo[$key] = New-TestTaskInfo -LastRunTime '2099-05-01T00:00:00Z' -NextRunTime '2099-05-02T00:00:00Z'
+
+        $result = Find-PersistenceMechanisms 6>$null 3>$null
+
+        $result.ScheduledTasks.Count | Should -Be 1
+        $result.TotalFindings | Should -Be 1
+        $result.SuspiciousCount | Should -Be 1
+        $finding = $result.ScheduledTasks[0]
+        Assert-TestPersistenceFindingShape -Finding $finding
+        $finding.Suspicious | Should -BeTrue
+        $finding.ActionChecks.Count | Should -Be 2
+        $finding.ActionChecks[0].Execute | Should -Be $agentPath
+        $finding.ActionChecks[0].ResolvedPath | Should -Be $agentPath
+        $finding.ActionChecks[0].SignatureStatus | Should -Be 'Valid'
+        $finding.ActionChecks[0].Trusted | Should -BeTrue
+        $finding.ActionChecks[1].Action | Should -Be 'Non-Exec action (not evaluated)'
+        $finding.ActionChecks[1].SignatureStatus | Should -Be 'NotEvaluated'
+        $finding.ActionChecks[1].Trusted | Should -BeFalse
+        $finding.ActionChecks[1].Reasons | Should -Match 'Non-Exec task action could not be evaluated'
+        $finding.SignatureStatus | Should -Be 'Valid; NotEvaluated'
+        $finding.Reasons | Should -Match 'Non-Exec task action could not be evaluated'
+        $finding.Actions | Should -Match ([regex]::Escape($agentPath))
+        $finding.Actions | Should -Match 'Non-Exec action \(not evaluated\)'
+        $script:SignatureCalls.Count | Should -Be 1
+        Should -Invoke Get-AuthenticodeSignature -ModuleName $script:ModuleName -Times 1 -Exactly -ParameterFilter {
+            $LiteralPath -eq $agentPath
+        }
     }
 }
